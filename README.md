@@ -47,5 +47,10 @@ If you want to use "b" to build your code then run it like this: `CMPR_BUILD="my
 
 Developed on Linux; volunteers to try on Windows/MacOS/... and submit bug reports / patches very much welcomed!
 We are using "xclip" to send the prompts to the clipboard.
-If on Linux, make sure you have xclip, or edit the `cbpaste` string in the source code to suit your environment (TODO: make this better).
+Either install xclip, or edit the `cbsend` and `cbpaste` strings in the source code to suit your environment (TODO: make this better).
+I.e. for Mac you would use "pbcopy" and "pbpaste".
+
+## More
+
+Development is being [streamed on twitch](https://www.twitch.tv/inimino2).
 
