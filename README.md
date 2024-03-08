@@ -29,9 +29,9 @@ Then you do ":wq" or whatever makes your editor exit successfully, and a new rev
 To get the LLM involved, when you're on a block you hit "r" and this puts a prompt into the clipboard for you.
 Then you switch over to your ChatGPT window and hit "Ctrl-V" or whatever it is on your platform to paste.
 ChatGPT writes the code, and you copy it directly into the block or you can fix it up if you want.
-Mneumonic: "r" means "rewrite", where the LLM is rewriting the code, based on the comment, which is the human's work.
+Mnemonic: "r" means "rewrite", where the LLM is rewriting the code, based on the comment, which is the human's work.
 
-You can currently also hit "q" to quit, and more features are coming soon.
+You can currently also hit "q" to quit, "?" for short help, "b" to build, and more features are coming soon.
 
 ## Quick start:
 
@@ -43,6 +43,7 @@ You can currently also hit "q" to quit, and more features are coming soon.
 
 Day one version only useful for developing itself, because we have "cmpr.c" and similar hard-coded everywhere.
 Check back tomorrow for a way to adapt it to your own codebase, start a new project, etc.
+If you want to use "b" to build your code then run it like this: `CMPR_BUILD="my build command" cmpr/cmpr < cmpr/cmpr.c`, or by default it will just run `make`.
 
 Developed on Linux; volunteers to try on Windows/MacOS/... and submit bug reports / patches very much welcomed!
 We are using "xclip" to send the prompts to the clipboard.

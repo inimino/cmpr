@@ -29,9 +29,9 @@ Then you do ":wq" or whatever makes your editor exit successfully, and a new rev
 To get the LLM involved, when you're on a block you hit "r" and this puts a prompt into the clipboard for you.
 Then you switch over to your ChatGPT window and hit "Ctrl-V" or whatever it is on your platform to paste.
 ChatGPT writes the code, and you copy it directly into the block or you can fix it up if you want.
-Mneumonic: "r" means "rewrite", where the LLM is rewriting the code, based on the comment, which is the human's work.
+Mnemonic: "r" means "rewrite", where the LLM is rewriting the code, based on the comment, which is the human's work.
 
-You can currently also hit "q" to quit, and more features are coming soon.
+You can currently also hit "q" to quit, "?" for short help, "b" to build, and more features are coming soon.
 
 ## Quick start:
 
@@ -43,12 +43,14 @@ You can currently also hit "q" to quit, and more features are coming soon.
 
 Day one version only useful for developing itself, because we have "cmpr.c" and similar hard-coded everywhere.
 Check back tomorrow for a way to adapt it to your own codebase, start a new project, etc.
+If you want to use "b" to build your code then run it like this: `CMPR_BUILD="my build command" cmpr/cmpr < cmpr/cmpr.c`, or by default it will just run `make`.
 
 Developed on Linux; volunteers to try on Windows/MacOS/... and submit bug reports / patches very much welcomed!
 We are using "xclip" to send the prompts to the clipboard.
 If on Linux, make sure you have xclip, or edit the `cbpaste` string in the source code to suit your environment (TODO: make this better).
 
 }
+
 */
 
 #define _GNU_SOURCE // for memmem
@@ -972,16 +974,27 @@ In handle_keystroke, we support the following single-char inputs:
   We are also responsible for updating the display before returning to the main loop, so after either of these we call print_current_block.
 - e, which calls a function that will let the user edit the current block
 - r, which calls a function that will let an LLM rewrite the code part of the current block based on the comment
-- q, which exits the process cleanly with prt("goodbye\n"); flush(); exit(0)
+- R, kin to "r", which reads current clipboard contents back into the block, replacing the code part
+- b, do a build (runs the command in CMPR_BUILD envvar, or "make")
+- ?, which displays some help about the keyboard shortcuts available
+- q, which exits the process cleanly (with prt("goodbye\n"); flush(); exit(0))
 
 Before the function itself we write function declarations for all helper functions needed.
 - edit_current_block(ui_state*)
 - rewrite_current_block_with_llm(ui_state*)
+- compile(ui_state*)
+- replace_code_clipboard(ui_state*)
+
+To get the help text we can basically copy the lines above, except formatted nicely for terminal output.
 */
 
 void print_current_block(const ui_state* state);
 void edit_current_block(ui_state* state);
 void rewrite_current_block_with_llm(ui_state* state);
+void replace_code_clipboard(ui_state* state);
+void compile(ui_state* state);
+void display_help(void);
+char getch(void); // Assuming getch is defined elsewhere as per previous discussions
 
 void handle_keystroke(char keystroke, ui_state* state) {
   switch (keystroke) {
@@ -999,11 +1012,18 @@ void handle_keystroke(char keystroke, ui_state* state) {
       break;
     case 'e':
       edit_current_block(state);
-      // Assuming edit_current_block updates the display internally
       break;
     case 'r':
       rewrite_current_block_with_llm(state);
-      // Assuming rewrite_current_block_with_llm updates the display internally
+      break;
+    case 'R':
+      replace_code_clipboard(state);
+      break;
+    case 'b':
+      compile(state);
+      break;
+    case '?':
+      display_help();
       break;
     case 'q':
       prt("goodbye\n");
@@ -1011,11 +1031,33 @@ void handle_keystroke(char keystroke, ui_state* state) {
       exit(0);
       break;
     default:
-      // Optionally handle unknown inputs
-      printf("Unknown command: %c\n", keystroke);
+      prt("Unknown command. Press ? for help.\n");
+      flush();
       break;
   }
+} // keep going
+
+void display_help() {
+  prt("Keyboard shortcuts:\n");
+  prt("- j: Next block\n");
+  prt("- k: Previous block\n");
+  prt("- e: Edit current block\n");
+  prt("- r: Rewrite current block with LLM\n");
+  prt("- R: Replace code part from clipboard\n");
+  prt("- b: Build project\n");
+  prt("- ?: Display this help\n");
+  prt("- q: Quit\n");
+  flush();
 }
+
+
+
+
+
+
+
+
+
 
 void edit_current_block(ui_state* state);
 
@@ -1228,6 +1270,9 @@ So we have a helper function, update_link, which takes the ui_state, and the fil
 We forward declare this function below; all others we already have above.
 
 Finally we unlink the filename that was passed in, since we have now fully processed it.
+The filename is now optional, since we sometimes also are processing clipboard input, so if it is NULL we skip this step.
+
+Reminder: we never write `const` in C as it only brings pain.
 */
 
 void update_link(ui_state* state, char* new_filename);
@@ -1253,12 +1298,17 @@ void new_rev(ui_state* state, char* edited_filename) {
   // Update the symlink "cmpr/cmpr.c" to point to this new revision file
   update_link(state, new_rev_path);
 
-  // Unlink the temporary filename that was used for the edit
-  if (unlink(edited_filename) == -1) {
-    perror("Failed to unlink the temporary edit file");
-    exit(EXIT_FAILURE);
+  // If a filename is provided (not NULL), unlink the temporary file used for editing
+  if (edited_filename != NULL) {
+    if (unlink(edited_filename) == -1) {
+      perror("Failed to unlink the temporary edit file");
+      exit(EXIT_FAILURE);
+    }
   }
 }
+
+
+
 
 /*
 We have a shell function that does what we want here, with a few changes:
@@ -1450,6 +1500,178 @@ void send_to_clipboard(span content) {
     exit(EXIT_FAILURE);
   }
 }
+
+
+
+
+/*
+To do a build, we check if there is an environment variable CMPR_BUILD set.
+If it is, we run that, otherwise we just run "make".
+For now we just wait for another keystroke before returning, so the user can see any compiler errors (later we'll handle them better).
+(Remember to call flush() before getch() so the user sees the prompt.)
+
+On the other hand, if the compile command returns 0 we don't need the extra keystroke and will go back to the main loop.
+We aren't using ui_state for anything yet here, but later we'll put something on it to provide more status info to the user.
+*/
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+void flush(void);
+char getch(void); // Assuming getch is defined as per previous discussions
+
+void compile(ui_state* state) {
+  (void)state; // Unused parameter placeholder to avoid compiler warnings
+
+  const char* build_cmd = getenv("CMPR_BUILD");
+  if (!build_cmd) {
+    build_cmd = "make";
+  }
+
+  prt("Compiling...\n");
+  flush();
+
+  pid_t pid = fork();
+  if (pid == -1) {
+    perror("Failed to start compile process");
+    exit(EXIT_FAILURE);
+  } else if (pid == 0) {
+    // Child process: Execute build command
+    execlp("sh", "sh", "-c", build_cmd, (char*)NULL);
+    // If execlp returns, an error occurred
+    perror("execlp");
+    exit(EXIT_FAILURE);
+  } else {
+    // Parent process: Wait for build command to complete
+    int status;
+    waitpid(pid, &status, 0);
+
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+      prt("Compile succeeded\n");flush();
+    } else {
+      prt("Compile failed, press any key to continue...\n");flush();
+      getch(); // Wait for a keystroke before returning
+    }
+    flush();
+  }
+}
+
+/*
+In replace_code_clipboard, we pipe in the result of running the global variable "cbpaste".
+
+This will contain a command like "xclip -o -selection clipboard" (our default) or "pbpaste" on Mac, etc. depending on platform or user settings.
+
+We use the cmp buffer to store this data, starting from cmp.end (which is always somewhere before the end of the cmp space big buffer).
+We set aside a reference to cmp.end before we do anything, so we can reset it at the end.
+
+The space that we can use is the difference between cmp_space + BUF_SZ, which locates the end of the cmp_space, and cmp.end, which is always less than this limit.
+
+We then create a span, which is pointing into cmp, capturing the new data we just captured.
+
+We call another function, replace_block_code_part(state, span) which takes this new span and the current state.
+It is responsible for all further processing, notifications to the user, etc.
+Once this function returns we then reset cmp.end back to what it was.
+
+(This invalidates the span we created, but that's fine since it's about to go out of scope and we're done with it.)
+*/
+
+char* cbpaste = "xclip -o -selection clipboard";
+
+void replace_block_code_part(ui_state* state, span new_code);
+
+void replace_code_clipboard(ui_state* state) {
+  unsigned char* original_cmp_end = cmp.end; // Save the original cmp.end
+
+  FILE* pipe = popen(cbpaste, "r");
+  if (pipe == NULL) {
+    perror("Failed to execute cbpaste command");
+    exit(EXIT_FAILURE);
+  }
+
+  // Calculate the maximum space available in cmp buffer
+  size_t max_space = (cmp_space + BUF_SZ) - cmp.end;
+  size_t bytes_read = fread(cmp.end, 1, max_space, pipe);
+  if (ferror(pipe)) {
+    perror("Failed to read from cbpaste command");
+    pclose(pipe);
+    exit(EXIT_FAILURE);
+  }
+
+  pclose(pipe);
+
+  // Create a span that captures the new data from clipboard
+  span clipboard_data = {cmp.end, cmp.end + bytes_read};
+
+  // Process the new data, replacing the current block's code part
+  replace_block_code_part(state, clipboard_data);
+
+  // Reset cmp.end back to what it was before we added the clipboard data
+  cmp.end = original_cmp_end;
+}
+
+/*
+Here we get the ui state and a span (into cmp space) which contains the new code part of the current block.
+
+Note: to get the length of a span, use len().
+
+Similar to handle_edited_file() above, we are given a span (instead of a file) and we must update the current block, moving data around in memory as necessary.
+
+We put the original block's span in a local variable for convenience.
+
+The end result of inp should contain:
+- the contents of inp currently, up to the start (the .buf) of the original block.
+- the comment part of the current block, which we can get from block_comment_part on the current block.
+- two newlines
+- the code part coming from the clipboard in our second argument
+- current contents of inp from the .end of the original block to the inp.end of original input.
+
+So, first we check the length of what the new block will be (comment part + two newlines + new part).
+We then compare this to the old block length and do a memmove if necessary on the "rest" of inp, so that we have a gap to accommodate the new block's len.
+Then we simply copy the newlines and the new code into inp.
+(We do not need to copy the comment part, as it is already there in the original block.)
+
+As before we then find the current locations of the blocks and update the state.
+
+Once all this is done, we call new_rev.
+We'll assume that function has been updated to allow NULL for the filename argument, since there's no filename here.
+*/
+
+void replace_block_code_part(ui_state* state, span new_code) {
+  span original_block = state->blocks.s[state->current_index];
+  span comment_part = block_comment_part(original_block);
+
+  size_t new_block_length = len(comment_part) + 2 + len(new_code); // +2 for two newlines
+  size_t old_block_length = original_block.end - original_block.buf;
+
+  ssize_t length_difference = new_block_length - old_block_length;
+
+  // Adjust memory for the rest of inp, if necessary
+  if (length_difference != 0) {
+    memmove(original_block.buf + new_block_length, original_block.end, inp.end - original_block.end);
+    inp.end += length_difference;
+  }
+
+  // Current position in inp to start copying the new content
+  unsigned char* current_pos = original_block.buf + len(comment_part);
+
+  // Copy two newlines after the comment part
+  *current_pos++ = '\n';
+  *current_pos++ = '\n';
+
+  // Copy the new code part into inp
+  memcpy(current_pos, new_code.buf, len(new_code));
+
+  // Update the blocks since the contents of inp have changed
+  state->blocks = find_blocks(inp);
+
+  // Store a new revision, now allowing NULL as filename argument
+  new_rev(state, NULL);
+}
+
+
+
 
 
 
