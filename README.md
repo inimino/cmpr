@@ -53,4 +53,5 @@ I.e. for Mac you would use "pbcopy" and "pbpaste".
 ## More
 
 Development is being [streamed on twitch](https://www.twitch.tv/inimino2).
+Join [our discord](https://discord.gg/ekEq6jcEQ2).
 
