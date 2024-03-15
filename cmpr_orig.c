@@ -2,29 +2,27 @@
 
 # CMPr
 
-## "Future programming" here now?
+## Programming in English
 
 Thesis: the future of programming is driving an LLM to write code.
 Why?
 Mostly, because it's way more fun.
-There are some practical benefits too.
-You can work with any technology, so it's a great technique for a generalist.
-When code is written by an AI, we treat it as disposable.
-What's important is the English that described that code.
-It doesn't matter as much what language the code is in.
+You can work with any technology, so it's a good match for generalist skillsets.
+When code is written by an AI, we treat it as disposable, which changes our relationship with the code in interesting ways.
+It doesn't matter as much what language the code is in; what's important is the English that described that code.
 
 ## What's this then?
 
-This is a tool to play with and support the LLM programming workflow.
+This is a early experimental tool to support the LLM programming workflow.
 
-Today we just support ChatGPT and interaction is by copy and paste.
+Today we just support ChatGPT, and interaction is by copy and paste.
 This means you can use it with a free account, or if you have a paid account you can use GPT4, which writes better code.
 
 (Coming soon: API usage, local models, competing LLMs, etc.)
 
-This is a framework and represent a particular and very opinionated approach to this workflow.
+This is a framework and represents a particular and very opinionated approach to this workflow.
 We will be updating continuously as we learn.
-(This version was written in ONE DAY, using the workflow itself.)
+This version was written in a week, using the workflow itself.
 
 All code here is by ChatGPT4, and all comments by me, which is the idea of the workflow:
 
@@ -32,37 +30,36 @@ All code here is by ChatGPT4, and all comments by me, which is the idea of the w
 - You write the comment; the LLM writes the code.
 - You iterate on the comment until the code works and meets your standard.
 
-The tool is a C program; compile it and run it locally, and it will go into a loop where it shows you your "blocks".
-You can use j/k to move from block to block. (TODO: full text search with "/")
+The tool is a C program; compile it and run it locally.
+The main editing loop shows you your "blocks".
+You can use j/k to move from block to block.
+Full text search with "/" is also supported (improvements coming soon!).
 Once you find the block you want, use "e" to open it up in "$EDITOR" (or vim by default).
-Then you do ":wq" or whatever makes your editor exit successfully, and a new revision of your code is automatically saved under "cmpr/revs/<timestamp>".
+Then you do ":wq" or whatever makes your editor exit successfully, and a new revision of your code is automatically saved.
 
 To get the LLM involved, when you're on a block you hit "r" and this puts a prompt into the clipboard for you.
 (You won't see anything happen when you hit "r", but the clipboard has been updated.)
 Then you switch over to your ChatGPT window and hit "Ctrl-V".
 You could edit the prompt, but usually you'll just hit Enter.
-ChatGPT writes the code, and then you copy it directly into back into the block or you can fix it up if you want.
-You can click "copy code" in the ChatGPT window and then hit "R" (uppercase) in the tool to replace everything after the comment with the clipboard contents.
+ChatGPT writes the code, you can click "copy code" in the ChatGPT window, and then hit "R" (uppercase) back in cmpr to replace everything after the comment (i.e. the code half of the block) with the clipboard contents.
 Mnemonic: "r" gets the LLM to "rewrite" (or "replace") the code to match the comment (and "R" is the opposite of "r").
 
-You can currently also hit "q" to quit, "?" for short help, "b" to build, and more features are coming soon.
+You can currently also hit "q" to quit, "?" for short help, and "b" to build by running some build command that you specify.
 
 ## Quick start:
 
-- get the code into ~/cmpr
-- assumption is that everything runs from ~, so `cd ~` with cmpr in your home dir
-- `gcc -o cmpr/cmpr cmpr/cmpr.c` or use clang or whatever you like
-- `export EDITOR=emacs` or whatever editor you use
-- `cmpr/cmpr < cmpr/cmpr.c` now you're in the workflow (using cmpr to dev cmpr), you'll see blocks, you can try "j"/"k", "e" and "r"
+1. Get the code and build; assuming git repo at ~/cmpr and you have gcc, `gcc -o cmpr/cmpr cmpr/cmpr.c -lm`.
+2. Put the executable in your path with e.g. `sudo install cmpr/cmpr /usr/local/bin`.
+3. There will be a `cmpr --init` command soon but in the meantime, cd to the directory you want to work in and run `mkdir .cmpr .cmpr/revs .cmpr/tmp; touch .cmpr/conf`. This marks that directory so the cmpr tool can treat it as a project directory.
+4. `export EDITOR=emacs` or whatever editor you use, or vi will be run by default.
+5. Run `cmpr` in this directory, and it will ask you some configuration questions.
+   If you want to change the answers later, you can edit the .cmpr/conf file.
 
-Day one version only useful for developing itself, because we have "cmpr.c" and similar hard-coded everywhere.
-Check back tomorrow for a way to adapt it to your own codebase, start a new project, etc.
-If you want to use "b" to build your code then run it like this: `CMPR_BUILD="my build command" cmpr/cmpr < cmpr/cmpr.c`, or by default it will just run `make`.
-
-Developed on Linux; volunteers to try on Windows/MacOS/... and submit bug reports / patches very much welcomed!
+Developed on Linux; volunteers and bug reports on other environments gladly welcomed!
 We are using "xclip" to send the prompts to the clipboard.
-Either install xclip, or edit the `cbsend` and `cbpaste` strings in the source code to suit your environment (TODO: make this better).
-I.e. for Mac you would use "pbcopy" and "pbpaste".
+This really improves quality of life over manual copying and pasting of comments into a ChatGPT window.
+The first time you use the 'r' or 'R' commands you will be prompted for the command to use to talk to the clipboard on your system.
+For Mac you would use "pbcopy" and "pbpaste".
 
 ## More
 
@@ -70,7 +67,6 @@ Development is being [streamed on twitch](https://www.twitch.tv/inimino2).
 Join [our discord](https://discord.gg/ekEq6jcEQ2).
 
 */
-
 /* #libraryintro
 
 - `empty(span)`: Checks if a span is empty (start and end pointers are equal).
@@ -95,6 +91,7 @@ Join [our discord](https://discord.gg/ekEq6jcEQ2).
 - `next_line(span*)`: Extracts the next line from a span and returns it as a new span.
 - `span_eq(span, span)`, `span_cmp(span, span)`: Compares two spans for equality or lexicographical order.
 - `S(char*)`: Creates a span from a null-terminated string.
+- `s(char*,int,span)`: Creates a null-terminated string in a user-provided buffer of provided length from given span.
 - `nullspan()`: Returns an empty span.
 - `spans_alloc(int)`: Allocates a spans structure with a specified number of span elements.
 - `span_arena_alloc(int)`, `span_arena_free()`, `span_arena_push()`, `span_arena_pop()`: Manages a memory arena for dynamic allocation of spans.
@@ -115,6 +112,9 @@ When spans tile a span, the buf of each but the first is a duplicate of the prev
 Common idiom: use a single span, with buf pointing to one thing and end to something else found later; return this result (from many functions returning span).
 
 Note that we NEVER write const in C, as this only brings pain (we have some uses of const in library code, but PLEASE do not create any more).
+
+Sometimes we need a null-terminated C string for talking to library functions, we can use this pattern (with "2048" being replaced by some reasonably generous number appropriate to the specific use case): `char buf[2048] = {0}; s(buf,2048,state->buildcmd);`.
+
 */
 /* includes */
 
@@ -154,6 +154,21 @@ These two pointers must point into some space that has been allocated somewhere.
 Usually the spans are backed by the input buffer or the output buffer or a scratch buffer that we create.
 A scratch buffer allocated for a particular phase of processing can be seen as a form of arena allocation.
 A common pattern is for(;s.buf<s.end;s.buf++) { ... s.buf[0] ... } or similar.
+
+The inp variable is the span which writes into input_space, and then is the immutable copy of stdin for the duration of the process.
+The number of bytes of input is len(inp).
+The output is stored in span out, which points to output_space.
+Input processing is generally by reading out of the inp span or subspans of it.
+The output spans are mostly written to with prt() and other IO functions.
+The cmp_space and cmp span which points to it are used for analysis and model data, both reading and writing.
+These are just the common conventions; specific programs may use them differently.
+
+When writing output, we often see prt followed by flush.
+Flush sends to stdout the contents of out (the output span) that have not already been sent.
+Usually it is important to do this
+- before any operation that blocks, when the user should see the output that we've already written,
+- after printing any error message and before exiting the program, and
+- at the end of main before returning.
 */
 
 typedef struct {
@@ -167,24 +182,13 @@ u8 *input_space; // remains immutable once stdin has been read up to EOF.
 u8 *output_space;
 u8 *cmp_space;
 span out, inp, cmp;
-/* 
-The inp variable is the span which writes into input_space, and then is the immutable copy of stdin for the duration of the process.
-The number of bytes of input is len(inp).
-*/
 
 int empty(span);
 int len(span);
 
-void init_spans(); // init buffers
+void init_spans(); // main spanio init function
 
-/* 
-basic spanio primitives
-
-The output is stored in span out, which points to output_space.
-Input processing is generally by reading out of the inp span or subspans of it.
-The output spans are mostly written to with prt() and other IO functions.
-The cmp_space and cmp span which points to it are used for analysis and model data, both reading and writing.
-*/
+// basic spanio primitives
 
 void prt2cmp();
 void prt2std();
@@ -455,13 +459,25 @@ void flush_to(char *fname) {
 /* 
 In write_to_file we open a file, which must not exist, and write the contents of a span into it, and close it.
 If the file exists or there is any other error, we prt(), flush(), and exit as per usual.
+
+In write_to_file_span we simply take the same two arguments but the filename is a span.
+We build a null-terminated string and call write_to_file.
 */
 
+void write_to_file_2(span, const char*, int);
+
 void write_to_file(span content, const char* filename) {
+  write_to_file_2(content, filename, 0);
+}
+
+void write_to_file_2(span content, const char* filename, int clobber) {
   // Attempt to open the file with O_CREAT and O_EXCL to ensure it does not already exist
-  int fd = open(filename, O_WRONLY | O_CREAT | O_EXCL, 0644);
+  /* clobber thing is a manual fixup */
+  int flags = O_WRONLY | O_CREAT;
+  if (!clobber) flags |= O_EXCL;
+  int fd = open(filename, flags, 0644);
   if (fd == -1) {
-    prt("Error opening file for writing: File already exists or cannot be created.\n");
+    prt("Error opening %s for writing: File already exists or cannot be created.\n", filename);
     flush();
     exit(EXIT_FAILURE);
   }
@@ -482,6 +498,13 @@ void write_to_file(span content, const char* filename) {
     flush();
     exit(EXIT_FAILURE);
   }
+}
+
+void write_to_file_span(span content, span filename_span, int clobber) {
+  char filename[filename_span.end - filename_span.buf + 1];
+  memcpy(filename, filename_span.buf, filename_span.end - filename_span.buf);
+  filename[filename_span.end - filename_span.buf] = '\0';
+  write_to_file_2(content, filename, clobber);
 }
 
 // Function to print error messages and exit (never write "const" in C)
@@ -722,10 +745,40 @@ int is_one_of(span x, spans ys) {
   return 0; // Not found
 }
 
+/*
+Library function inp_compl() returns a span that is the complement of inp in the input_space.
+The input space is defined by the pointer input_space and the constant BUF_SZ.
+As the span inp always represents the content of the input (which has been written so far, for example by reading from stdin), the complement of inp represents the portion of the input space after inp.end which has not yet been written to.
+
+We have cmp_compl() and out_compl() methods which do the analogous operation for the respective spaces.
+*/
+
+span inp_compl() {
+  span compl;
+  compl.buf = inp.end;
+  compl.end = input_space + BUF_SZ;
+  return compl;
+}
+
+span cmp_compl() {
+  span compl;
+  compl.buf = cmp.end;
+  compl.end = cmp_space + BUF_SZ;
+  return compl;
+}
+
+span out_compl() {
+  span compl;
+  compl.buf = out.end;
+  compl.end = output_space + BUF_SZ;
+  return compl;
+}
+
 // END LIBRARY CODE
 
 /* 
-Below we have shell functions which we use for building.
+Below we have shell functions which we used for building in the first days of the project.
+These can gradually be cleaned up as we implement the functionality directly or in other ways.
 We export these functions into a separate file so that they can be sourced at the shell.
 e.g. `. cmpr/functions.sh` brings the current functions into scope.
 Then we use `build` to do a build, and so on.
@@ -735,9 +788,10 @@ SH_FN_START
 F=cmpr/cmpr.c
 
 prepare_commit() {
-  awk '/^}$/ {exit} {print}' < cmpr/cmpr.c > cmpr/README.md
-  rm -r cmpr/cmpr.c
-  cp $(cd cmpr; find revs | sort | tail -n 1 ) cmpr/cmpr_orig.c
+  # the .? on the line below is so this doesn't end a C block comment...
+  awk 'BEGIN {block=0} /^\/\*.?/ {block++; if (block==2) exit} {print}' < cmpr/cmpr.c | tail -n +3 > cmpr/README.md
+  cat cmpr/cmpr.c > cmpr/cmpr_orig.c
+  rm cmpr/cmpr.c
   ln -s cmpr_orig.c cmpr/cmpr.c
   ls -lh cmpr/cmpr.c cmpr/README.md
 }
@@ -808,13 +862,16 @@ clipboard_paste() {
 
 SH_FN_END
 
+just stashed here for now:
+
 Reply only with code. Do not simplify, but include working code. If necessary, you may define a helper function which we will implement later, but do not include comments leaving out key parts. Your code must be complete as written, but calling functions that do not yet exist is allowed.
 
 */
 
 void send_to_clipboard(span prompt);
 
-/*
+/* (Library code ends; our code begins.)
+
 We define CONFIG_FIELDS including all our known config settings, as they are used in several places (with X macros).
 
 The known config settings are:
@@ -847,10 +904,10 @@ This includes, so far:
 - the current index into them
 - a "marked" index, which represent the "other end" of a selected range
 - the search span which will contain "/" followed by some search if in search mode, otherwise will be empty()
+- the path to the config file as a span
 - terminal_rows and _cols which stores the terminal dimensions
--    int block_rows;        // Rows to spend on a block
 
-Additionally, we include a span for each of the config files, which we can do with an X macro inside the struct, using our CONFIG_FIELDS define above.
+Additionally, we include a span for each of the config files, with an X macro inside the struct, using CONFIG_FIELDS defined above.
 */
 
 
@@ -859,9 +916,9 @@ typedef struct {
     int current_index;     // Current index into the blocks
     int marked_index;      // Marked index, representing the other end of a selected range
     span search;           // Search span, starts with "/" for search mode, empty otherwise
+    span config_file_path;
     int terminal_rows;     // Terminal rows
     int terminal_cols;     // Terminal columns
-    int block_rows;        // Rows to spend on a block
 
     // Configuration spans
     #define X(name) span name;
@@ -875,36 +932,46 @@ First we call init_spans, since all our i/o relies on it.
 
 We declare a ui_state variable `state` which we'll pass around for ever after.
 
-We call a function handle_args to handle argc and argv, and pass a pointer to our state into this.
+Just above main, we declare a global ui_state* called state, which will allow us to not pass around the ui_state singleton all over our program.
+After declaring our ui_state variable in main, we will set this global pointer to it.
+
+We call a function handle_args to handle argc and argv.
 This function will also read our config file (if any).
+We call check_conf_vars() once after this; we also call it in the main loop but we need it before trying to get the code.
 
 We call span_arena_alloc(), and at the end we call span_arena_free() just for clarity even though it doesn't matter anyway since we're exiting the process.
 We allocate a spans arena of 1 << 20 or a binary million spans.
 
-Next we call a function get_code(), which also takes a pointer to our ui state.
+Next we call a function get_code().
 This function either handles reading standard input or if we are in "project directory" mode then it reads the files indicated by our config file.
 In either case, once this returns, inp is populated and any other initial code indexing work is done.
 
-Then we call main_loop() which takes our ui state as the only arg.
+Then we call main_loop().
 
 The main loop reads input in a loop and probably won't return, but just in case, we always call flush() before we return so that our buffered output from prt and friends will be flushed to stdout.
 */
 
 void handle_args(int argc, char **argv, ui_state* state);
 void get_code(ui_state* state);
-void main_loop(ui_state* state);
+void check_conf_vars();
+void main_loop();
+
+ui_state* state;
 
 int main(int argc, char **argv) {
   init_spans(); // Initialize the global span buffers
-  ui_state state; // Declare the ui_state variable
+  ui_state statevar = {0}; // Declare the ui_state variable
+  state = &statevar;
 
-  handle_args(argc, argv, &state); // Pass a pointer to state for handling arguments and config
+  handle_args(argc, argv, state); // Pass a pointer to state for handling arguments and config
+
+  check_conf_vars();
 
   span_arena_alloc(1 << 20); // Allocate memory for a binary million spans
 
-  get_code(&state); // Populate inp and perform initial indexing
+  get_code(state); // Populate inp and perform initial indexing
 
-  main_loop(&state); // Enter the main interaction loop
+  main_loop(); // Enter the main interaction loop
 
   flush(); // Ensure all buffered output is flushed to stdout
   span_arena_free(); // Free the allocated spans arena
@@ -912,13 +979,13 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-
 void print_config(ui_state* state) {
-    printf("Current Configuration Settings:\n");
+    prt("Current Configuration Settings:\n");
 
-    #define X(name) printf(#name ": %.*s\n", (int)(state->name.end - state->name.buf), state->name.buf);
+    #define X(name) prt(#name ": %.*s\n", (int)(state->name.end - state->name.buf), state->name.buf);
     CONFIG_FIELDS
     #undef X
+    flush();
 }
 
 /*
@@ -928,7 +995,7 @@ Because it is such a common pattern, we include a exit_success() function of no 
 */
 
 void exit_success() {
-    flush(); // Assuming flush() is defined elsewhere
+    flush();
     exit(0);
 }
 
@@ -941,6 +1008,7 @@ In handle_args we handle any command-line arguments.
 
 If "--conf <alternate-config-file>" is passed, we read our configuration file from that instead of ".cmpr/conf", which is the default.
 Once we know the conf file to read from, call parse_config before we do anything else.
+We also stash the config file path on state as a span.
 
 If "--print-conf" is passed in, we print our configuration settings and exit.
 This is only OK to write because we have already called parse_config, so the configuration settings have already been read in from the file.
@@ -970,6 +1038,8 @@ void handle_args(int argc, char **argv, ui_state* state) {
         }
     }
 
+    state->config_file_path = S(config_file_path);
+
     // Parse configuration from the determined file path
     parse_config(state, config_file_path); // Assuming parse_config takes the state and file path
 
@@ -989,37 +1059,18 @@ void handle_args(int argc, char **argv, ui_state* state) {
         }
     }
 }
-/*
-Library function inp_compl() returns a span that is the complement of inp in the input_space.
-The input space is defined by the pointer input_space and the constant BUF_SZ.
-As the span inp always represents the content of the input (which has been written so far, for example by reading from stdin), the complement of inp represents the portion of the input space after inp.end which has not yet been written to.
-
-We have cmp_compl() and out_compl() methods which do the analogous operation for the respective spaces.
-*/
-
-span inp_compl() {
-  span compl;
-  compl.buf = inp.end;
-  compl.end = input_space + BUF_SZ;
-  return compl;
-}
-
-span cmp_compl() {
-  span compl;
-  compl.buf = cmp.end;
-  compl.end = cmp_space + BUF_SZ;
-  return compl;
-}
-
-span out_compl() {
-  span compl;
-  compl.buf = out.end;
-  compl.end = output_space + BUF_SZ;
-  return compl;
-}
 
 void reset_stdin_to_terminal();
-spans find_blocks(ui_state*,span);
+spans find_blocks(span);
+/*
+In clear_display() we clear the terminal by printing some escape codes (with prt and flush as usual).
+*/
+
+
+void clear_display() {
+    prt("\033[2J\033[H"); // Escape codes to clear the screen and move the cursor to the top-left corner
+    flush();
+}
 
 /*
 In get_code, we get the code into the input buffer.
@@ -1058,21 +1109,23 @@ void get_code(ui_state* state) {
     // }
 
     // Find blocks in the input
-    state->blocks = find_blocks(state, inp);
+    state->blocks = find_blocks(inp);
 }
 /*
-In find_blocks_1, we take a span, and we return a spans which contains blocks that fully cover the input.
+In find_blocks, we take a span, and we return a spans which contains blocks that fully cover the input.
 
 A block is defined as follows:
 
-There is a special pattern that defines the start of a block.
-For a C file this might be slash star, for a python file, triple-quote, and so on.
+There is a special pattern that defines the start of a block (this is configurable).
+For a C file this might be slash star, for a Python file, triple-quote, and so on.
+This pattern is always recognized at the start of a line, so a block always starts at the start of a line.
+Then the block simply runs to the start of the next block if any, or the end of the file otherwise.
+So blocks always end with a newline, unless it's the last block in a file and the file doesn't end with a newline.
 
-From the start of the file to the first occurence of this pattern is a block, unless this block would be empty.
+In other words, the first block starts on the first line of the file unconditionally, so it actually doesn't matter if the pattern is there or not.
+Therefore, before both of our loops, we can simply throw away the first line with next_line().
 
-Every subsequent block starts with the pattern, and ends with a newline.
-
-To find the blocks, we simply scan each line, and call a helper function, is_line_block_pattern_start.
+Starting after the first line, to find the rest of the blocks, we simply scan each line, and call a helper function, is_line_block_pattern_start.
 This predicate function takes a span and returns 0 or 1.
 
 We perform the loop twice, the first time we just count the number of blocks that are in the file, then we can allocate our spans of the correct size using spans_alloc(n_blocks), and then we loop the same way again but now populating the spans which we will return.
@@ -1080,68 +1133,86 @@ Before the first loop we copy our argument into a new spans so that we can consu
 
 Here we can use a common pattern which is that we declare a span that we are going to return or assign, and then we set .buf first (here when we find the starting line) and then set .end later (when we find the closing brace).
 
+At the end of find_blocks, we ensure with a simple loop, that all the blocks returned together tile the file, and that none are empty.
+This means:
+The buf of the first block is the same as our input span.
+The end of the last block is the same as that of our input.
+The buf of each other block is equal to the end of the previous one.
+If this sanity check fails, we complain and crash as usual.
+
 */
 
-// Prototype of the helper function
-int is_line_block_pattern_start(ui_state* state, span line);
 
-// Function to find blocks
-spans find_blocks(ui_state* state, span input) {
-  span copy = input; // Copy of the input span to consume while counting
-  int n_blocks = 0;
 
-  // First loop: count blocks
-  while (!empty(copy)) {
-    span line = next_line(&copy);
-    if (is_line_block_pattern_start(state, line) || (n_blocks == 0 && !empty(line))) {
-      n_blocks++;
+
+int python_hack = 0;
+
+int is_line_block_pattern_start(span line);
+
+spans find_blocks(span input) {
+    span copy = input; // Copy of the input span to consume while counting
+    is_line_block_pattern_start(next_line(&copy)); // Discard the first line
+
+    int n_blocks = 1; // Start with 1 for the first block
+
+    // First loop: count blocks
+    while (!empty(copy)) {
+        span line = next_line(&copy);
+        if (is_line_block_pattern_start(line)) {
+            n_blocks++;
+        }
     }
-  }
 
-  // Allocate spans for the blocks
-  spans blocks = spans_alloc(n_blocks);
+    // Allocate spans for the blocks
+    spans blocks = spans_alloc(n_blocks);
 
-  // Reset copy for second loop
-  copy = input;
-  int block_index = 0;
-  span current_block_start = nullspan();
+    // Reset copy for second loop
+    copy = input;
+    /* *** VERY manual fixup *** */
+    python_hack = 0;
+    is_line_block_pattern_start(next_line(&copy)); // Discard the first line again
 
-  // Second loop: populate blocks
-  while (!empty(copy) && block_index < n_blocks) {
-    span line = next_line(&copy);
-    int is_start = is_line_block_pattern_start(state, line);
+    int block_index = 0;
+    blocks.s[block_index].buf = input.buf; // First block starts at the beginning of the input
 
-    if (block_index == 0 && !empty(line) && is_start) {
-      current_block_start = line;
-      blocks.s[block_index].buf = current_block_start.buf;
-      block_index++;
-    } else if (is_start) {
-      blocks.s[block_index - 1].end = line.buf;
-      current_block_start = line;
-      blocks.s[block_index].buf = current_block_start.buf;
-      block_index++;
-    } else if (empty(copy)) { // End of input, close last block
-      blocks.s[block_index - 1].end = copy.buf;
+    // Second loop: populate blocks
+    while (!empty(copy)) {
+        span line = next_line(&copy);
+        if (is_line_block_pattern_start(line) || empty(copy)) {
+            blocks.s[block_index].end = line.buf; // End of the current block
+            block_index++;
+            if (!empty(copy)) { // Prepare the start of the next block
+                blocks.s[block_index].buf = line.buf;
+            }
+        }
     }
-  }
 
-  // Correctly close the last block if not already done
-  if (n_blocks > 0 && blocks.s[n_blocks - 1].end == NULL) {
-    blocks.s[n_blocks - 1].end = input.end;
-  }
+    // Ensure the last block ends correctly
+    if (n_blocks > 0) {
+        blocks.s[n_blocks - 1].end = input.end;
+    }
 
-  return blocks;
+    return blocks;
 }
-
 /*
 In is_line_block_pattern_start, we get a span which represents a line.
 
-If it starts with slash star, we return 1.
+We return 1 if it starts a block and 0 otherwise.
+Here we define the following functions:
+
+- the C predicate, which returns 1 iff the first two chars are slash star.
+- the Python version, which matches triple-quote (three double quotes) at the start of a line.
+
+These helper functions take a span and return an int.
+
+Finally we write the is_line_block_pattern_start, which takes ui_state* and span.
+This blockdef on the state for equality with "Python", and dispatches to the Python version.
+Otherwise it dispatches to the C version (which is therefore also our default).
 */
 
 // *** manual fixup ***
 
-int is_line_block_pattern_start_0(span line) {
+int is_line_block_pattern_start_C(span line) {
   // Check if the line starts with "/*"
   if ((line.end - line.buf) >= 2 && strncmp(line.buf, "/*", 2) == 0) {
     return 1;
@@ -1150,15 +1221,18 @@ int is_line_block_pattern_start_0(span line) {
 }
 
 int is_line_block_pattern_start_python(span line) {
-  // Check if the line starts with """
-  return span_eq(S("\"\"\""), first_n(line, 3));
+  /* *** VERY manual fixup *** */
+  int matches = span_eq(S("\"\"\""), first_n(line, 3));
+  if (!matches) return 0;
+  python_hack = python_hack ? 0 : 1;
+  return python_hack;
 }
 
-int is_line_block_pattern_start(ui_state* state, span line) {
+int is_line_block_pattern_start(span line) {
   if(span_eq(state->blockdef,S("Python"))) {
     return is_line_block_pattern_start_python(line);
   } else {
-    return is_line_block_pattern_start_0(line);
+    return is_line_block_pattern_start_C(line);
   }
 }
 
@@ -1208,49 +1282,44 @@ void reset_stdin_to_terminal() {
 }
 
 /*
-In main_loop, we declare a ui_state variable to hold the current state of the UI.
+In main_loop, we get a ui_state pointer where all UI state is stored.
 
-The only argument to main_loop is the blocks, so we first assign these and we start with current_index 0, i.e. looking at the first block.
-We assign marked index to -1 indicating that there is no mark (i.e. we are not in visual selection mode).
+We initialize:
 
-We will always print the current block to the terminal, after clearing the terminal.
+- the current index to 0,
+- the marked index to -1 indicating that we are not in visual selection mode.
+
+In our loop, we call check_conf_vars(), which just handles the case where some essential configuration variables aren't set.
+
+Next we clear the terminal, then print the current block or blocks.
 Then we will wait for a single keystroke of keyboard input using our getch() above.
+Just before we call this function, we also call flush(), which just prevents us having to call it an a lot of other places all over the code.
 
-We also define a helper function print_current_blocks which takes the ui state and prints the current block.
+We also define a helper function print_current_blocks; we include just the declaration for that function below.
 (Reminder: we never write `const` in C.)
 
-Once we have a keystroke, we will call another function, handle_keystroke, which will take the char that was entered and a pointer to our struct with the state.
-This function will be responsible for updating anything about the display or handling other side effects.
-When it returns we will always be ready for another input keystroke.
+Once we have a keystroke, we will call another function, handle_keystroke, which takes the char that was entered.
 */
 
-void print_current_blocks(ui_state* state);
-void handle_keystroke(char keystroke, ui_state* state);
-char getch(void);
+void check_conf_vars();
+void print_current_blocks();
+void handle_keystroke(char keystroke);
 
-void main_loop(ui_state* state) {
-  state->current_index = 0; // Start with the first block
-  state->marked_index = -1;
+void main_loop() {
+    state->current_index = 0;
+    state->marked_index = -1;
 
-  while (1) {
-    // Clear the terminal
-    printf("\033[H\033[J");
+    while (1) {
+        check_conf_vars(); // Ensure essential configuration variables are set
 
-    // Print the current block
-    print_current_blocks(state);
+        clear_display(); // Clear the terminal screen
+        print_current_blocks(); // Print the current block or blocks
+        flush(); // Flush the output before waiting for input
 
-    /* *** manual fixup ***/
-    flush();
-
-    // Wait for a single keystroke of keyboard input
-    char input = getch();
-
-    // Handle the input keystroke
-    handle_keystroke(input, state);
-    //print_current_blocks(state);
-  }
+        char input = getch(); // Wait for a single keystroke
+        handle_keystroke(input); // Handle the input keystroke
+    }
 }
-
 /* Helper function to print the first n lines of a block. */
 
 void print_first_n_lines(span block, int n) {
@@ -1281,7 +1350,7 @@ void toggle_visual(ui_state *state) {
         state->marked_index = state->current_index;
     }
     // Reflect the new state in the display
-    print_current_blocks(state);
+    print_current_blocks();
 }
 /*
 In print_current_blocks, we print either the current block, if we are in normal mode, or the set of selected blocks if we are in visual mode.
@@ -1311,7 +1380,7 @@ void get_screen_dimensions(ui_state* state) {
 
 void render_block_range(ui_state*, int, int);
 
-void print_current_blocks(ui_state* state) {
+void print_current_blocks() {
   get_screen_dimensions(state);
 
   if (state->marked_index != -1 && state->marked_index != state->current_index) {
@@ -1340,90 +1409,20 @@ Then we decide, based on the number of blocks, the layout information, and the t
 For this we declare a separate helper function which we will write later.
 We call this function (with the ui state and our logical-physical mapping) and then we free our own resources.
 
-We create a struct line_mapping which is a return type for calculate_line_mappings(span block, int terminal_cols), which we write next, and then free_line_mappings().
-Finally we implement render_block_range itself in terms of these.
-
-In calculate_line_mappings, we start with memory for 1024 physical and logical lines, and then realloc, doubling every time, as necessary.
-
-helper functions:
-
-- void decide_layout_and_render(ui_state* state, line_mapping* mappings, int start_block, int end_block);
-
 We include a forward declaration for our helper functions.
 */
 
-typedef struct {
-    int* line_offsets;    // Array of offsets for the start of each logical line
-    int* physical_lines;  // Array indicating how many physical lines each logical line occupies
-    int total_logical_lines; // Total number of logical lines in the block
-    int total_physical_lines; // Total sum of physical lines required for the block
-} line_mapping;
-
-void decide_layout_and_render(ui_state* state, line_mapping* lm, int start_block, int end_block);
-
-line_mapping calculate_line_mappings(span block, int terminal_cols) {
-    int capacity = 1024; // Starting capacity for logical and physical lines
-    line_mapping lm = {
-        .line_offsets = (int*)malloc(capacity * sizeof(int)),
-        .physical_lines = (int*)malloc(capacity * sizeof(int)),
-        .total_logical_lines = 0,
-        .total_physical_lines = 0
-    };
-
-    int current_offset = 0;
-    while (current_offset < block.end - block.buf) {
-        if (lm.total_logical_lines == capacity) {
-            capacity *= 2; // Double the capacity
-            lm.line_offsets = (int*)realloc(lm.line_offsets, capacity * sizeof(int));
-            lm.physical_lines = (int*)realloc(lm.physical_lines, capacity * sizeof(int));
-        }
-
-        lm.line_offsets[lm.total_logical_lines] = current_offset;
-        span current_line = { .buf = block.buf + current_offset, .end = block.end };
-        int line_length = 0;
-        while (current_line.buf + line_length < block.end && current_line.buf[line_length] != '\n') {
-            ++line_length;
-        }
-
-        int physical_line_count = (int)ceil((double)line_length / terminal_cols);
-        lm.physical_lines[lm.total_logical_lines] = physical_line_count;
-        lm.total_physical_lines += physical_line_count;
-        ++lm.total_logical_lines;
-
-        current_offset += line_length + 1; // Skip newline character
-    }
-
-    return lm;
-}
-
-void free_line_mappings(line_mapping lm) {
-    free(lm.line_offsets);
-    free(lm.physical_lines);
-}
-
 //* *** manual fixup ***/
 
-void print_multiple_partial_blocks(ui_state*,line_mapping*,int,int);
-void print_single_block_with_skipping(ui_state*,line_mapping*,int);
+void print_multiple_partial_blocks(ui_state*,int,int);
+void print_single_block_with_skipping(ui_state*,int);
 void render_block_range(ui_state* state, int start, int end) {
-    line_mapping* mappings = (line_mapping*)malloc((end - start) * sizeof(line_mapping));
-    line_mapping* lm = mappings;
-    for (int i = start; i < end; ++i) {
-        mappings[i - start] = calculate_line_mappings(state->blocks.s[i], state->terminal_cols);
-    }
 
     if (end - start == 1) {
-      print_single_block_with_skipping(state, lm, start);
+      print_single_block_with_skipping(state, start);
     } else {
-      print_multiple_partial_blocks(state, lm, start, end);
+      print_multiple_partial_blocks(state, start, end);
     }
-
-    //decide_layout_and_render(state, mappings, start, end);
-
-    for (int i = 0; i < end - start; ++i) {
-        free_line_mappings(mappings[i]);
-    }
-    free(mappings);
 }
 
 /*
@@ -1432,54 +1431,8 @@ Currently, we just print the number of blocks that there are.
 */
 
 // Placeholder for print_multiple_partial_blocks, assuming it's defined elsewhere
-void print_multiple_partial_blocks(ui_state* state, line_mapping *lm, int start_block, int end_block) {
+void print_multiple_partial_blocks(ui_state* state, int start_block, int end_block) {
   prt("%d blocks (printing multiple blocks coming soon!)\n", end_block - start_block);
-}
-
-/*
-In print_last_lines, a helper function, we get the state, the line mapping, a block, and a number of lines to show.
-To print the last lines, since we already have physical line counts for each logical line, we just sum up in one loop, working backward from the end, to find out how many logical lines we can include.
-Then we actually print starting from that logical line, skipping some physical lines if necessary, so we print the correct information in the correct order but without scrolling the terminal.
-For example, if there were space for 3 more physical lines, and we had one physical line in the last logical line and 5 physical lines in the penultimate logical line as per the line mapping, then we would start printing from the penultimate logical line, but skip the first three physical lines of that output (by skipping over terminal_cols * 3 bytes of that logical line) and then we would print the last two physical lines of that logical line, and then print the remaining logical (and physical) last line.
-*/
-
-void print_last_lines(ui_state* state, line_mapping* lm, span block, int bottom_lines_to_show) {
-    int physical_lines_needed = bottom_lines_to_show;
-    int logical_line_start_index = lm->total_logical_lines - 1;
-    int physical_lines_counted = 0;
-
-    // Backtrack to find the logical start line for printing bottom lines
-    for (int i = lm->total_logical_lines - 1; i >= 0 && physical_lines_needed > 0; --i) {
-        physical_lines_needed -= lm->physical_lines[i];
-        logical_line_start_index = i;
-        physical_lines_counted += lm->physical_lines[i];
-    }
-
-    // Adjust the starting byte if we're skipping physical lines within the first logical line to print
-    int skip_physical_lines = physical_lines_counted - bottom_lines_to_show;
-    int skip_bytes = skip_physical_lines * state->terminal_cols; // This simplification assumes uniform line length, adjust as needed
-
-    for (int i = logical_line_start_index; i < lm->total_logical_lines; ++i) {
-        int line_start_offset = lm->line_offsets[i];
-        int line_end_offset = (i < lm->total_logical_lines - 1) ? lm->line_offsets[i + 1] : (block.end - block.buf);
-        
-        // Adjust start offset for the first line if we're skipping bytes
-        if (i == logical_line_start_index) {
-            line_start_offset += skip_bytes;
-        }
-
-        // Ensure we don't exceed the block bounds when adjusting
-        line_start_offset = line_start_offset < (block.end - block.buf) ? line_start_offset : (block.end - block.buf);
-        
-        int line_length = line_end_offset - line_start_offset;
-        char* line_buffer = (char*)malloc(line_length + 1); // +1 for null-terminator
-        memcpy(line_buffer, block.buf + line_start_offset, line_length);
-        line_buffer[line_length] = '\0'; // Ensure string is null-terminated
-
-        prt("%s", line_buffer); // Print the line; prt handles formatting and appending
-
-        free(line_buffer); // Clean up
-    }
 }
 
 /* #printsingle
@@ -1541,15 +1494,16 @@ In handle_keystroke, we support the following single-char inputs:
 - q, which exits the process cleanly (with prt("goodbye\n"); flush(); exit(0))
 
 Before the function itself we write function declarations for all helper functions needed.
-- edit_current_block(ui_state*)
-- rewrite_current_block_with_llm(ui_state*)
-- compile(ui_state*)
-- replace_code_clipboard(ui_state*)
-- toggle_visual(ui_state*)
-- start_search(ui_state*)
-- settings_mode(ui_state*)
+- edit_current_block()
+- rewrite_current_block_with_llm()
+- compile()
+- replace_code_clipboard()
+- toggle_visual()
+- start_search()
+- settings_mode()
 
 To get the help text we can basically copy the lines above, except formatted nicely for terminal output.
+We call terpri() on the first line of this function (just to separate output from any handler function from the ruler line).
 */
 
 
@@ -1557,16 +1511,17 @@ To get the help text we can basically copy the lines above, except formatted nic
 
 // Forward declarations of helper functions
 void edit_current_block(ui_state*);
-void rewrite_current_block_with_llm(ui_state*);
-void compile(ui_state*);
+void rewrite_current_block_with_llm();
+void compile();
 void replace_code_clipboard(ui_state*);
 void toggle_visual(ui_state*);
 void start_search(ui_state*);
 void settings_mode(ui_state*);
 void print_help(void);
-void print_current_blocks(ui_state*);
+void print_current_blocks();
 
-void handle_keystroke(char input, ui_state* state) {
+void handle_keystroke(char input) {
+  terpri();
     switch (input) {
         case 'j':
             if (state->current_index < state->blocks.n - 1) {
@@ -1629,17 +1584,7 @@ void print_help(void) {
     flush(); // Ensure the help text is displayed immediately
 }
 /*
-In clear_display() we clear the terminal by printing some escape codes (with prt and flush as usual).
-*/
-
-
-void clear_display() {
-    prt("\033[2J\033[H"); // Escape codes to clear the screen and move the cursor to the top-left corner
-    flush();
-}
-/*
 In print_block, similar to our earlier print_current_block, we clear the display and print the block, the only difference is that in print_block the index is given by an argument instead of print_current_block always printing the current index from the state.
-*/
 
 
 void print_block(ui_state* state, int index) {
@@ -1649,6 +1594,7 @@ void print_block(ui_state* state, int index) {
         flush(); // Flush the output to display the block
     }
 }
+*/
 /*
 To support search mode, we have a static buffer of length 256 which can be used to search and which the user types into when in search mode.
 
@@ -1693,7 +1639,7 @@ void start_search(ui_state* state) {
                 state->search.end--; // Shorten the span
                 if (state->search.end == state->search.buf) {
                     // If we've deleted the initial "/", exit search mode
-                    print_current_blocks(state);
+                    print_current_blocks();
                     return;
                 }
             }
@@ -1755,7 +1701,6 @@ On the last line we will print the entire search string (including the slash).
 (We can do this with wrs(), we don't need to add a newline as we are already on the last line of the window anyway.)
 Before returning from the function we call flush() as we are responsible for updating the display.
 */
-
 
 void perform_search(ui_state* state) {
     clear_display();
@@ -1824,34 +1769,102 @@ void perform_search(ui_state* state) {
 
     flush(); // Ensure display is updated
 }
+/*
+In next_line_limit(span* s, int n) we are given a span and a length limit.
+We return a span which is a prefix of s.
+If the first n characters do not contain newline, and the n+1th character is also not a newline, then we return a span, not ending in newline, of n characters.
+If the first n characters do not contain newline but n+1 does, we include n+1 characters, including the newline.
+Otherwise, there is a newline within the first n characters, we return n or fewer characters with the last one being the newline.
+We also set s->buf to contain the rest of the span not in the returned prefix.
+*/
 
-void print_top_lines(ui_state* state, line_mapping* lm, span block, int lines_to_print) {
-    int lines_printed = 0;
-    for (int i = 0; i < lm->total_logical_lines && lines_printed < lines_to_print; i++) {
-        int line_length = (i < lm->total_logical_lines - 1) ? lm->line_offsets[i + 1] - lm->line_offsets[i] : block.end - (block.buf + lm->line_offsets[i]);
-        span line_span = {block.buf + lm->line_offsets[i], block.buf + lm->line_offsets[i] + line_length};
-        wrs(line_span); // Writes the span to the output
-        lines_printed += lm->physical_lines[i];
+
+span next_line_limit(span* s, int n) {
+    span result = {s->buf, s->buf}; // Initialize result span to start of input span
+    if (s->buf == NULL || n <= 0) return result; // Check for null pointer or non-positive length
+
+    int i;
+    for (i = 0; i < n && (s->buf + i) < s->end; i++) {
+        if (s->buf[i] == '\n') {
+            result.end = s->buf + i + 1; // Include the newline in the result
+            break;
+        }
+    }
+
+    if (i == n) { // Reached the length limit without encountering a newline
+        if ((s->buf + n) < s->end && s->buf[n] == '\n') {
+            result.end = s->buf + n + 1; // Include the next character if it is a newline
+        } else {
+            result.end = s->buf + n; // Just include up to the limit
+        }
+    }
+
+    s->buf = result.end; // Advance the start of the input span past the returned prefix
+    return result;
+}
+/*
+In print_ruler we use prt to show the number of blocks and the currently selected block, on a line without a newline.
+*/
+
+void print_ruler(ui_state* state) {
+    prt("Total Blocks: %d, Current Block: %d", state->blocks.n, state->current_index + 1);
+    // No newline as specified
+}
+/*
+In print_single_block_with_skipping we get ui state and a block index.
+For now, we first calculate whether the block fits on the screen.
+First, we set a variable remaining_rows which we initialize with state->terminal_rows and decrement as we print lines of output.
+First we print a line "Block N" and decrement the remaining rows by one.
+Invariant: remaining_rows always is the number of untouched rows of remaining terminal area.
+Then, in a loop we call next_line_limit(span*,int) with a copy of the block and state->terminal_cols until remaining rows is one, or the copy of the block is empty.
+Next_line_limit() returns a prefix span representing the next physical line.
+It is either exactly terminal_cols chars, not containing a newline, or up to terminal_cols + 1 chars, ending with a newline.
+The only exception may be the last block in a file, which may not end in a newline if the file does not end in one.
+We always print the line, using wrs().
+We test if the line is shorter than terminal cols. WE PUT THIS RESULT IN A VARIABLE "is_short".
+If the line is a short, then we test if the last char of the line is a newline (i.e. len() > 0 and end[-1] == '\n').
+We put this result in a variable `contains_newline`.
+If is_short is true and contains_newline is false, we call terpri().
+Now that we have printed the line, we decrement remaining_rows, and if it is 1, we stop and call print_ruler().
+If we run out of block before we run out of remaining rows, then we add blank lines up to the end of the screen anyway, and still print our ruler line in the same place.
+*/
+
+void print_single_block_with_skipping(ui_state* state, int block_index) {
+    if (block_index < 0 || block_index >= state->blocks.n) return; // Validate block index
+
+    int remaining_rows = state->terminal_rows - 1;
+    prt("Block %d\n", block_index + 1);
+    remaining_rows--;
+
+    span block = state->blocks.s[block_index];
+    span block_copy = block; // Copy of the block span to be consumed by next_line_limit
+
+    while (remaining_rows > 0 && !empty(block_copy)) {
+        span line = next_line_limit(&block_copy, state->terminal_cols);
+        int is_short = len(line) < state->terminal_cols;
+        int contains_newline = len(line) > 0 && line.end[-1] == '\n';
+
+        wrs(line);
+        if (is_short && !contains_newline) {
+            terpri(); // Print newline if the line is short and doesn't end with a newline
+        }
+        remaining_rows--;
+
+        if (remaining_rows == 0) {
+            print_ruler(state);
+            break;
+        }
+    }
+
+    // If we have remaining rows after printing the block, fill them with blank lines
+    while (remaining_rows > 0) {
+        terpri();
+        remaining_rows--;
+        if (remaining_rows == 0) {
+            print_ruler(state);
+        }
     }
 }
-
-void print_single_block_with_skipping(ui_state* state, line_mapping* lm, int block_index) {
-    prt("Block %d\n", block_index + 1); // Print block header
-
-    int half_screen_height = (state->terminal_rows / 2) - 10; // Half the screen height, minus one for the header
-
-    // Print the top lines
-    print_top_lines(state, lm, state->blocks.s[block_index], half_screen_height);
-
-    // Calculate total and skipped lines
-    int total_lines = lm->total_physical_lines;
-    int lines_to_skip = total_lines - (2 * half_screen_height);
-    prt("[...skipping %d of %d lines...]\n", lines_to_skip, total_lines);
-
-    // Print the last lines
-    print_last_lines(state, lm, state->blocks.s[block_index], half_screen_height);
-}
-
 /*
 In print_physical_lines, we get the ui state, a span, and a number of lines (in that order).
 We can use next_line on the span (which is passed to us by value, so we can freely modify it without side effects to the caller) to get each logical line, and then we use the terminal_cols on the state to determine the number of physical lines that each one will require.
@@ -1915,7 +1928,7 @@ void finalize_search(ui_state* state) {
     }
 
     state->search = nullspan(); // Reset search to indicate exit from search mode
-    print_current_blocks(state); // Refresh the display
+    print_current_blocks(); // Refresh the display
 }
 
 /* Settings mode.
@@ -1941,21 +1954,25 @@ We'll read our configuration file into that space.
 
 After we read the file into cmp, we get a span back from our library method containing the file contents.
 We then can use next_line() in a loop to process them one by one.
-First we look for ":", which we can do with spanspan, and if it is not found, we skip the line.
-Spanspan returns the entire rest of the haystack input, from the start of the match to the end.
-After the colon we'll skip any whitespace, and then consider of the line to be the value.
+First we look for ":" with find_char, and if it is not found, we skip the line.
+After the colon we'll skip any whitespace with an isspace() loop and then consider the rest of the line to be the value.
+(Note that we don't trim whitespace off the end, something maybe worth documenting elsewhere for config file users).
 Next_line has already stripped the newline from the end so we don't need to do that.
-Then we can compare the key part before the colon with our list of configuration values above.
-If it matches any of them, then we set the corresponding member of the ui state, which always named the same as the config key name.
+
+Next, we compare the key part before the colon with our list of configuration values above, and if it matches any of them, we set the corresponding member of the ui state, which is always named the same as the config key name.
 The values of the config keys will always be spans.
 We have CONFIG_FIELDS defined above, we use that here with an X macro.
 */
 
 void parse_config(ui_state* state, char* config_filename) {
     span cmp_free_space = {cmp.end, cmp_space + BUF_SZ};
+    prt("conf: %s\n", config_filename);flush();
 
     // Read the configuration file into cmp space
     span config_content = read_file_into_span(config_filename, cmp_free_space);
+
+    /* *** manual fixup *** */
+    cmp.end = config_content.end; // avoid later uses of cmp space clobbering our conf vars
 
     // Process each line of the configuration
     while (!empty(config_content)) {
@@ -1971,8 +1988,8 @@ void parse_config(ui_state* state, char* config_filename) {
             key_span = (span){line.buf, line.buf + colon};
             // Skip colon and any whitespace following it
             value_span.buf = key_span.end + 1;
-            //while (*value_span.buf == ' ' || *value_span.buf == '\t') value_span.buf++;
-            while(isspace(*value_span.buf))value_span.buf++;
+            while (*value_span.buf == ' ' || *value_span.buf == '\t') value_span.buf++;
+            //while(isspace(*value_span.buf))value_span.buf++;
             value_span.end = line.end;
         }
 
@@ -1985,6 +2002,200 @@ void parse_config(ui_state* state, char* config_filename) {
 }
 
 void settings_mode(ui_state* state){}
+
+/*
+In read_line, we get a span pointer to some space that we can use to store input from the user.
+
+We first print our prompt, which is "> ".
+
+Recall that we use prt() as always.
+
+We handle some basic line editing using our getch() in a loop, until enter is hit.
+At that point we return a span containing the user's input.
+The span which was passed in will have been shortened such that .end of our return value is now the .buf of the passed-in span.
+(In this way, the caller can perform other necessary adjustments, or use the remaining buffer area in a loop etc.)
+
+The line editing we support:
+
+- all kinds of backspaces shorten the span by one and redraw the line (using ANSI escapes and \r).
+- enter returns.
+- everything else just gets appended to our span, which it extends.
+*/
+
+
+
+#include <stdio.h>
+
+span read_line(span* buffer) {
+    prt("> ");
+    flush();
+
+    span input = {buffer->buf, buffer->buf}; // Initialize input span to start at buffer start
+
+    while (1) {
+        char ch = getch(); // Read a single character from input
+
+        if (ch == '\n') {
+            prt("\n"); // Newline for visual separation of input
+            break; // Return on enter
+        } else if ((ch == '\b' || ch == 127) && input.buf < input.end) {
+            // Handle backspace (ASCII BACKSPACE and DEL)
+            input.end--; // Shorten the span by one
+            prt("\033[2K\r> %.*s", (int)(input.end - input.buf), input.buf); // Redraw the line
+        } else {
+            *input.end++ = ch; // Append character to span and extend it
+            prt("%c", ch); // Echo the character
+        }
+        flush(); // Ensure output is updated immediately
+    }
+
+    buffer->buf = input.end; // Update the original buffer to point to the end of the input
+    return input; // Return the span containing the user's input
+}
+/*
+In save_conf(), we simply rewrite the conf file to reflect any settings that may have been changed.
+
+First we will write into the cmp space the current configuration.
+Next, we will write that into the file named by state.config_file_path.
+Finally we can shorten the cmp space back to what it was.
+
+First we store a span that has buf pointing to the current cmp.end.
+Then we call prt2cmp() and use prt to print a line for each config var as described below.
+Then we call prt2std().
+Next we set the .end of that span to be the current cmp.end.
+
+Then we call write_to_file_span with the span and the configuration file name.
+Finally we shorten cmp back to what it was, since the contents have been written out we no longer need them around.
+
+To print a config var, we print the name, a colon and single space, and then the value itself followed by newline.
+(We currently assume that none of our conf vars contain newlines (a safe assumption, as if they did we'd also have no way to read them in).)
+*/
+
+
+void save_conf() {
+    span start = {cmp.end, cmp.end};
+    prt2cmp();
+
+    #define X(name) prt(#name ": %.*s\n", len(state->name), state->name.buf);
+    CONFIG_FIELDS
+    #undef X
+
+    prt2std();
+    start.end = cmp.end;
+
+    write_to_file_span(start, state->config_file_path, 1);
+    cmp.end = start.buf;
+}
+/*
+In check_conf_vars() we test the state for all essential configuration variables and if any is missing we prompt the user to set that.
+
+The essential configuration variables, along with the reason why each is required, are:
+
+blockdef: must be either "Python" or "C", determines how blocks start and also where the comment part ends and code part starts. For Python, both are triple-quote, for C the block comment syntax is used.
+revdir: we save a revision every time you edit a block, this is where the revisions will be stored (.cmpr/revs is a good choice).
+tmpdir: we store a copy of a block for you to edit in your editor with the "e" key, this is where those live, can be .cmpr/tmp or a regular tmpdir like /tmp.
+projfile: this is the main file that you are editing, all your blocks will live in this file (until we have directory-mode support coming soon).
+
+TODO: probably all the above "config-related metadata" should be in one place in a table for all the conf vars; we'll do that later.
+For now, a local macro cleans up this code quite a bit.
+
+For each missing variable in the order given, we print a suitable message explaining what it is and why it is required (inspired by the above).
+We try to include all the relevant information from the above about what the conf var is and why it's required, but fitting the explanation in a sentence or two at most. 
+
+We then call read_line to get the new value from the user.
+For the buffer space to use we will first call cmp_compl() to get the complement of cmp space as a span.
+After read_line returns we will always set cmp.end to point to the end of the returned span; this makes sure nothing else uses that space later.
+
+Once we have set all the required conf vars, if any of them were missing, the we call save_conf() which just rewrites the conf file.
+*/
+
+ /*
+void check_conf_vars() {
+    int need_save = 0;
+    span buffer = cmp_compl();
+
+    if (empty(state->blockdef)) {
+        prt("blockdef is missing: must be either \"Python\" or \"C\".\n");
+        state->blockdef = read_line(&buffer);
+        need_save = 1;
+    }
+    if (empty(state->revdir)) {
+        prt("revdir is missing: where revisions are stored (.cmpr/revs is recommended).\n");
+        state->revdir = read_line(&buffer);
+        need_save = 1;
+    }
+    if (empty(state->tmpdir)) {
+        prt("tmpdir is missing: where temporary edit files are stored (.cmpr/tmp or /tmp are recommended).\n");
+        state->tmpdir = read_line(&buffer);
+        need_save = 1;
+    }
+    if (empty(state->projfile)) {
+        prt("projfile is missing: the main file you are editing.\n");
+        state->projfile = read_line(&buffer);
+        need_save = 1;
+    }
+
+    cmp.end = buffer.buf; // Update cmp.end to the end of the last read_line call
+
+    if (need_save) {
+        save_conf(state);
+    }
+}
+*/
+
+void check_conf_vars() {
+    int missing_vars = 0;
+
+    #define CHECK_AND_SET(var, message) \
+        if (empty(state->var)) { \
+            prt(message "\n"); \
+            span buffer = cmp_compl(); \
+            assert(buffer.buf == cmp.end); \
+            span input = read_line(&buffer); \
+            state->var = input; \
+            cmp.end = input.end; \
+            missing_vars = 1; \
+        }
+
+    CHECK_AND_SET(blockdef, "blockdef is required to determine block start/end. Set to \"Python\" or \"C\".");
+    CHECK_AND_SET(revdir, "revdir is where revisions are stored. Suggest setting to \".cmpr/revs\".");
+    CHECK_AND_SET(tmpdir, "tmpdir is where temporary block files are stored. Can be \".cmpr/tmp\" or system tmp like \"/tmp\".");
+    CHECK_AND_SET(projfile, "projfile is the main file you are editing. This is required for editing.");
+
+    #undef CHECK_AND_SET
+
+    if (missing_vars) {
+        save_conf(state);
+    }
+}
+
+/*
+In ensure_conf_var() we are given a span, which must be one of the conf vars on the state, a message for the user to explain what the conf setting does and why it is required, and a default or current value that we can pass through to read_line.
+
+If the conf var is not empty, we return immediately.
+
+We call read_line to get the new value from the user.
+For the buffer space to use we will first call cmp_compl() to get the complement of cmp space as a span.
+After read_line returns we will always set cmp.end to point to the end of the returned span; this makes sure nothing else uses that space later.
+
+Then we call save_conf() which just rewrites the conf file.
+*/
+
+void ensure_conf_var(span* var, span message, span default_value) {
+    if (!empty(*var)) return; // If the configuration variable is already set, return immediately
+
+    prt("%.*s\n", len(message), message.buf); // Print the message explaining the configuration setting
+    if (!empty(default_value)) {
+        prt("Default: %.*s\n", len(default_value), default_value.buf); // Show default value if provided
+    }
+
+    span buffer = cmp_compl(); // Get complement of cmp space as a span for input
+    *var = read_line(&buffer); // Read new value from user
+
+    cmp.end = buffer.buf; // Update cmp.end to the end of the returned span from read_line
+
+    save_conf(); // Rewrite the configuration file with the updated setting
+}
 /*
 To edit the current block we first write it out to a file, which we do with a helper function write_to_file(span, char*).
 
@@ -1993,6 +2204,8 @@ Once the file is written, we then launch the user's editor of choice on that fil
 That function will wait for the editor process to exit, and will indicate to us by its return value whether the editor exited normally.
 
 If so, then we call another function which will then read the edited file contents back in and handle storing the new version.
+
+If not, we print a short message to let the user know their changes were ignored.
 */
 
 char* tmp_filename(ui_state* state);
@@ -2016,7 +2229,7 @@ void edit_current_block(ui_state* state) {
       handle_edited_file(filename, state);
     } else {
       // Optionally handle abnormal editor exit
-      printf("Editor exited abnormally. Changes might not be saved.\n");
+      prt("Editor exited abnormally. Changes might not be saved.\n");
     }
 
     // Cleanup: Free the filename if allocated dynamically
@@ -2025,76 +2238,74 @@ void edit_current_block(ui_state* state) {
 }
 
 /*
-To generate a tmp filename for launching the user's editor, we return a string starting with "cmpr/tmp/", assuming that the tool is being used from the home directory as intended, with cmpr/ as a subdirectory of ~.
-We get the ui state as an argument, which we can use later (for example, we might store some metadata about the block or some version information to help recover from crashes), but we aren't using it yet.
+To generate a tmp filename for launching the user's editor, we return a string starting with state->tmpdir.
 For the filename part, we construct a timestamp in a compressed ISO 8601-like format, as YYYYMMDD-hhmmss with just a single dash as separator.
+We return a char* which the caller must free.
+Since state->tmpdir may or may not include a trailing slash we test for and handle both cases.
 */
 
 char* tmp_filename(ui_state* state) {
-  // Allocate memory for the filename
-  // The path will have the format "cmpr/tmp/YYYYMMDD-hhmmss"
-  // Assuming the maximum length for "cmpr/tmp/" prefix and a null terminator
-  char* filename = malloc(sizeof(char) * (9 + 15 + 1)); // "cmpr/tmp/" + "YYYYMMDD-hhmmss" + '\0'
-  if (!filename) {
-    perror("Failed to allocate memory for filename");
-    exit(EXIT_FAILURE);
-  }
+    time_t now = time(NULL);
+    struct tm *tm_now = localtime(&now);
+    char timestamp[16]; // YYYYMMDD-hhmmss
+    snprintf(timestamp, sizeof(timestamp), "%04d%02d%02d-%02d%02d%02d",
+             tm_now->tm_year + 1900, tm_now->tm_mon + 1, tm_now->tm_mday,
+             tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec);
 
-  // Get the current time
-  time_t now = time(NULL);
-  struct tm *tm_now = localtime(&now);
-  if (!tm_now) {
-    perror("Failed to get local time");
-    free(filename);
-    exit(EXIT_FAILURE);
-  }
+    int tmpdir_len = state->tmpdir.end - state->tmpdir.buf;
+    int need_slash = state->tmpdir.buf[tmpdir_len - 1] != '/';
+    int total_len = tmpdir_len + need_slash + sizeof(timestamp); // +1 for potential slash, sizeof includes null terminator
 
-  // Format the timestamp into the allocated string
-  if (strftime(filename, 9 + 15 + 1, "cmpr/tmp/%Y%m%d-%H%M%S", tm_now) == 0) {
-    fprintf(stderr, "Failed to format the timestamp\n");
-    free(filename);
-    exit(EXIT_FAILURE);
-  }
+    char* filename = (char*)malloc(total_len);
+    if (!filename) {
+        perror("Failed to allocate memory for filename");
+        exit(EXIT_FAILURE);
+    }
 
-  return filename;
+    if (need_slash) {
+        snprintf(filename, total_len, "%.*s/%s", tmpdir_len, state->tmpdir.buf, timestamp);
+    } else {
+        snprintf(filename, total_len, "%.*s%s", tmpdir_len, state->tmpdir.buf, timestamp);
+    }
+
+    return filename;
 }
 
 /*
 In launch_editor, we are given a filename and must launch the user's editor of choice on that file, and then wait for it to exit and return its exit code.
 
-We can look in the env for an EDITOR environment variable and use that if it is present, otherwise we will use "vim" "vi" "nano" or "ed" in that order.
+We look in the env for an EDITOR environment variable and use that if it is present, otherwise we will use "vi".
+
+As always, we never write const anywhere in C.
 */
 
 int launch_editor(char* filename) {
-  char* editor = getenv("EDITOR");
-  if (editor == NULL) {
-    editor = "vim"; // Default to vim if EDITOR is not set
-  }
-
-  pid_t pid = fork();
-  if (pid == -1) {
-    perror("fork");
-    exit(EXIT_FAILURE);
-  } else if (pid == 0) {
-    // Child process: replace with the editor process
-    execlp(editor, editor, filename, (char *)NULL);
-
-    // execlp only returns if there's an error
-    perror("execlp");
-    exit(EXIT_FAILURE);
-  } else {
-    // Parent process: wait for the editor to exit
-    int status;
-    waitpid(pid, &status, 0);
-
-    if (WIFEXITED(status)) {
-      return WEXITSTATUS(status); // Return the exit status of the editor
-    } else {
-      return -1; // Indicate failure if the editor didn't exit normally
+    char* editor = getenv("EDITOR");
+    if (editor == NULL) {
+        editor = "vi"; // Default to vi if EDITOR is not set
     }
-  }
-}
 
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork failed");
+        exit(EXIT_FAILURE);
+    } else if (pid == 0) {
+        // Child process
+        execlp(editor, editor, filename, (char*)NULL);
+        // If execlp returns, it means it failed
+        perror("execlp failed");
+        exit(EXIT_FAILURE);
+    } else {
+        // Parent process
+        int status;
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status)) {
+            return WEXITSTATUS(status); // Return the exit status of the editor
+        } else {
+            return -1; // Editor didn't exit normally
+        }
+    }
+}
 /*
 Here in handle_edited_file we are given a file containing new contents of a block, and the ui state.
 What we must do is replace the existing block contents with the new contents of that file, and then write everything out to a new file on disk called a rev.
@@ -2164,7 +2375,7 @@ void handle_edited_file(char* filename, ui_state* state) {
 
   // Now inp correctly represents the new state
   // Update the blocks in ui_state to reflect potential changes
-  state->blocks = find_blocks(state,inp);
+  state->blocks = find_blocks(inp);
 
   // Create a new revision and perform clean-up
   new_rev(state, (char*)filename);
@@ -2173,19 +2384,21 @@ void handle_edited_file(char* filename, ui_state* state) {
 
 
 
+void update_link(char* new_filename);
+
 /*
 Here we store a new revision, given the ui state and a filename which contains a block that was edited.
 The file contents have already been processed, we just get the name so that we can clean up the file when done.
 
 On ui_state we have a span revdir, which would be "cmpr/revs/" for cmpr development itself, but will typically differ between projects.
 We assume this span is set correctly and that the directory exists.
+However, we don't assume that the conf var ends in a slash, so we test for that and handle both cases.
 
 First we construct a path starting with revdir and ending with an ISO 8601-style compact timestamp like 20240501-210759.
 We then write the contents of inp (our global input span) into this file using write_to_file().
 We create a symlink as cmpr/cmpr.c that points to this new rev.
 There might be an existing symlink there, which we want to replace, but there also might be a file there which may have been edited and contain unsaved changes.
-So we have a helper function, update_link, which takes the ui_state, and the filename, and handles all of this.
-We forward declare this function below; all others we already have above.
+So we have a helper function, update_link, which takes the filename, and handles all of this.
 
 Finally we unlink the filename that was passed in, since we have now fully processed it.
 The filename is now optional, since we sometimes also are processing clipboard input, so if it is NULL we skip this step.
@@ -2193,106 +2406,77 @@ The filename is now optional, since we sometimes also are processing clipboard i
 Reminder: we never write `const` in C as it only brings pain.
 */
 
-void update_link(ui_state* state, char* new_filename);
-
 void new_rev(ui_state* state, char* edited_filename) {
-  char new_rev_path[256]; // Buffer to hold the new revision path
-  time_t now = time(NULL);
-  struct tm *tm_now = localtime(&now);
-  if (tm_now == NULL) {
-    perror("Failed to get local time");
-    exit(EXIT_FAILURE);
-  }
+    char new_rev_path[1024]; // Buffer for the new revision path
+    time_t now = time(NULL);
+    struct tm *tm_now = localtime(&now);
 
-  // Constructing the path for the new revision
-  if (strftime(new_rev_path, sizeof(new_rev_path), "cmpr/revs/%Y%m%d-%H%M%S", tm_now) == 0) {
-    fprintf(stderr, "Failed to format timestamp for new revision\n");
-    exit(EXIT_FAILURE);
-  }
-
-  // Write the contents of inp into the newly constructed revision file
-  write_to_file(inp, new_rev_path);
-
-  // Update the symlink "cmpr/cmpr.c" to point to this new revision file
-  update_link(state, new_rev_path);
-
-  // If a filename is provided (not NULL), unlink the temporary file used for editing
-  if (edited_filename != NULL) {
-    if (unlink(edited_filename) == -1) {
-      perror("Failed to unlink the temporary edit file");
-      exit(EXIT_FAILURE);
+    // Check if revdir ends with a slash and construct the new revision path accordingly
+    if (state->revdir.end[-1] == '/') {
+        snprintf(new_rev_path, sizeof(new_rev_path), "%.*s%04d%02d%02d-%02d%02d%02d", 
+                 (int)(state->revdir.end - state->revdir.buf), state->revdir.buf,
+                 tm_now->tm_year + 1900, tm_now->tm_mon + 1, tm_now->tm_mday,
+                 tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec);
+    } else {
+        snprintf(new_rev_path, sizeof(new_rev_path), "%.*s/%04d%02d%02d-%02d%02d%02d", 
+                 (int)(state->revdir.end - state->revdir.buf), state->revdir.buf,
+                 tm_now->tm_year + 1900, tm_now->tm_mon + 1, tm_now->tm_mday,
+                 tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec);
     }
-  }
+
+    write_to_file(inp, new_rev_path);
+    update_link(new_rev_path);
+
+    if (edited_filename != NULL) {
+        unlink(edited_filename);
+    }
 }
 
-
-
-
-
 /*
-We have a shell function that does what we want here, with a few changes:
-
 SH_FN_START
 
 update_symlink() {
   rm -r cmpr/cmpr.c; ln -s $(cd cmpr; find revs | sort | tail -n1; ) cmpr/cmpr.c
-} # don't end block
-
-SH_FN_END
-
-- update_link(ui_state*, char*); is a C function not a shell function
-- instead of the unconditional rm -r, we want to check and see if the existing cmpr/cmpr is a symlink; if not we complain and exit to avoid data loss
-- instead of the find | sort | tail trick to get the latest revision, we are given it directly as an argument
-
-So in fact all we do here is just check if the symlink exists, remove if it does and is only a symlink, and then recreate it.
-Also, the symlink will be created in cmpr/ so it must be relative to cmpr/, meaning that we must strip the leading "cmpr/" from the filename that we are given.
-
-Note that we never write "const" in C code, as this feature simply does not pull its weight.
-*/
-
-void update_link(ui_state* state, char* new_filename) {
-  // Assuming new_filename format is "cmpr/revs/YYYYMMDD-hhmmss"
-  char* symlink_path = "cmpr/cmpr.c";
-  char relative_filename[256]; // To store the relative path
-
-  // Strip the leading "cmpr/" from new_filename for the symlink
-  if (sscanf(new_filename, "cmpr/%s", relative_filename) != 1) {
-    exit_with_error("Failed to strip leading 'cmpr/' from filename");
-  }
-
-  // Check if cmpr/cmpr.c is a symlink
-  struct stat statbuf;
-  if (lstat(symlink_path, &statbuf) == 0) {
-    if (S_ISLNK(statbuf.st_mode)) {
-      // It's a symlink, safe to remove
-      if (unlink(symlink_path) == -1) {
-        exit_with_error("Failed to remove existing symlink");
-      }
-    } else {
-      // The path exists but it's not a symlink; exiting to avoid data loss
-      fprintf(stderr, "Error: '%s' exists and is not a symlink. Operation aborted to prevent data loss.\n", symlink_path);
-      exit(EXIT_FAILURE);
-    }
-  } else if (errno != ENOENT) {
-    // An error other than "not existing" occurred
-    exit_with_error("Unexpected error checking for existing symlink");
-  }
-
-  // Create the new symlink
-  if (symlink(relative_filename, symlink_path) == -1) {
-    exit_with_error("Failed to create new symlink");
-  }
 }
 
-
-
-
-
-
-
+SH_FN_END
+*/
 
 /*
-void rewrite_current_block_with_llm(ui_state *state);
+In update_link, we get a filename which contains a new version of the project file.
+
+We have in state->projfile the path to a main project file, which will typically be a symlink into the state->revdir directory of revisions.
+So in fact all we do here is just check if the symlink exists, remove if it does and is only a symlink, and then recreate it.
+Otherwise we complain and exit to avoid data loss.
+
+Note that we never write "const" in C code, as this feature simply does not pull its weight.
+Since we will need to use some library functions here we use the s pattern with a local buffer to construct a null-terminated string first.
+*/
+
+void update_link(char* new_filename) {
+    char projfile_path[1024];
+    snprintf(projfile_path, sizeof(projfile_path), "%.*s", (int)(state->projfile.end - state->projfile.buf), state->projfile.buf);
+
+    struct stat sb;
+    if (lstat(projfile_path, &sb) == 0) {
+        if (S_ISLNK(sb.st_mode)) {
+            if (unlink(projfile_path) != 0) {
+                perror("Failed to remove existing symlink");
+                exit(EXIT_FAILURE);
+            }
+        } else {
+            fprintf(stderr, "Existing file is not a symlink, operation aborted to prevent data loss.\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    if (symlink(new_filename, projfile_path) != 0) {
+        perror("Failed to create new symlink");
+        exit(EXIT_FAILURE);
+    }
+}
+
+/* #rewrite_current_block_with_llm
 
 Here we call a helper function with the block contents which returns the top part of the block, which is usually a comment, stripping the rest which is usually code.
 It calls another function to turn this comment part into a prompt.
@@ -2309,7 +2493,7 @@ span block_comment_part(span block);
 span comment_to_prompt(span comment);
 void send_to_clipboard(span prompt);
 
-void rewrite_current_block_with_llm(ui_state *state) {
+void rewrite_current_block_with_llm() {
   if (state->current_index < 0 || state->current_index >= state->blocks.n) {
     fprintf(stderr, "Invalid block index.\n");
     return;
@@ -2338,23 +2522,53 @@ void rewrite_current_block_with_llm(ui_state *state) {
 }
 
 /*
-To split out the block_comment_part of a span, we simply look for the first occurrence of star slash on a line by itself in the block.
-We return the span up to this point and including the newline after.
+To split out the block_comment_part of a span, we first write two helper functions, one for C and one for Python.
+
+Then we dispatch based on state->blockdef.
+If this span contains "Python" we call the Python version, and otherwise we call the C version (which therefore is our default).
+
+The helper function takes a span and returns an index offset to the location of the "block comment part terminator".
+For Python this is the triple-quote, and for C it is star slash.
+
+In the main function block_comment_part, we return the span up to and including the comment part terminator, and also including any newlines and whitespace after it.
 */
 
-span block_comment_part(span block) {
-  span result = { .buf = block.buf, .end = block.buf }; // Initialize result span to start of block
-
-  for (unsigned char *p = block.buf; p < block.end - 2; ++p) {
-    // Check if we've found the end_comment pattern
-    if (*p == '*' && *(p + 1) == '/' && *(p + 2) == '\n') {
-      result.end = p + 3; // Include the newline after "*/"
-      break;
+int find_block_comment_end_c(span block) {
+    for (int i = 0; i < len(block) - 1; ++i) {
+        if (block.buf[i] == '*' && block.buf[i + 1] == '/') {
+            return i + 2; // Include the "*/" in the index
+        }
     }
-  }
-  return result;
+    return len(block);
 }
 
+int find_block_comment_end_python(span block) {
+  /* *** manual fixup *** */
+    int first = 0;
+    for (int i = 0; i < len(block) - 2; ++i) {
+        if (first && (block.buf[i] == '"' && block.buf[i + 1] == '"' && block.buf[i + 2] == '"')) {
+            return i + 3; // Include the """ in the index
+        }
+        if (block.buf[i] == '"' && block.buf[i + 1] == '"' && block.buf[i + 2] == '"') first = 1;
+    }
+    return len(block);
+}
+
+span block_comment_part(span block) {
+    int index;
+    if (span_eq(state->blockdef, S("Python"))) {
+        index = find_block_comment_end_python(block);
+    } else {
+        index = find_block_comment_end_c(block);
+    }
+
+    // Find the end of whitespace following the comment terminator
+    while (index < len(block) && isspace(block.buf[index])) {
+        ++index;
+    }
+
+    return (span){block.buf, block.buf + index};
+}
 /*
 In comment_to_prompt, we use the cmp space to construct a prompt around the given block comment.
 
@@ -2364,7 +2578,7 @@ Then we call prt2cmp.
 
 Next we prt the literal string "```c\n".
 Then we use wrs to write the span passed in as our argument.
-Finally we write "```\n\n" and an instruction, which is usually "Write the function.".
+Finally we write "```\n\n" and an instruction, which is usually "Write the function. Reply only with code. Do not include comments.".
 
 Next we call prt2std to go back to the normal output mode.
 
@@ -2380,9 +2594,16 @@ span comment_to_prompt(span comment) {
   prt2cmp();
 
   // Start writing the prompt
-  prt("```c\n"); // Begin code block
-  wrs(comment);  // Write the comment span
-  prt("```\n\nWrite the function. Reply only with code.\n"); // End code block and add instruction
+  /* *** manual fixup *** */
+  if (span_eq(state->blockdef, S("Python"))) {
+    prt("```python\n");
+    wrs(comment);
+    prt("```\n\nWrite the function. Reply only with code. Avoid using the code_interpreter.\n");
+  } else {
+    prt("```c\n"); // Begin code block
+    wrs(comment);  // Write the comment span
+    prt("```\n\nWrite the function. Reply only with code. Do not include comments.\n"); // End code block and add instruction
+  }
 
   // Switch back to standard output space to avoid side-effects
   prt2std();
@@ -2392,131 +2613,126 @@ span comment_to_prompt(span comment) {
 
   return return_span;
 }
-
-
-char *cbsend = "xclip -i -selection clipboard";
-
 /*
 In send_to_clipboard, we are given a span and we must send it to the clipboard using a user-provided method, since this varies quite a bit between environments.
 
-We assume there is a global char* variable "cbsend" available.
-An example of what this string might contain is "xclip -i -selection clipboard" or "pbcopy".
+There is a global ui_state* variable "state" with a span cbcopy on it.
+
+Before we do anything else we ensure this is set by calling ensure_conf_var with the message "The command to pipe data to the clipboard on your system. For Mac try \"pbcopy\", Linux \"xclip -i -selection clipboard\", Windows please let me know and I'll add something here".
+
 We run this as a command and pass the span data to its stdin.
+We use the `s()` library method and heap buffer pattern to get a null-terminated string for popen from our span conf var.
+
+We complain and exit if anything goes wrong as per usual.
 */
 
 void send_to_clipboard(span content) {
-  FILE* pipe = popen(cbsend, "w");
-  if (pipe == NULL) {
-    perror("Failed to open clipboard send command");
-    exit(EXIT_FAILURE);
-  }
+    ensure_conf_var(&(state->cbcopy), S("The command to pipe data to the clipboard on your system. For Mac try \"pbcopy\", Linux \"xclip -i -selection clipboard\", Windows please let me know and I'll add something here"), S(""));
 
-  fwrite(content.buf, sizeof(char), len(content), pipe);
+    char command[2048];
+    snprintf(command, sizeof(command), "%.*s", (int)(state->cbcopy.end - state->cbcopy.buf), state->cbcopy.buf);
 
-  if (pclose(pipe) == -1) {
-    perror("Failed to close clipboard send command");
-    exit(EXIT_FAILURE);
-  }
+    FILE* pipe = popen(command, "w");
+    if (!pipe) {
+        perror("Failed to open pipe for clipboard command");
+        exit(EXIT_FAILURE);
+    }
+
+    fwrite(content.buf, sizeof(char), content.end - content.buf, pipe);
+
+    if (pclose(pipe) != 0) {
+        perror("Failed to execute clipboard command");
+        exit(EXIT_FAILURE);
+    }
 }
-
-
-
-
-/* #compile(ui_state*)
+/* #compile()
 
 In compile(), we take the state and execute buildcmd, which is a config parameter.
 
-First, we prt "Compiling" with a newline and flush so the user sees something before the compiler process, which may be slow to produce output.
+First we call ensure_conf_var(state->buildcmd), since we are about to use that setting.
 
-Next we print the command that we are going to run.
+Next we print the command that we are going to run and flush, so the user sees something before the compiler process, which may be slow to produce output.
 
 Then we use system(3) on a 2048-char buf which we allocate and statically zero.
 Our s() interface (s(char*,int,span)) lets us set buildcmd as a null-terminated string beginning at buf.
 
 We wait for another keystroke before returning if the compiler process fails, so the user can read the compiler errors (later we'll handle them better).
-(Remember to call flush() before getch() so the user sees the prompt (which is "Compile failed, press any key to continue...\n").)
+(Remember to call flush() before getch() so the user sees the prompt (which is "Compile failed, press any key to continue...").)
 
 On the other hand, if the build succeeds, we don't need the extra keystroke and go back to the main loop after a 1s delay so the user has time to read the success message before the main loop refreshes the current block.
 In this case we prt "Compile succeeded" on a line.
-We aren't using ui_state for anything yet here, but later we'll put something on it to provide more status info to the user.
+
+(We aren't doing this yet, but later we'll put something on the state to provide more status info to the user.)
 */
 
-void compile(ui_state* state) {
-  prt("Compiling...\n");
-  flush();
-
-  char buf[2048] = {0};
-  s(buf,2048,state->buildcmd);
-
-  int status = system(buf);
-
-  if (status != 0) {
-    prt("Compile failed, press any key to continue...\n");
+void compile() {
+    ensure_conf_var(&state->buildcmd, S("The build command will be run every time you hit 'b' and should build the code you are editing (typically in projfile)"), nullspan());
+    
+    char buf[2048] = {0};
+    s(buf, sizeof(buf), state->buildcmd);
+    
+    prt("Running command: %s\n", buf);
     flush();
-    getch(); // Wait for a keystroke before returning
-  } else {
-    prt("Compile succeeded\n");
-    flush();
-    sleep(1); // 1s delay for the user to read the message
-  }
+    
+    int status = system(buf);
+    
+    if (status != 0) {
+        prt("Compile failed, press any key to continue...\n");
+        flush();
+        getch();
+    } else {
+        prt("Compile succeeded\n");
+        flush();
+        sleep(1); // Give time for the user to read the message
+    }
 }
-
-
 /*
-In replace_code_clipboard, we pipe in the result of running the global variable "cbpaste".
+In replace_code_clipboard, we pipe in the result of running state->cbpaste.
 
-This will contain a command like "xclip -o -selection clipboard" (our default) or "pbpaste" on Mac, etc. depending on platform or user settings.
+First we call ensure_conf_var with the message "Command to get text from the clipboard on your platform (Mac: pbpaste, Linux: try xclip -o -selection clipboard, Windows: ???)".
+
+This will contain a command like "xclip -o -selection clipboard" (our default) or "pbpaste" on Mac, and comes from our conf file.
 
 We use the cmp buffer to store this data, starting from cmp.end (which is always somewhere before the end of the cmp space big buffer).
-We set aside a reference to cmp.end before we do anything, so we can reset it at the end.
 
 The space that we can use is the difference between cmp_space + BUF_SZ, which locates the end of the cmp_space, and cmp.end, which is always less than this limit.
 
 We then create a span, which is pointing into cmp, capturing the new data we just captured.
 
-We call another function, replace_block_code_part(state, span) which takes this new span and the current state.
+We call another function, replace_block_code_part(span) which takes this new span and the current state.
 It is responsible for all further processing, notifications to the user, etc.
-Once this function returns we then reset cmp.end back to what it was.
 
-(This invalidates the span we created, but that's fine since it's about to go out of scope and we're done with it.)
+Note: when this function returns, cmp.end is unchanged.
+This invalidates the span we created, but that's fine since it's about to go out of scope and we're done with it.
 */
 
-char* cbpaste = "xclip -o -selection clipboard";
-
-void replace_block_code_part(ui_state* state, span new_code);
+void replace_block_code_part(span new_code);
 
 void replace_code_clipboard(ui_state* state) {
-  unsigned char* original_cmp_end = cmp.end; // Save the original cmp.end
+    ensure_conf_var(&(state->cbpaste), S("Command to get text from the clipboard on your platform (Mac: pbpaste, Linux: try xclip -o -selection clipboard, Windows: \?\?\?)"), S(""));
+    char command[2048];
+    snprintf(command, sizeof(command), "%.*s", (int)(state->cbpaste.end - state->cbpaste.buf), state->cbpaste.buf);
 
-  FILE* pipe = popen(cbpaste, "r");
-  if (pipe == NULL) {
-    perror("Failed to execute cbpaste command");
-    exit(EXIT_FAILURE);
-  }
+    FILE* pipe = popen(command, "r");
+    if (!pipe) {
+        perror("Failed to open clipboard paste command");
+        exit(EXIT_FAILURE);
+    }
 
-  // Calculate the maximum space available in cmp buffer
-  size_t max_space = (cmp_space + BUF_SZ) - cmp.end;
-  size_t bytes_read = fread(cmp.end, 1, max_space, pipe);
-  if (ferror(pipe)) {
-    perror("Failed to read from cbpaste command");
+    span buffer = cmp_compl();
+    size_t bytes_read = fread(buffer.buf, 1, buffer.end - buffer.buf, pipe);
+    if (ferror(pipe)) {
+        perror("Failed to read clipboard content");
+        pclose(pipe);
+        exit(EXIT_FAILURE);
+    }
     pclose(pipe);
-    exit(EXIT_FAILURE);
-  }
 
-  pclose(pipe);
-
-  // Create a span that captures the new data from clipboard
-  span clipboard_data = {cmp.end, cmp.end + bytes_read};
-
-  // Process the new data, replacing the current block's code part
-  replace_block_code_part(state, clipboard_data);
-
-  // Reset cmp.end back to what it was before we added the clipboard data
-  cmp.end = original_cmp_end;
+    span new_code = {buffer.buf, buffer.buf + bytes_read};
+    replace_block_code_part(new_code);
 }
-
 /*
-Here we get the ui state and a span (into cmp space) which contains the new code part of the current block.
+Here we get a span (into cmp space) which contains the new code part of the current block.
 
 Note: to get the length of a span, use len().
 
@@ -2538,11 +2754,10 @@ Then we simply copy the newlines and the new code into inp.
 
 As before we then find the current locations of the blocks and update the state.
 
-Once all this is done, we call new_rev.
-We'll assume that function has been updated to allow NULL for the filename argument, since there's no filename here.
+Once all this is done, we call new_rev, passing NULL for the filename argument, since there's no filename here.
 */
 
-void replace_block_code_part(ui_state* state, span new_code) {
+void replace_block_code_part(span new_code) {
   span original_block = state->blocks.s[state->current_index];
   span comment_part = block_comment_part(original_block);
 
@@ -2568,7 +2783,7 @@ void replace_block_code_part(ui_state* state, span new_code) {
   memcpy(current_pos, new_code.buf, len(new_code));
 
   // Update the blocks since the contents of inp have changed
-  state->blocks = find_blocks(state,inp);
+  state->blocks = find_blocks(inp);
 
   // Store a new revision, now allowing NULL as filename argument
   new_rev(state, NULL);
