@@ -1,6 +1,6 @@
 # CMPr
 
-## Programming in English
+## Program in English!
 
 Thesis: the future of programming is driving an LLM to write code.
 Why?
@@ -42,22 +42,29 @@ You could edit the prompt, but usually you'll just hit Enter.
 ChatGPT writes the code, you can click "copy code" in the ChatGPT window, and then hit "R" (uppercase) back in cmpr to replace everything after the comment (i.e. the code half of the block) with the clipboard contents.
 Mnemonic: "r" gets the LLM to "rewrite" (or "replace") the code to match the comment (and "R" is the opposite of "r").
 
-You can currently also hit "q" to quit, "?" for short help, and "b" to build by running some build command that you specify.
+Hit "q" to quit, "?" for short help, and "b" to build by running some build command that you specify.
 
 ## Quick start:
 
 1. Get the code and build; assuming git repo at ~/cmpr and you have gcc, `gcc -o cmpr/cmpr cmpr/cmpr.c -lm`.
 2. Put the executable in your path with e.g. `sudo install cmpr/cmpr /usr/local/bin`.
-3. There will be a `cmpr --init` command soon but in the meantime, cd to the directory you want to work in and run `mkdir .cmpr .cmpr/revs .cmpr/tmp; touch .cmpr/conf`. This marks that directory so the cmpr tool can treat it as a project directory.
+3. Go to directory you want to work in and run `cmpr --init`.
 4. `export EDITOR=emacs` or whatever editor you use, or vi will be run by default.
 5. Run `cmpr` in this directory, and it will ask you some configuration questions.
    If you want to change the answers later, you can edit the .cmpr/conf file.
+
+## Caveats:
 
 Developed on Linux; volunteers and bug reports on other environments gladly welcomed!
 We are using "xclip" to send the prompts to the clipboard.
 This really improves quality of life over manual copying and pasting of comments into a ChatGPT window.
 The first time you use the 'r' or 'R' commands you will be prompted for the command to use to talk to the clipboard on your system.
 For Mac you would use "pbcopy" and "pbpaste".
+
+This tool is developed in one week; we are still light on features.
+We only really support C and Python; mostly this is around syntax of where blocks start (in C we use block comments, and triple-quoted strings in Python).
+It's not hard to extend the support to other languages, just ask for what you want in the discord and it may happen.
+It's not hard to contribute, you don't need to know C well, but you do need to be able to read it (you can't trust the code from GPT without close examination).
 
 ## More
 

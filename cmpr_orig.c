@@ -2,7 +2,7 @@
 
 # CMPr
 
-## Programming in English
+## Program in English!
 
 Thesis: the future of programming is driving an LLM to write code.
 Why?
@@ -44,22 +44,29 @@ You could edit the prompt, but usually you'll just hit Enter.
 ChatGPT writes the code, you can click "copy code" in the ChatGPT window, and then hit "R" (uppercase) back in cmpr to replace everything after the comment (i.e. the code half of the block) with the clipboard contents.
 Mnemonic: "r" gets the LLM to "rewrite" (or "replace") the code to match the comment (and "R" is the opposite of "r").
 
-You can currently also hit "q" to quit, "?" for short help, and "b" to build by running some build command that you specify.
+Hit "q" to quit, "?" for short help, and "b" to build by running some build command that you specify.
 
 ## Quick start:
 
 1. Get the code and build; assuming git repo at ~/cmpr and you have gcc, `gcc -o cmpr/cmpr cmpr/cmpr.c -lm`.
 2. Put the executable in your path with e.g. `sudo install cmpr/cmpr /usr/local/bin`.
-3. There will be a `cmpr --init` command soon but in the meantime, cd to the directory you want to work in and run `mkdir .cmpr .cmpr/revs .cmpr/tmp; touch .cmpr/conf`. This marks that directory so the cmpr tool can treat it as a project directory.
+3. Go to directory you want to work in and run `cmpr --init`.
 4. `export EDITOR=emacs` or whatever editor you use, or vi will be run by default.
 5. Run `cmpr` in this directory, and it will ask you some configuration questions.
    If you want to change the answers later, you can edit the .cmpr/conf file.
+
+## Caveats:
 
 Developed on Linux; volunteers and bug reports on other environments gladly welcomed!
 We are using "xclip" to send the prompts to the clipboard.
 This really improves quality of life over manual copying and pasting of comments into a ChatGPT window.
 The first time you use the 'r' or 'R' commands you will be prompted for the command to use to talk to the clipboard on your system.
 For Mac you would use "pbcopy" and "pbpaste".
+
+This tool is developed in one week; we are still light on features.
+We only really support C and Python; mostly this is around syntax of where blocks start (in C we use block comments, and triple-quoted strings in Python).
+It's not hard to extend the support to other languages, just ask for what you want in the discord and it may happen.
+It's not hard to contribute, you don't need to know C well, but you do need to be able to read it (you can't trust the code from GPT without close examination).
 
 ## More
 
@@ -513,6 +520,12 @@ void exit_with_error(char *error_message) {
   exit(EXIT_FAILURE);
 }
 
+span read_file_S_into_span(span filename, span buffer) {
+  char path[2048];
+  s(path,2048,filename);
+  return read_file_into_span(path, buffer);
+}
+
 span read_file_into_span(char* filename, span buffer) {
   // Open the file
   int fd = open(filename, O_RDONLY);
@@ -847,9 +860,7 @@ index() {
 }
 
 build() {
-  ( cd cmpr
-    gcc -o cmpr cmpr.c
-  )
+  gcc -o cmpr/dist/cmpr -g cmpr/cmpr.c -lm
 }
 
 clipboard_copy() {
@@ -934,6 +945,7 @@ We declare a ui_state variable `state` which we'll pass around for ever after.
 
 Just above main, we declare a global ui_state* called state, which will allow us to not pass around the ui_state singleton all over our program.
 After declaring our ui_state variable in main, we will set this global pointer to it.
+We set config_file_path on the state to the default configuration file path which is ".cmpr/conf", i.e. always relative to the CWD.
 
 We call a function handle_args to handle argc and argv.
 This function will also read our config file (if any).
@@ -951,7 +963,7 @@ Then we call main_loop().
 The main loop reads input in a loop and probably won't return, but just in case, we always call flush() before we return so that our buffered output from prt and friends will be flushed to stdout.
 */
 
-void handle_args(int argc, char **argv, ui_state* state);
+void handle_args(int argc, char **argv);
 void get_code(ui_state* state);
 void check_conf_vars();
 void main_loop();
@@ -963,7 +975,9 @@ int main(int argc, char **argv) {
   ui_state statevar = {0}; // Declare the ui_state variable
   state = &statevar;
 
-  handle_args(argc, argv, state); // Pass a pointer to state for handling arguments and config
+  state->config_file_path = S(".cmpr/conf");
+
+  handle_args(argc, argv);
 
   check_conf_vars();
 
@@ -1000,68 +1014,66 @@ void exit_success() {
 }
 
 void print_config(ui_state*);
-void parse_config(ui_state*,char*);
+void parse_config();
 void exit_with_error(char*);
-
+void cmpr_init();
+spans find_blocks(span);
+void reset_stdin_to_terminal();
 /*
 In handle_args we handle any command-line arguments.
 
-If "--conf <alternate-config-file>" is passed, we read our configuration file from that instead of ".cmpr/conf", which is the default.
-Once we know the conf file to read from, call parse_config before we do anything else.
-We also stash the config file path on state as a span.
+If "--conf <alternate-config-file>" is passed, we update config_file_path on the state.
+Once we know the conf file to read from, we call parse_config before we do anything else.
 
 If "--print-conf" is passed in, we print our configuration settings and exit.
 This is only OK to write because we have already called parse_config, so the configuration settings have already been read in from the file.
+In other words, this function will always call parse_config, always before printing the config if "--print-conf" is used, and always after updating the config file if "--conf" is used.
+We do this by setting an indicator print_conf while parsing the flags, and then printing the conf at the end; this handles both the case where both flags are used together and the case where just --print-conf is used with the default conf file.
 
 With the "--help" flag we just prt a short usage summary and exit_success().
 We include argv[0] as usual and indicate that typical usage is by providing a project directory as the argument, and summarize all the flags that we support.
 
-helper functions, declared here before any other code, and called here, but defined elsewhere:
+With "--init" we call a function, cmpr_init(), which performs some initialization of a new directory to be used with the tool.
 
-- void parse_config(ui_state*, char*)
-- void print_config(ui_state*)
-- void exit_with_error(char*)
+With "--version" we print the version number.
+(The version is always a natural number, and goes up when a release significantly increases usability.
+Current version: 2)
 
-main function in this block:
-
-- void handle_args(int argc, char **argv, ui_state* state);
+void handle_args(int argc, char **argv);
 */
 
-void handle_args(int argc, char **argv, ui_state* state) {
-    char* config_file_path = ".cmpr/conf"; // Default configuration file path
+void handle_args(int argc, char **argv) {
+    int print_conf = 0;
 
-    // Check for "--conf <alternate-config-file>" argument
-    for (int i = 1; i < argc - 1; i++) { // Ensure there's a next argument after "--conf"
-        if (strcmp(argv[i], "--conf") == 0) {
-            config_file_path = argv[i + 1]; // Use the alternate configuration file
-            break; // No need to look further
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--conf") == 0 && i + 1 < argc) {
+            state->config_file_path = S(argv[++i]);
+        } else if (strcmp(argv[i], "--print-conf") == 0) {
+            print_conf = 1;
+        } else if (strcmp(argv[i], "--help") == 0) {
+            prt("Usage: %s [--conf <config-file>] [--print-conf] [--init] [--help] [--version]\n", argv[0]);
+            prt("       --conf <config-file>   Use an alternate configuration file.\n");
+            prt("       --print-conf           Print the current configuration settings.\n");
+            prt("       --init                 Initialize a new directory for use with the tool.\n");
+            prt("       --help                 Display this help message and exit.\n");
+            prt("       --version              Print the version number and exit.\n");
+            exit_success();
+        } else if (strcmp(argv[i], "--init") == 0) {
+            cmpr_init();
+            exit_success();
+        } else if (strcmp(argv[i], "--version") == 0) {
+            prt("Version: 2\n");
+            exit_success();
         }
     }
 
-    state->config_file_path = S(config_file_path);
+    parse_config(state);
 
-    // Parse configuration from the determined file path
-    parse_config(state, config_file_path); // Assuming parse_config takes the state and file path
-
-    // Now handle other command-line arguments
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--print-conf") == 0) {
-            print_config(state);
-            exit_success();
-        } else if (strcmp(argv[i], "--help") == 0) {
-            prt("Usage: %s [options]\n", argv[0]);
-            prt("Options:\n");
-            prt("  --help               Display this help message and exit.\n");
-            prt("  --print-conf         Print the current configuration settings and exit.\n");
-            prt("  --conf <config file> Specify an alternate configuration file.\n");
-            prt("Typical usage involves providing a project directory as an argument or specifying an alternate configuration file.\n");
-            exit_success();
-        }
+    if (print_conf) {
+        print_config(state);
+        exit_success();
     }
 }
-
-void reset_stdin_to_terminal();
-spans find_blocks(span);
 /*
 In clear_display() we clear the terminal by printing some escape codes (with prt and flush as usual).
 */
@@ -1482,7 +1494,7 @@ In handle_keystroke, we support the following single-char inputs:
 
 - j/k Increment or decrement respectively the index of the currently displayed block.
   If we are at 0 or the max, these are no-ops.
-  We are also responsible for updating the display before returning to the main loop, so after either of these we call print_current_blocks.
+- g/G Go to the first or last block resp.
 - e, which calls a function that will let the user edit the current block
 - r, which calls a function that will let an LLM rewrite the code part of the current block based on the comment
 - R, kin to "r", which reads current clipboard contents back into the block, replacing the code part
@@ -1506,10 +1518,6 @@ To get the help text we can basically copy the lines above, except formatted nic
 We call terpri() on the first line of this function (just to separate output from any handler function from the ruler line).
 */
 
-
-#include <stdlib.h> // For exit
-
-// Forward declarations of helper functions
 void edit_current_block(ui_state*);
 void rewrite_current_block_with_llm();
 void compile();
@@ -1517,71 +1525,64 @@ void replace_code_clipboard(ui_state*);
 void toggle_visual(ui_state*);
 void start_search(ui_state*);
 void settings_mode(ui_state*);
-void print_help(void);
-void print_current_blocks();
 
 void handle_keystroke(char input) {
-  terpri();
-    switch (input) {
-        case 'j':
-            if (state->current_index < state->blocks.n - 1) {
-                state->current_index++;
-            }
-            break;
-        case 'k':
-            if (state->current_index > 0) {
-                state->current_index--;
-            }
-            break;
-        case 'e':
-            edit_current_block(state);
-            break;
-        case 'r':
-            rewrite_current_block_with_llm(state);
-            break;
-        case 'R':
-            replace_code_clipboard(state);
-            break;
-        case 'b':
-            compile(state);
-            break;
-        case 'v':
-            toggle_visual(state);
-            break;
-        case '/':
-            start_search(state);
-            break;
-        case 'S':
-            settings_mode(state);
-            break;
-        case '?':
-            print_help();
-            break;
-        case 'q':
-            prt("goodbye\n");
-            flush();
-            exit(0);
-            break;
-        default:
-            // No operation for other keys
-            break;
-    }
-}
+  terpri(); // Separate output from any handler function from the ruler line
 
-void print_help(void) {
-    prt("Keyboard shortcuts:\n");
-    prt("- j: Move to next block\n");
-    prt("- k: Move to previous block\n");
-    prt("- e: Edit the current block\n");
-    prt("- r: Rewrite the current block with LLM\n");
-    prt("- R: Replace code part of the block with clipboard contents\n");
-    prt("- b: Build the project\n");
-    prt("- v: Toggle visual mode\n");
-    prt("- /: Search mode\n");
-    prt("- S: Settings mode\n");
-    prt("- ?: Display this help\n");
-    prt("- q: Quit the application\n");
-    flush(); // Ensure the help text is displayed immediately
+  switch (input) {
+    case 'j':
+      if (state->current_index < state->blocks.n - 1) state->current_index++;
+      break;
+    case 'k':
+      if (state->current_index > 0) state->current_index--;
+      break;
+    case 'g':
+      state->current_index = 0;
+      break;
+    case 'G':
+      state->current_index = state->blocks.n - 1;
+      break;
+    case 'e':
+      edit_current_block(state);
+      break;
+    case 'r':
+      rewrite_current_block_with_llm();
+      break;
+    case 'R':
+      replace_code_clipboard(state);
+      break;
+    case 'b':
+      compile();
+      break;
+    case 'v':
+      toggle_visual(state);
+      break;
+    case '/':
+      start_search(state);
+      break;
+    case 'S':
+      settings_mode(state);
+      break;
+    case '?':
+      prt("Keyboard shortcuts:\n");
+      prt("- j/k: Navigate blocks\n");
+      prt("- g/G: Go to the first/last block\n");
+      prt("- e: Edit the current block\n");
+      prt("- r: Rewrite the current block with LLM\n");
+      prt("- R: Replace code part of the block with clipboard contents\n");
+      prt("- b: Build the project\n");
+      prt("- v: Toggle visual mode\n");
+      prt("- /: Search mode\n");
+      prt("- S: Settings mode\n");
+      prt("- ?: Display this help\n");
+      prt("- q: Quit the application\n");
+      break;
+    case 'q':
+      prt("goodbye\n");
+      flush();
+      exit(0);
+      break;
+  }
 }
 /*
 In print_block, similar to our earlier print_current_block, we clear the display and print the block, the only difference is that in print_block the index is given by an argument instead of print_current_block always printing the current index from the state.
@@ -1964,12 +1965,12 @@ The values of the config keys will always be spans.
 We have CONFIG_FIELDS defined above, we use that here with an X macro.
 */
 
-void parse_config(ui_state* state, char* config_filename) {
+void parse_config() {
     span cmp_free_space = {cmp.end, cmp_space + BUF_SZ};
-    prt("conf: %s\n", config_filename);flush();
+    //prt("conf: %s\n", config_filename);flush();
 
     // Read the configuration file into cmp space
-    span config_content = read_file_into_span(config_filename, cmp_free_space);
+    span config_content = read_file_S_into_span(state->config_file_path, cmp_free_space);
 
     /* *** manual fixup *** */
     cmp.end = config_content.end; // avoid later uses of cmp space clobbering our conf vars
@@ -2789,3 +2790,27 @@ void replace_block_code_part(span new_code) {
   new_rev(state, NULL);
 }
 
+/* cmpr_init
+We are called without args and set up some configuration and empty directories to prepare the CWD for use as a cmpr project.
+
+In sh terms:
+
+- mkdir -p .cmpr/{,revs,tmp}
+- touch .cmpr/conf
+
+Note that if the CWD is already initialized this is a no-op i.e. the init is idempotent (up to file access times and similar).
+*/
+
+
+#include <sys/stat.h>
+
+void cmpr_init() {
+    mkdir(".cmpr", S_IRWXU);
+    mkdir(".cmpr/revs", S_IRWXU);
+    mkdir(".cmpr/tmp", S_IRWXU);
+
+    FILE* conf = fopen(".cmpr/conf", "a");
+    if (conf != NULL) {
+        fclose(conf);
+    }
+}
