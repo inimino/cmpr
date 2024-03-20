@@ -53,6 +53,10 @@ Hit "q" to quit, "?" for short help, and "b" to build by running some build comm
 5. Run `cmpr` in this directory, and it will ask you some configuration questions.
    If you want to change the answers later, you can edit the .cmpr/conf file.
 
+### Bonus: cmpr in cmpr
+
+1. We ship our own cmpr conf file, so run cmpr in `~/cmpr` to see the code the way we do while building it.
+
 ## Caveats:
 
 Developed on Linux; volunteers and bug reports on other environments gladly welcomed!
@@ -72,3 +76,5 @@ Development is being [streamed on twitch](https://www.twitch.tv/inimino2).
 Join [our discord](https://discord.gg/ekEq6jcEQ2).
 
 */
+
+#include "spanio.c"
