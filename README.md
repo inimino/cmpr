@@ -52,6 +52,7 @@ Hit "q" to quit, "?" for short help, and "b" to build by running some build comm
 4. `export EDITOR=emacs` or whatever editor you use, or vi will be run by default.
 5. Run `cmpr` in this directory, and it will ask you some configuration questions.
    If you want to change the answers later, you can edit the .cmpr/conf file.
+   At the moment you'll also probably need to edit the conf file to add a line that says "file: ..." with at least one file that you want to have in your project.
 
 ### Bonus: cmpr in cmpr
 
