@@ -344,7 +344,7 @@ With "--init" we call a function, cmpr_init(), which performs some initializatio
 
 With "--version" we print the version number.
 (The version is always a natural number, and goes up when a release significantly increases usability.
-Current version: 2)
+Current version: 3)
 
 void handle_args(int argc, char **argv);
 */
@@ -369,7 +369,7 @@ void handle_args(int argc, char **argv) {
             cmpr_init();
             exit_success();
         } else if (strcmp(argv[i], "--version") == 0) {
-            prt("Version: 2\n");
+            prt("Version: 3\n");
             exit_success();
         }
     }
