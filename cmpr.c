@@ -1,86 +1,3 @@
-/*
-
-# CMPr
-
-## Program in English!
-
-Thesis: the future of programming is driving an LLM to write code.
-Why?
-Mostly, because it's way more fun.
-You can work with any technology, so it's a good match for generalist skillsets.
-When code is written by an AI, we treat it as disposable, which changes our relationship with the code in interesting ways.
-It doesn't matter as much what language the code is in; what's important is the English that described that code.
-
-## What's this then?
-
-This is a early experimental tool to support the LLM programming workflow.
-
-Today we just support ChatGPT, and interaction is by copy and paste.
-This means you can use it with a free account, or if you have a paid account you can use GPT4, which writes better code.
-
-(Coming soon: API usage, local models, competing LLMs, etc.)
-
-This is a framework and represents a particular and very opinionated approach to this workflow.
-We will be updating continuously as we learn.
-This version was written in a week, using the workflow itself.
-
-All code here is by ChatGPT4, and all comments by me, which is the idea of the workflow:
-
-- You have a "block" which starts with a comment and ends with code.
-- You write the comment; the LLM writes the code.
-- You iterate on the comment until the code works and meets your standard.
-
-The tool is a C program; compile it and run it locally.
-The main editing loop shows you your "blocks".
-You can use j/k to move from block to block.
-Full text search with "/" is also supported (improvements coming soon!).
-Once you find the block you want, use "e" to open it up in "$EDITOR" (or vim by default).
-Then you do ":wq" or whatever makes your editor exit successfully, and a new revision of your code is automatically saved.
-
-To get the LLM involved, when you're on a block you hit "r" and this puts a prompt into the clipboard for you.
-(You won't see anything happen when you hit "r", but the clipboard has been updated.)
-Then you switch over to your ChatGPT window and hit "Ctrl-V".
-You could edit the prompt, but usually you'll just hit Enter.
-ChatGPT writes the code, you can click "copy code" in the ChatGPT window, and then hit "R" (uppercase) back in cmpr to replace everything after the comment (i.e. the code half of the block) with the clipboard contents.
-Mnemonic: "r" gets the LLM to "rewrite" (or "replace") the code to match the comment (and "R" is the opposite of "r").
-
-Hit "q" to quit, "?" for short help, and "b" to build by running some build command that you specify.
-
-## Quick start:
-
-1. Get the code and build; assuming git repo at ~/cmpr and you have gcc, `gcc -o cmpr/cmpr cmpr/cmpr.c -lm`.
-2. Put the executable in your path with e.g. `sudo install cmpr/cmpr /usr/local/bin`.
-3. Go to directory you want to work in and run `cmpr --init`.
-4. `export EDITOR=emacs` or whatever editor you use, or vi will be run by default.
-5. Run `cmpr` in this directory, and it will ask you some configuration questions.
-   If you want to change the answers later, you can edit the .cmpr/conf file.
-   At the moment you'll also probably need to edit the conf file to add a line that says "file: ..." with at least one file that you want to have in your project.
-
-### Bonus: cmpr in cmpr
-
-1. We ship our own cmpr conf file, so run cmpr in `~/cmpr` to see the code the way we do while building it.
-
-## Caveats:
-
-Developed on Linux; volunteers and bug reports on other environments gladly welcomed!
-We are using "xclip" to send the prompts to the clipboard.
-This really improves quality of life over manual copying and pasting of comments into a ChatGPT window.
-The first time you use the 'r' or 'R' commands you will be prompted for the command to use to talk to the clipboard on your system.
-For Mac you would use "pbcopy" and "pbpaste".
-
-This tool is developed in one week; we are still light on features.
-We only really support C and Python; mostly this is around syntax of where blocks start (in C we use block comments, and triple-quoted strings in Python).
-It's not hard to extend the support to other languages, just ask for what you want in the discord and it may happen.
-It's not hard to contribute, you don't need to know C well, but you do need to be able to read it (you can't trust the code from GPT without close examination).
-
-## More
-
-Development is being [streamed on twitch](https://www.twitch.tv/inimino2).
-Join [our discord](https://discord.gg/ekEq6jcEQ2).
-
-*/
-
-#include "spanio.c"
 /* 
 Below we have shell functions which we used for building in the first days of the project.
 These can gradually be cleaned up as we implement the functionality directly or in other ways.
@@ -168,10 +85,10 @@ Reply only with code. Do not simplify, but include working code. If necessary, y
 
 */
 
-void send_to_clipboard(span prompt);
+/* import our library code */
 
-/* (Library code ends; our code begins.)
-
+#include "spanio.c"
+/*
 We define CONFIG_FIELDS including all our known config settings, as they are used in several places (with X macros).
 
 The known config settings are:
@@ -222,6 +139,7 @@ This includes, so far:
 - the search span which will contain "/" followed by some search if in search mode, otherwise will be empty()
 - the config file path as a span
 - terminal_rows and _cols which stores the terminal dimensions
+- scrolled_lines, the number of physical lines that have been scrolled off the screen upwards
 
 Additionally, we include a span for each of the config files, with an X macro inside the struct, using CONFIG_FIELDS defined above.
 */
@@ -236,6 +154,7 @@ typedef struct ui_state {
     span config_file_path;
     int terminal_rows;
     int terminal_cols;
+    int scrolled_lines;
     #define X(name) span name;
     CONFIG_FIELDS
     #undef X
@@ -296,11 +215,29 @@ int main(int argc, char** argv) {
     span_arena_free();
     return 0;
 }
+/* #all_functions
+*/
+
+void edit_current_block();
+void rewrite_current_block_with_llm();
+void compile();
+void replace_code_clipboard();
+void toggle_visual();
+void start_search();
+void settings_mode();
+void send_to_clipboard(span prompt);
+void print_physical_lines(span, int);
+int print_matching_physical_lines(span, span);
+void page_down();
+void page_up();
+span count_physical_lines(span, int*);
+void print_multiple_partial_blocks(int,int);
+void print_single_block_with_skipping(int,int);
 /*
 Debugging helper
 */
 
-void print_config(ui_state* state) {
+void print_config() {
     prt("Current Configuration Settings:\n");
 
     #define X(name) prt(#name ": %.*s\n", len(state->name), state->name.buf);
@@ -320,7 +257,7 @@ void exit_success() {
     exit(0);
 }
 
-void print_config(ui_state*);
+void print_config();
 void parse_config();
 void exit_with_error(char*);
 void cmpr_init();
@@ -344,7 +281,7 @@ With "--init" we call a function, cmpr_init(), which performs some initializatio
 
 With "--version" we print the version number.
 (The version is always a natural number, and goes up when a release significantly increases usability.
-Current version: 3)
+Here we use "Version: $VERSION$" and the dollar-delimited variable-looking thing is replaced by a build step.)
 
 void handle_args(int argc, char **argv);
 */
@@ -369,15 +306,15 @@ void handle_args(int argc, char **argv) {
             cmpr_init();
             exit_success();
         } else if (strcmp(argv[i], "--version") == 0) {
-            prt("Version: 3\n");
+            prt("Version: $VERSION$\n");
             exit_success();
         }
     }
 
-    parse_config(state);
+    parse_config();
 
     if (print_conf) {
-        print_config(state);
+        print_config();
         exit_success();
     }
 }
@@ -391,6 +328,57 @@ void clear_display() {
     flush();
 }
 
+/* #block_sanity_check
+ 
+In block_sanity_check, we are given a file span and blocks spans, and we check certain invariants.
+
+First we handle the special case where the file is empty, in this case there must be exactly one empty block and nothing else, and we early exit.
+In all other cases, blocks are never empty.
+
+Then we ensure with a simple loop, that all the blocks returned together tile the file, and that none are empty.
+This means:
+The first block begins where our input span begins.
+The last block ends where our input ends.
+If either of these conditions fails, the sanity test fails.
+For every other block, .buf is equal to the .end of the previous.
+No block is empty (i.e. len() > 0 in every case).
+If this sanity check fails, we complain and crash as usual (prt, flush, exit).
+*/
+
+void block_sanity_check(span file, spans blocks) {
+    if (empty(file)) {
+        if (blocks.n != 1 || !empty(blocks.s[0])) {
+            prt("Error: Empty file must have exactly one empty block.\n");
+            flush();
+            exit(EXIT_FAILURE);
+        }
+        return; // Early exit for empty file
+    }
+
+    // Check if the first block begins where the input span begins
+    if (blocks.s[0].buf != file.buf) {
+        prt("Error: The first block does not start where input begins.\n");
+        flush();
+        exit(EXIT_FAILURE);
+    }
+
+    // Check if the last block ends where the input ends
+    if (blocks.s[blocks.n - 1].end != file.end) {
+        prt("Error: The last block does not end where input ends.\n");
+        flush();
+        exit(EXIT_FAILURE);
+    }
+
+    // Ensure all blocks tile the file and none are empty
+    for (int i = 1; i < blocks.n; ++i) {
+        if (blocks.s[i].buf != blocks.s[i - 1].end || empty(blocks.s[i])) {
+            prt("Error: Blocks do not properly tile the file or a block is empty.\n");
+            flush();
+            exit(EXIT_FAILURE);
+        }
+    }
+}
+
 /*
 In find_all_blocks, we find the blocks in each file.
 
@@ -398,6 +386,7 @@ We are going to need to know how many blocks there are in all the files, and to 
 Therefore we first allocate an array of the `spans` type, one per file.
 
 Then for each of the projfiles, we call find_blocks_by_type() to find the blocks in that file, and stash those temporarily on our array.
+We also call block_sanity_check on the returned blocks for each file.
 
 Once we have all of the blocks for each of the files, we then can construct a new spans (using spans_alloc) of the right size, and we can copy all the blocks into this, which we store on the state.
 (We don't store the blocks per file anywhere, since we can always determine which file a block belongs to by comparing the block's span with the contents span on the projfile.)
@@ -417,6 +406,7 @@ void find_all_blocks() {
     size_t total_blocks = 0;
     for (int i = 0; i < state->files.n; ++i) {
         file_blocks[i] = find_blocks_by_type(state->files.a[i].contents, state->files.a[i].language);
+        block_sanity_check(state->files.a[i].contents, file_blocks[i]);
         total_blocks += file_blocks[i].n;
     }
 
@@ -561,6 +551,8 @@ It ends where the next block starts.
 There are some special cases:
 
 If the file is empty, we return a single empty block.
+We handle this as a special case, since it doesn't really work with our two-loop approach.
+We also care about where the blocks are, even if they are empty, so in this case we ensure that the empty block we return is the same as the empty span of the file itself (i.e. .buf and .end are equal to each other, and to those of the file: we can NOT use nullspan() here).
 
 If a file does not begin with a block comment, then the first block will just be from the beginning of the file to the first block comment.
 
@@ -575,26 +567,27 @@ The block-finding loop:
 - When we reach the end of the input we will assign .end of the last block to the end of the input.
 
 (To determine if we are at the start of the input, we can compare .buf of the line with that of the input.)
-
-At the end of the function, we ensure with a simple loop, that all the blocks returned together tile the file, and that none are empty.
-This means:
-The first block begins where our input span begins.
-The last block ends where our input ends.
-If either of these conditions fails, the sanity test fails.
-For every other block, .buf is equal to the .end of the previous.
-If this sanity check fails, we complain and crash as usual (prt, flush, exit).
 */
 
 spans find_blocks_by_type_c(span file) {
+    if (empty(file)) {
+        // Handle special case for empty file
+        spans single_empty_block = spans_alloc(1);
+        single_empty_block.s[0].buf = file.buf;
+        single_empty_block.s[0].end = file.end;
+        return single_empty_block;
+    }
+
     int block_count = 0;
     span copy = file;
-    span line;
+    int is_first_line = 1;
 
     // First loop: count blocks
     while (!empty(copy)) {
-        line = next_line(&copy);
-        if (starts_with(line, S("/*")) || copy.buf == file.buf) { // Start of the file or a block
+        span line = next_line(&copy);
+        if (is_first_line || starts_with(line, S("/*"))) {
             block_count++;
+            is_first_line = 0;
         }
     }
 
@@ -602,39 +595,22 @@ spans find_blocks_by_type_c(span file) {
     copy = file; // Reset copy for second loop
     span* previous_block = NULL;
     int index = 0;
+    is_first_line = 1;
 
     // Second loop: assign spans
     while (!empty(copy)) {
-        line = next_line(&copy);
-        if (starts_with(line, S("/*")) || copy.buf == file.buf) {
+        span line = next_line(&copy);
+        if (is_first_line || starts_with(line, S("/*"))) {
             if (previous_block != NULL) {
                 previous_block->end = line.buf;
             }
             blocks.s[index].buf = line.buf;
             previous_block = &blocks.s[index++];
+            is_first_line = 0;
         }
     }
     if (previous_block != NULL) {
         previous_block->end = file.end;
-    }
-
-    // Sanity check
-    for (int i = 0; i < blocks.n; ++i) {
-        if (i == 0 && blocks.s[i].buf != file.buf) {
-            prt("Error: First block does not start where input begins.\n");
-            flush();
-            exit(EXIT_FAILURE);
-        }
-        if (i == blocks.n - 1 && blocks.s[i].end != file.end) {
-            prt("Error: Last block does not end where input ends.\n");
-            flush();
-            exit(EXIT_FAILURE);
-        }
-        if (i > 0 && blocks.s[i].buf != blocks.s[i - 1].end) {
-            prt("Error: Block start does not match previous block end.\n");
-            flush();
-            exit(EXIT_FAILURE);
-        }
     }
 
     return blocks;
@@ -740,6 +716,114 @@ void main_loop() {
         handle_keystroke(input); // Handle the input keystroke
     }
 }
+/* span count_physical_lines(span, int*)
+
+In this function we are given a span and a (pointer to a) maximum number of physical lines to print or count.
+
+The span may be of arbitrary length, which is why we do not simply count the lines in the span; we do not want unbounded runtime.
+
+Definitions:
+A logical line is an actual line terminated by newline or by the end of the span.
+A physical line is a row of terminal output, which is reached either when terminal_cols characters of output reaches the end of the line, causing wrapping, or when a literal newline is printed (or both).
+The physical line is defined such that after printing a physical line (starting at the beginning of a terminal row), the next character printed to the terminal will appear on the subsequent terminal row.
+
+We begin counting physical lines off of the input span according to this definition.
+Specifically, we count off either terminal_cols chars, followed by a newline (which will have no effect if it comes after exactly that many chars, i.e. after counting off terminal_cols chars, we need to check if the *next* char is a newline, because if it is we should skip over it), or we count off a shorter line followed by an actual newline.
+
+We decrement the int of remaining lines each time we have counted off a physical line.
+Our return value is the span of physical lines that we have counted off.
+The int will go to zero if the span passed in is long enough, otherwise the span returned will contain the entire input and the int may remain positive.
+
+(The intended typical use of this function is to provide a span and a desired number of physical lines of terminal space to occupy, then to print the returned span, and perhaps to prepare a suffix of the original span to keep printing, and perhaps to use the int to track remaining lines of terminal output to fill or similar.)
+
+(Note: I don't think the below is correct when a logical line has exactly terminal_cols chars in it, however I don't want to iterate further or test right now.)
+*/
+
+span count_physical_lines(span input, int *max_physical_lines) {
+    span result = input;
+    int line_count = 0;
+    int chars_in_line = 0;
+
+    while (!empty(input) && line_count < *max_physical_lines) {
+        if (*input.buf == '\n' || chars_in_line == state->terminal_cols) {
+            line_count++;
+            if (*input.buf == '\n') input.buf++;
+            chars_in_line = 0;
+        } else {
+            input.buf++;
+            chars_in_line++;
+        }
+    }
+
+    *max_physical_lines -= line_count;
+    result.end = input.buf;
+    return result;
+}
+/* page_down() and page_up()
+
+Here we implement dual functions that handle pagination within the current block.
+
+We define content_rows as the number of terminal_rows minus two, since we always have a header line and a ruler line reserved at the top and bottom of the screen resp.
+
+We simply increment or decrement state->scrolled_lines by content_rows, except that we always want to fill the screen.
+For example, if a block has 23 physical lines and the terminal has 24 rows, then our content area is 22 rows, and when we paginate downwards we will show the last 22 lines of content (skipping only the first line).
+Redrawing is handled in the main loop, so all we do here is update scrolled_lines as needed, returning void.
+
+If we are already scrolled to the bottom, scrolling down will have no effect (similarly if scrolled_lines = 0 for scrolling up).
+
+We have a helper function (count_physical_lines) that counts physical lines up to a maximum.
+It updates the int passed to it by reference to indicate the remaining number of lines (<= the maximum before the call) that have not been printed (will only be non-zero if the block was short of content).
+In page_down, we first call this with scrolled_lines and get a span back which is the part that is already "scrolled off" the top of the screen as the return value.
+
+We make a copy of the block (blocks indexed by current_block, both on state).
+We update .buf of this copy to the .end of the scrolled-off part, thus getting the part of the block currently visible on the screen as well as anything "below" the screen.
+
+We then call the helper function again on this remainder content with terminal_rows as the number, to get the number of lines occupied by the currently displayed content, up to a full screen's worth.
+If there is less than one full screen's worth currently displayed, then we reduce scrolled_lines by the remaining number, so that the screen becomes full.
+
+(Note that as count_physical_lines decrements the remaining physical lines to print while it is counting off lines, we need to subtract to get the actual number of physical lines of content that would be printed.)
+
+Otherwise, we increase scrolled_lines by a full screenfull, and then we call the helper function a third time.
+Now, again, we can check if it will print a full screenfull, and if not, we can again reduce scrolled_lines such that the result will be a full screen of content ending with the last physical line of the block.
+
+The page_up function is a bit simpler, as we can always unconditionally scroll up by a full page of lines, so we simply decrease scrolled_lines by a screenful (with a minimum of zero, obviously).
+*/
+
+void page_down() {
+    int lines_to_skip = state->scrolled_lines;
+    int content_rows = state->terminal_rows - 2;
+    span block_copy = state->blocks.s[state->current_index];
+    span scrolled_off = count_physical_lines(block_copy, &lines_to_skip);
+
+    block_copy.buf = scrolled_off.end;
+    int lines_for_screen = content_rows;
+    span remainder = count_physical_lines(block_copy, &lines_for_screen);
+
+    if (lines_for_screen > 0) {
+        state->scrolled_lines -= lines_for_screen;
+    } else {
+        state->scrolled_lines += content_rows;
+        lines_to_skip = state->scrolled_lines;
+        block_copy = state->blocks.s[state->current_index];
+        scrolled_off = count_physical_lines(block_copy, &lines_to_skip);
+
+        /* *** manual fixup *** */
+        block_copy.buf = scrolled_off.end;
+        lines_for_screen = content_rows;
+        count_physical_lines(block_copy, &lines_for_screen);
+
+        if (lines_for_screen > 0) {
+            state->scrolled_lines -= lines_for_screen;
+        }
+    }
+}
+
+void page_up() {
+    state->scrolled_lines -= (state->terminal_rows - 2);
+    if (state->scrolled_lines < 0) {
+        state->scrolled_lines = 0;
+    }
+}
 /* Helper function to print the first n lines of a block. */
 
 void print_first_n_lines(span block, int n) {
@@ -760,8 +844,7 @@ Otherwise we enter it by setting marked index to be the current index.
 In either case we then reflect the new state in the display by calling print_current_blocks()
 */
 
-
-void toggle_visual(ui_state *state) {
+void toggle_visual() {
     if (state->marked_index != -1) {
         // Leave visual mode
         state->marked_index = -1;
@@ -776,7 +859,7 @@ void toggle_visual(ui_state *state) {
 In print_current_blocks, we print either the current block, if we are in normal mode, or the set of selected blocks if we are in visual mode.
 
 Before this, we write a helper function that gets the screen dimensions (rows and cols) from the terminal.
-This function will take the ui_state* and update it directly.
+This function will update the state directly.
 
 If marked_index != -1 and != current_index, then we have a "visual" selected range of more than 1 block.
 
@@ -788,29 +871,29 @@ Finally we pass state, inclusive start, and exclusive end of range to another fu
 
 Helper functions:
 
-- render_block_range(ui_state*,int,int) -- also supports rendering a single block (if range includes only one block).
+- render_block_range(int,int) -- also supports rendering a single block (if range includes only one block).
 */
 
-void get_screen_dimensions(ui_state* state) {
+void get_screen_dimensions() {
   struct winsize w;
   ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
   state->terminal_rows = w.ws_row;
   state->terminal_cols = w.ws_col;
 }
 
-void render_block_range(ui_state*, int, int);
+void render_block_range(int, int);
 
 void print_current_blocks() {
-  get_screen_dimensions(state);
+  get_screen_dimensions();
 
   if (state->marked_index != -1 && state->marked_index != state->current_index) {
     int start = state->current_index < state->marked_index ? state->current_index : state->marked_index;
     int end = state->current_index > state->marked_index ? state->current_index + 1 : state->marked_index + 1;
 
-    render_block_range(state, start, end);
+    render_block_range(start, end);
   } else {
     // Normal mode or visual mode with only one block selected.
-    render_block_range(state, state->current_index, state->current_index + 1);
+    render_block_range(state->current_index, state->current_index + 1);
   }
 }
 
@@ -834,14 +917,12 @@ We include a forward declaration for our helper functions.
 
 //* *** manual fixup ***/
 
-void print_multiple_partial_blocks(ui_state*,int,int);
-void print_single_block_with_skipping(ui_state*,int);
-void render_block_range(ui_state* state, int start, int end) {
+void render_block_range(int start, int end) {
 
     if (end - start == 1) {
-      print_single_block_with_skipping(state, start);
+      print_single_block_with_skipping(start, state->scrolled_lines);
     } else {
-      print_multiple_partial_blocks(state, start, end);
+      print_multiple_partial_blocks(start, end);
     }
 }
 
@@ -851,7 +932,7 @@ Currently, we just print the number of blocks that there are.
 */
 
 // Placeholder for print_multiple_partial_blocks, assuming it's defined elsewhere
-void print_multiple_partial_blocks(ui_state* state, int start_block, int end_block) {
+void print_multiple_partial_blocks(int start_block, int end_block) {
   prt("%d blocks (printing multiple blocks coming soon!)\n", end_block - start_block);
 }
 
@@ -897,100 +978,114 @@ We then skip more physical lines until we know whether we can overfill block_row
 If the number of physical lines printed equals the block_row_limit, and the block_row_limit was positive, we can say the offset is "perfect".
 
 */
-/*
+/* #handle_keystroke
+
 In handle_keystroke, we support the following single-char inputs:
 
-- j/k Increment or decrement respectively the index of the currently displayed block.
-  If we are at 0 or the max, these are no-ops.
+- j/k Go up or down one block. If we are at the first or last block, these are no-ops.
 - g/G Go to the first or last block resp.
-- e, which calls a function that will let the user edit the current block
-- r, which calls a function that will let an LLM rewrite the code part of the current block based on the comment
+- e, Edit the current block in $EDITOR (or vi by default)
+- r, Request an LLM rewrite the code part of the block based on the comment part; silently updates clipboard
 - R, kin to "r", which reads current clipboard contents back into the block, replacing the code part
-- b, do a build (runs the command in CMPR_BUILD envvar, or "make")
+- space/b, paginate down or ("back") up within a block
+- B, do a build by running the build command you provide
 - v, sets the marked point to the current index, switching to "visual" selection mode, or leaves visual mode if in it
-- /, switches to "search" mode by calling a helper function.
+- /, switches to search mode
 - S, (likely to change) goes into settings mode
-- ?, which displays some help about the keyboard shortcuts available
-- q, which exits the process cleanly (with prt("goodbye\n"); flush(); exit(0))
-
-Before the function itself we write function declarations for all helper functions needed.
-- edit_current_block()
-- rewrite_current_block_with_llm()
-- compile()
-- replace_code_clipboard()
-- toggle_visual()
-- start_search()
-- settings_mode()
+- ?, display brief help about the keyboard shortcuts available
+- q, exits (with prt("goodbye\n"); flush(); exit(0))
 
 To get the help text we can basically copy the lines above, except formatted nicely for terminal output.
+We split out j/k and g/G onto their own lines though.
+Include all relevant details about usage that might be non-obvious, e.g.:
+- r "puts a prompt on the clipboard to rewrite the code part based on comment part"
+Include mnemonic hints where given (e.g. "back" for b).
+We can call clear_display first, and flush, getch after, so the user has time to read the help (we prompt them about this).
+
 We call terpri() on the first line of this function (just to separate output from any handler function from the ruler line).
+
+Implemented inline: j,k,g,G,?,q
+All others call helper functions already declared above (B -> compile()).
 */
 
-void edit_current_block();
-void rewrite_current_block_with_llm();
-void compile();
-void replace_code_clipboard();
-void toggle_visual();
-void start_search();
-void settings_mode();
-
 void handle_keystroke(char input) {
-  terpri(); // Separate output from any handler function from the ruler line
+    terpri();
 
-  switch (input) {
-    case 'j':
-      if (state->current_index < state->blocks.n - 1) state->current_index++;
-      break;
-    case 'k':
-      if (state->current_index > 0) state->current_index--;
-      break;
-    case 'g':
-      state->current_index = 0;
-      break;
-    case 'G':
-      state->current_index = state->blocks.n - 1;
-      break;
-    case 'e':
-      edit_current_block(state);
-      break;
-    case 'r':
-      rewrite_current_block_with_llm();
-      break;
-    case 'R':
-      replace_code_clipboard(state);
-      break;
-    case 'b':
-      compile();
-      break;
-    case 'v':
-      toggle_visual(state);
-      break;
-    case '/':
-      start_search(state);
-      break;
-    case 'S':
-      settings_mode(state);
-      break;
-    case '?':
-      prt("Keyboard shortcuts:\n");
-      prt("- j/k: Navigate blocks\n");
-      prt("- g/G: Go to the first/last block\n");
-      prt("- e: Edit the current block\n");
-      prt("- r: Rewrite the current block with LLM\n");
-      prt("- R: Replace code part of the block with clipboard contents\n");
-      prt("- b: Build the project\n");
-      prt("- v: Toggle visual mode\n");
-      prt("- /: Search mode\n");
-      prt("- S: Settings mode\n");
-      prt("- ?: Display this help\n");
-      prt("- q: Quit the application\n");
-      break;
-    case 'q':
-      prt("goodbye\n");
-      flush();
-      exit(0);
-      break;
-  }
+    switch (input) {
+        case 'j':
+            if (state->current_index < state->blocks.n - 1) {
+                state->current_index++;
+                state->scrolled_lines = 0;
+            }
+            break;
+        case 'k':
+            if (state->current_index > 0) {
+                state->current_index--;
+                state->scrolled_lines = 0;
+            }
+            break;
+        case 'g':
+            state->current_index = 0;
+            state->scrolled_lines = 0;
+            break;
+        case 'G':
+            state->current_index = state->blocks.n - 1;
+            state->scrolled_lines = 0;
+            break;
+        case 'e':
+            edit_current_block();
+            break;
+        case 'r':
+            rewrite_current_block_with_llm();
+            break;
+        case 'R':
+            replace_code_clipboard();
+            break;
+        case ' ':
+            page_down();
+            break;
+        case 'b':
+            page_up();
+            break;
+        case 'B':
+            compile();
+            break;
+        case 'v':
+            toggle_visual();
+            break;
+        case '/':
+            start_search();
+            break;
+        case 'S':
+            settings_mode();
+            break;
+        case '?':
+            clear_display();
+            prt("j/k: Move up/down one block.\n");
+            prt("g/G: Go to the first/last block.\n");
+            prt("e: Edit current block in $EDITOR (default: vi).\n");
+            prt("r: Rewrite code part based on comment, puts prompt on clipboard.\n");
+            prt("R: Read clipboard contents back into block, replacing code part.\n");
+            prt("space/b: Paginate down/back up within a block.\n");
+            prt("B: Execute build command.\n");
+            prt("v: Mark current index, toggle visual selection mode.\n");
+            prt("/: Enter search mode.\n");
+            prt("S: Enter settings mode.\n");
+            prt("?: Display this help.\n");
+            prt("q: Exit (goodbye).\n");
+            flush();
+            prt("Press any key to return...\n");
+            getch();
+            break;
+        case 'q':
+            prt("goodbye\n");
+            flush();
+            exit(0);
+            break;
+        default:
+            // Unhandled key
+            break;
+    }
 }
 /*
 To support search mode, we have a static buffer of length 256 which can be used to search and which the user types into when in search mode.
@@ -1012,22 +1107,22 @@ If we hit enter, we call another helper to finish the search successfully.
 
 helper functions:
 
-- perform_search(ui_state*)
-- finalize_search(ui_state*)
+- perform_search()
+- finalize_search()
 
 OF COURSE, we use getch() which we carefully defined above, NEVER getchar().
 
 We write declarations for the helper functions (which we define below).
 */
 
-void perform_search(ui_state* state);
-void finalize_search(ui_state* state);
+void perform_search();
+void finalize_search();
 
-void start_search(ui_state* state) {
+void start_search() {
     static char search_buffer[256] = {"/"}; // Static buffer for search, pre-initialized with "/"
     state->search = (span){.buf = search_buffer, .end = search_buffer + 1}; // Initialize search span to contain just "/"
 
-    perform_search(state); // Perform initial search display/update
+    perform_search(); // Perform initial search display/update
 
     char input;
     while ((input = getch()) != '\n') { // Continue until Enter is pressed
@@ -1045,50 +1140,40 @@ void start_search(ui_state* state) {
             *state->search.end++ = input; // Extend the span
         }
 
-        perform_search(state); // Update search results after each modification
+        perform_search(); // Update search results after each modification
     }
 
-    finalize_search(state); // Finalize search on Enter
+    finalize_search(); // Finalize search on Enter
 }
 
-/*
-In count_physical_lines(int,span) we are given a terminal width in cols and a logical line.
-The line will not contain newlines, so we just divide the len of the line by the cols (and add one if there is a remainder).
-Recall there is a len() in our spanio.
-*/
-
-int count_physical_lines(int cols, span line) {
-    int length = len(line);
-    return (length / cols) + (length % cols != 0); // Add one if there is a remainder
-}
 /*
 In perform_search(), we get the state after the search string has been updated.
 
 The search string (span state.search) will always start with a slash.
-We remove this and take the rest of it as the actual string to search for.
+We remove this (there is no library method for this so just directly construct the span) and take the rest of it as the actual string to search for.
 We iterate through the blocks and use spanspan to find the first block that matches, along with the number of other blocks that match.
+If the search span is empty (as when only "/" was typed) then we match every block, so we can use empty() on the result of spanspan to detect a match, but we also match if the search span is empty().
+(This will store the empty span at the beginning of the first block as the match span, which gives the behavior we want when printing the match later.)
 We store both the index of the first block that matched and a copy of the span given by spanspan for this first block only, as we will need both of them later.
 
-This tells us where the first block was the matched, and how many total blocks matched, and also the location in the span that contains the match.
+This tells us where the first block was that matched, and how many total blocks matched, and also the location in the span that contains the match.
 
 Once we have our search results, we call clear_display().
 
 Also at the top, we declare a local variable of remaining lines from the top of the terminal window, since we want to print something at the bottom later.
-So every time we print something, we'll decrement this value appropriately.
+Every time we print a line or multiple lines, we decrement this value with the number of lines we printed, no more and no less.
+In particular, we never decrement this "in advance," for lines to printed later, as that would violate the invariant that the number of actual remaining lines is the number in our variable.
 
 Next, we print "Block N:" on a line (adding one as usual).
-Then we print the first four physical lines of the block.
-We do this by calling a function print_physical_lines(ui_state*,span,int).
-Here we write the forward declaration of this function (we define it later).
+Then we decide how many initial lines of the block to print.
+Without changing the terminal lines remaining value (since we indeed want our last line to be on the last line) we subtract 8 from this remaining number (leaving space for other output) and divide this by two to get the number of initial block physical lines to print.
+Then we print this many physical lines of the block, by calling a function print_physical_lines(span,int).
+(Note: physical lines means terminal rows used, as opposed to logical lines actually ending in newline.)
 
 If nothing matched, then we do not print this part, but we still print the "N blocks matched" part later (0 in that case, of course) and the search string itself on the last line.
 
-After the first four lines of the span, we print a blank line and then the line that contains the matched span.
-Because we saved the spanspan value from the first matching block, we can use this to locate the lines in the block span where the match is.
-Specifically, we can use next_line on a copy of the span until we find a line that has the .buf of the match returned by spanspan inside it.
-(We don't have a library method for this, but you can just compare with buf and end. Recall that buf is inclusive and end exclusive.)
-We can call wrs() and terpri() to print the line (as next_line does not include the newline, we must add it back).
-We call a helper function, count_physical_lines(int, span) which takes the terminal_cols and a span and returns the number of physical lines that will be occupied by the span.
+After the first lines of the block, we print a blank line, then "Match:" on a line, and then the line that contains the matched span.
+We call a helper function, print_matching_physical_lines, which takes the block and the actual matched span (which we have from before), and handles finding and printing the match, and returns the number of physical lines that it used.
 
 We print another blank line and then "N blocks matched".
 
@@ -1098,72 +1183,57 @@ On the last line we will print the entire search string (including the slash).
 Before returning from the function we call flush() as we are responsible for updating the display.
 */
 
-void perform_search(ui_state* state) {
-    clear_display();
-    int remaining_lines = state->terminal_rows; // Track remaining lines on the screen
-
-    // Forward declaration
-    void print_physical_lines(ui_state*, span, int);
-    int count_physical_lines(int, span);
-
-    span search_span = {state->search.buf + 1, state->search.end}; // Actual search string, excluding the leading slash
+void perform_search() {
+    int remaining_lines = state->terminal_rows;
+    span search_span = {state->search.buf + 1, state->search.end};
+    int match_count = 0;
     int first_match_index = -1;
-    span first_match_location = nullspan();
-    int total_matches = 0;
+    span first_match_span = nullspan();
 
     for (int i = 0; i < state->blocks.n; i++) {
         span match = spanspan(state->blocks.s[i], search_span);
-        if (!empty(match)) {
-            total_matches++;
+        if (!empty(match) || empty(search_span)) {
             if (first_match_index == -1) {
                 first_match_index = i;
-                first_match_location = match;
+                first_match_span = match;
             }
+            match_count++;
         }
     }
 
-    if (first_match_index != -1) {
-        // Print details of the first matched block
-        prt("Block %d:\n", first_match_index + 1);
-        remaining_lines -= 1; // Decrement for the header line
+    clear_display();
 
-        print_physical_lines(state, state->blocks.s[first_match_index], 4);
-        int lines_printed = 4; // Assuming print_physical_lines handles line counting accurately
+    if (first_match_index != -1) {
+        prt("Block %d:\n", first_match_index + 1);
+        remaining_lines -= 1;
+
+        int initial_lines_to_print = (remaining_lines - 8) / 2;
+        print_physical_lines(state->blocks.s[first_match_index], initial_lines_to_print);
+        remaining_lines -= initial_lines_to_print;
+
+        prt("\n");
+        remaining_lines -= 1;
+
+        prt("Match:\n");
+        remaining_lines -= 1;
+
+        int lines_printed = print_matching_physical_lines(state->blocks.s[first_match_index], first_match_span);
         remaining_lines -= lines_printed;
 
-        // Print the matching line
-        span temp_block = state->blocks.s[first_match_index];
-        while (!empty(temp_block) && temp_block.buf < first_match_location.buf) {
-            span line = next_line(&temp_block);
-            if (line.buf <= first_match_location.buf && line.end > first_match_location.buf) {
-                prt("\n"); // Blank line before matched line
-                remaining_lines -= 1;
-
-                wrs(line); // Print matched line
-                terpri(); // Add the newline back
-                remaining_lines -= 1 + count_physical_lines(state->terminal_cols, line); // Account for physical lines taken by the matched line
-                break;
-            }
-        }
-
-        prt("\n"); // Another blank line after matched line
+        prt("\n");
         remaining_lines -= 1;
     }
 
-    // Print the "N blocks matched" message
-    prt("%d blocks matched.\n", total_matches);
+    prt("%d blocks matched\n", match_count);
     remaining_lines -= 1;
 
-    // Fill up to the bottom of the screen
     while (remaining_lines > 1) {
         terpri();
-        remaining_lines--;
+        remaining_lines -= 1;
     }
 
-    // Print the search string on the last line
     wrs(state->search);
-
-    flush(); // Ensure display is updated
+    flush();
 }
 /*
 In next_line_limit(span* s, int n) we are given a span and a length limit.
@@ -1199,78 +1269,68 @@ span next_line_limit(span* s, int n) {
     return result;
 }
 /*
-In print_ruler we use prt to show the number of blocks and the currently selected block, on a line without a newline.
+In print_ruler we use prt to show
+
+- the number of blocks,
+- the currently selected block,
+- the scrolled lines plus one (i.e. the one-based index of the top visible line)
+
+all on a line without a newline.
 */
 
-void print_ruler(ui_state* state) {
-    prt("Total Blocks: %d, Current Block: %d", state->blocks.n, state->current_index + 1);
-    // No newline as specified
+void print_ruler() {
+    prt("%d blocks, Block %d, Line %d", state->blocks.n, state->current_index + 1, state->scrolled_lines + 1);
 }
 /*
-In print_single_block_with_skipping we get ui state and a block index.
-For now, we first calculate whether the block fits on the screen.
-First, we set a variable remaining_rows which we initialize with state->terminal_rows and decrement as we print lines of output.
-First we print a line "Block N" and decrement the remaining rows by one.
-Invariant: remaining_rows always is the number of untouched rows of remaining terminal area.
-Then, in a loop we call next_line_limit(span*,int) with a copy of the block and state->terminal_cols until remaining rows is one, or the copy of the block is empty.
-Next_line_limit() returns a prefix span representing the next physical line.
-It is either exactly terminal_cols chars, not containing a newline, or up to terminal_cols + 1 chars, ending with a newline.
-The only exception may be the last block in a file, which may not end in a newline if the file does not end in one.
-We always print the line, using wrs().
-We test if the line is shorter than terminal cols. WE PUT THIS RESULT IN A VARIABLE "is_short".
-If the line is a short, then we test if the last char of the line is a newline (i.e. len() > 0 and end[-1] == '\n').
-We put this result in a variable `contains_newline`.
-If is_short is true and contains_newline is false, we call terpri().
-Now that we have printed the line, we decrement remaining_rows, and if it is 1, we stop and call print_ruler().
-If we run out of block before we run out of remaining rows, then we add blank lines up to the end of the screen anyway, and still print our ruler line in the same place.
+In print_single_block_with_skipping we get a block index and a pagination index in the form of a number of lines already "scrolled off" above the top of the screen (skipped_lines).
+
+First, we call count_physical_lines, which gives us a span of skipped lines and alters an int, subtracting the number of physical lines which this span represents.
+We make a copy of the block and adjust this copy to the suffix which is meant to be aligned to the top of our content area, by setting the .buf of the copy to the .end of the scrolled-off span.
+
+We set a variable remaining_rows which we initialize with state->terminal_rows and decrement as we print lines of output.
+First we print a line "Block N" and decrement this variable by one.
+
+We have a ruler line at the bottom that we need to leave room for, so we make another variable, remaining_content_lines, that is one less than remaining lines, and call count_physical_lines again with this variable, letting us determine how many lines are actually printed, and more importantly, giving us a span of the appropriate content to at-most fill the screen.
+
+We then print this content by wrs().
+Note that the int passed by reference into count_physical_lines will be DECREMENTED by the number of actual physical lines of content in the returned span.
+Therefore, the value of this variable after the call is the number of REMAINING lines of content area yet to be filled, thus, while this remains positive, we print blank lines, filling the content area.
+Finally, we call print_ruler to handle the last line of the terminal.
 */
 
-void print_single_block_with_skipping(ui_state* state, int block_index) {
-    if (block_index < 0 || block_index >= state->blocks.n) return; // Validate block index
+void print_single_block_with_skipping(int block_index, int skipped_lines) {
+    span block = state->blocks.s[block_index];
+    int remaining_rows = state->terminal_rows;
 
-    int remaining_rows = state->terminal_rows - 1;
+    span skipped_span = count_physical_lines(block, &skipped_lines);
+    block.buf = skipped_span.end;
+
     prt("Block %d\n", block_index + 1);
     remaining_rows--;
 
-    span block = state->blocks.s[block_index];
-    span block_copy = block; // Copy of the block span to be consumed by next_line_limit
+    int remaining_content_lines = remaining_rows - 1;
+    span content_to_print = count_physical_lines(block, &remaining_content_lines);
 
-    while (remaining_rows > 0 && !empty(block_copy)) {
-        span line = next_line_limit(&block_copy, state->terminal_cols);
-        int is_short = len(line) < state->terminal_cols;
-        int contains_newline = len(line) > 0 && line.end[-1] == '\n';
+    wrs(content_to_print);
+    remaining_rows -= (state->terminal_rows - 1 - remaining_content_lines);
 
-        wrs(line);
-        if (is_short && !contains_newline) {
-            terpri(); // Print newline if the line is short and doesn't end with a newline
-        }
-        remaining_rows--;
-
-        if (remaining_rows == 0) {
-            print_ruler(state);
-            break;
-        }
-    }
-
-    // If we have remaining rows after printing the block, fill them with blank lines
-    while (remaining_rows > 0) {
+    while (remaining_rows > 1) {
         terpri();
         remaining_rows--;
-        if (remaining_rows == 0) {
-            print_ruler(state);
-        }
     }
+
+    print_ruler();
 }
 /*
-In print_physical_lines, we get the ui state, a span, and a number of lines (in that order).
-We can use next_line on the span (which is passed to us by value, so we can freely modify it without side effects to the caller) to get each logical line, and then we use the terminal_cols on the state to determine the number of physical lines that each one will require.
+In print_physical_lines, we get a span, and a number of lines.
+We can use next_line on the span to get each logical line, and then we use the terminal_cols on the state to determine the number of physical lines that each one will require.
 However, note that a blank line will still require one physical line (because we will print an empty line).
 If the physical lines would be more than we need, then we only print enough characters (with wrapping) to fill the lines.
 Otherwise we print the full line, followed by a newline, and then we decrement the number of lines that we still need appropriately.
 */
 
 
-void print_physical_lines(ui_state* state, span block, int lines_to_print) {
+void print_physical_lines(span block, int lines_to_print) {
     while (!empty(block) && lines_to_print > 0) {
         span line = next_line(&block); // Get the next logical line from the block
 
@@ -1305,26 +1365,77 @@ void print_physical_lines(ui_state* state, span block, int lines_to_print) {
     }
 }
 /*
-In finalize_search(ui_state*), we update the current_index to point to the first result of the search given in the search string.
+In print_matching_physical_lines, we get the span of a block and of a match.
+
+We must print the physical lines from the block which contain the match, and then return the number of physical lines that we have printed.
+
+We happen to know, because of how our search currently works, that a match will never cross a logical line boundary (since we don't have a way of entering newlines in the search mode).
+
+We will loop over the logical lines using next_line as usual.
+
+When we find the logical line that contains the match (which we can do by comparing .buf and .end), then we determine where to start printing the physical lines.
+(Note: we compare .buf and .end because we already have found a match, we do not use contains() which would search the strings again!)
+
+(A logical line contains physical lines, which are runs of characters that fill the terminal_cols (on state), and therefore cause wrapping.)
+
+Specifically, we want to skip any physical lines at the start of the logical line until we get to the first physical line that contains the match.
+Then we print this physical line, and keep printing physical lines until we have reached the end of the match.
+Whether or not we have printed the full logical line, we then print a newline.
+
+We return the number of physical lines that we have printed.
+*/
+
+int print_matching_physical_lines(span block, span match) {
+
+    int physical_lines_printed = 0;
+    int terminal_width = state->terminal_cols;
+
+    while (!empty(block)) {
+        span line = next_line(&block);
+
+        if ((match.buf >= line.buf) && (match.end <= line.end)) {
+            int start_offset = match.buf - line.buf;
+            int match_length = len(match);
+            int start_physical_line = start_offset / terminal_width;
+            int end_physical_line = (start_offset + match_length) / terminal_width;
+
+            for (int i = start_physical_line; i <= end_physical_line; ++i) {
+                int line_start = i * terminal_width;
+                int line_end = (i + 1) * terminal_width;
+                if (line_end > len(line)) {
+                    line_end = len(line);
+                }
+                prt("%.*s\n", line_end - line_start, line.buf + line_start);
+                physical_lines_printed++;
+            }
+            break;
+        }
+    }
+
+    return physical_lines_printed;
+}
+/*
+In finalize_search(), we update the current_index to point to the first result of the search given in the search string.
 We ignore the first character of state.search which is always slash, and find the first block which contains the rest of the search string (using contains()).
-Then we set current_index to that block.
+Then we set current_index to that block, also resetting scrolled_lines.
 We then reset state.search to an empty span to indicate that we are not in search mode any more.
 Finally we call print_current_blocks to refresh the display given the block that is now the current one (replacing the search screen).
 */
 
 
-void finalize_search(ui_state* state) {
+void finalize_search() {
     span search_span = {state->search.buf + 1, state->search.end}; // Ignore the leading slash
 
     for (int i = 0; i < state->blocks.n; i++) {
         if (contains(state->blocks.s[i], search_span)) {
             state->current_index = i; // Update current_index to the first match
+            state->scrolled_lines = 0;
             break; // Exit the loop once the first match is found
         }
     }
 
     state->search = nullspan(); // Reset search to indicate exit from search mode
-    print_current_blocks(); // Refresh the display
+    //print_current_blocks(); // Refresh the display
 }
 
 /* Settings.
@@ -1433,7 +1544,7 @@ void parse_config() {
     }
 }
 
-void settings_mode(ui_state* s){}
+void settings_mode(){}
 /*
 In read_line, we get a span pointer to some space that we can use to store input from the user.
 
@@ -2126,10 +2237,10 @@ Then we use system(3) on a 2048-char buf which we allocate and statically zero.
 Our s() interface (s(char*,int,span)) lets us set buildcmd as a null-terminated string beginning at buf.
 
 We wait for another keystroke before returning if the compiler process fails, so the user can read the compiler errors (later we'll handle them better).
-(Remember to call flush() before getch() so the user sees the prompt (which is "Compile failed, press any key to continue...").)
+(Remember to call flush() before getch() so the user sees the prompt (which is "Build failed, press any key to continue...").)
 
 On the other hand, if the build succeeds, we don't need the extra keystroke and go back to the main loop after a 1s delay so the user has time to read the success message before the main loop refreshes the current block.
-In this case we prt "Compile succeeded" on a line.
+In this case we prt "Build succeeded" on a line.
 
 (We aren't doing this yet, but later we'll put something on the state to provide more status info to the user.)
 */
@@ -2146,11 +2257,11 @@ void compile() {
     int status = system(buf);
     
     if (status != 0) {
-        prt("Compile failed, press any key to continue...\n");
+        prt("Build failed, press any key to continue...\n");
         flush();
         getch();
     } else {
-        prt("Compile succeeded\n");
+        prt("Build succeeded\n");
         flush();
         sleep(1); // Give time for the user to read the message
     }
@@ -2177,7 +2288,7 @@ This invalidates the span we created, but that's fine since it's about to go out
 
 void replace_block_code_part(span new_code);
 
-void replace_code_clipboard(ui_state* state) {
+void replace_code_clipboard() {
     ensure_conf_var(&(state->cbpaste), S("Command to get text from the clipboard on your platform (Mac: pbpaste, Linux: try xclip -o -selection clipboard, Windows: \?\?\?)"), S(""));
     char command[2048];
     snprintf(command, sizeof(command), "%.*s", (int)(state->cbpaste.end - state->cbpaste.buf), state->cbpaste.buf);

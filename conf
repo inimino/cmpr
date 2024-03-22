@@ -1,9 +1,12 @@
 revdir: cmpr/revs
 tmpdir: cmpr/tmp
-buildcmd: (D=$(date +%Y%m%d-%H%M%S); gcc -o cmpr/dist/cmpr-$D -fsanitize=address cmpr/cmpr.c -g -lm && rm -f cmpr/dist/cmpr && ln -s cmpr-$D cmpr/dist/cmpr)
+buildcmd: (cd cmpr && make)
 cbcopy: xclip -i -selection clipboard
 cbpaste: xclip -o -selection clipboard
 
 language: C
-file: cmpr/spanio.c
+file: cmpr/conf
+file: cmpr/Makefile
+file: cmpr/README.md
 file: cmpr/cmpr.c
+file: cmpr/spanio.c

@@ -21,11 +21,13 @@ We ALWAYS use spanio methods when possible and never use null-terminated C strin
 - `save()`, `push(span)`, `pop(span*)`, `pop_into_span()`: Manipulates a stack for saving and restoring spans.
 - `advance1(span*)`, `advance(span*, int)`: Advances the start pointer of a span by one or a specified number of characters.
 - `find_char(span, char)`: Searches for a character in a span and returns its index.
-- `contains(span, span)`: Checks if one span contains another.
+- `contains(span, span)`: Checks if one span TEXTUALLY contains another (O(n) string search).
+- `contains_ptr(span, span)`: Checks if one span PHYSICALLY contains another (O(1) pointer comparisons).
 - `starts_with(span, span)`: Check if a starts with b.
-- `take_n(int, span*)`: Takes the first n characters from a span, mutating it, and returns as a new span.
-- `first_n(span, int)`: Returns n chars as a new span without mutating.
-- `next_line(span*)`: Extracts the next line from a span and returns it as a new span.
+- `take_n(int, span*)`: Returns as a new span the first n characters from a span, mutating it.
+- `first_n(span, int)`: Returns n leading chars as a new span without mutating.
+- `skip_n(span, int)`: Returns a span skipping initial chars.
+- `next_line(span*)`: Extracts the next line (up to \n or .end) from a span and returns it as a new span.
 - `span_eq(span, span)`, `span_cmp(span, span)`: Compares two spans for equality or lexicographical order.
 - `S(char*)`: Creates a span from a null-terminated string.
 - `s(char*,int,span)`: Creates a null-terminated string in a user-provided buffer of provided length from given span.
@@ -33,7 +35,7 @@ We ALWAYS use spanio methods when possible and never use null-terminated C strin
 - `spans_alloc(int)`: Allocates a spans structure with a specified number of span elements.
 - `span_arena_alloc(int)`, `span_arena_free()`, `span_arena_push()`, `span_arena_pop()`: Manages a memory arena for dynamic allocation of spans.
 - `is_one_of(span, spans)`: Checks if a span is one of the spans in a spans.
-- `spanspan(span, span)`: Finds the first occurrence of a span within another span and returns the rest of the haystack span starting from that point.
+- `spanspan(span, span)`: Finds the first occurrence of a span within another span and returns a span into haystack.
 - `w_char_esc(char)`, `w_char_esc_pad(char)`, `w_char_esc_dq(char)`, `w_char_esc_sq(char)`, `wrs_esc()`: Write characters (or in the case of wrs, spans) to out, the output span, applying various escape sequences as needed.
 
 typedef struct { u8* buf; u8* end; } span; // reminder of the type of span
@@ -66,6 +68,8 @@ We never use printf, but always prt.
 A common idiom when reporting errors is to call prt, flush, and exit.
 
 To prt a span we use `%.*s` with len.
+
+A common idiom is next_line() in a loop with !empty().
 */
 /* includes */
 
@@ -91,6 +95,7 @@ To prt a span we use `%.*s` with len.
 #define dbgd(x) prt(#x ": %d\n", x),flush()
 #define dbgx(x) prt(#x ": %x\n", x),flush()
 #define dbgf(x) prt(#x ": %f\n", x),flush()
+#define dbgp(x) prt(#x ": %p\n", x),flush()
 
 typedef unsigned char u8;
 
@@ -565,8 +570,12 @@ int contains(span haystack, span needle) {
   return result != NULL ? 1 : 0;
 }
 
+int contains_ptr(span a, span b) {
+  return a.buf <= b.buf && b.end <= a.end;
+}
+
 int starts_with(span a, span b) {
-  return len(a) >= len(b) && 0 == memcmp(a.buf, b.buf, len(b));
+  return len(b) <= len(a) && 0 == memcmp(a.buf, b.buf, len(b));
 }
 
 span first_n(span s, int n) {
@@ -775,31 +784,25 @@ We do not use null-terminated strings but instead rely on the explicit end point
 Here we have spanspan(span,span) which is equivalent to strstr or memmem in the C library but for spans rather than C strings or void pointers respectively.
 We implement spanspan with memmem under the hood so we get the same performance.
 Like strstr or memmem, the arguments are in haystack, needle order, so remember to call spanspan with the thing you are looking for as the second arg.
-We return a span which is either NULL (i.e. nullspan()) or starts with the first location of needle and continues to the end of haystack.
+We return either the empty span at the end of haystack or the span pointing to the first location of needle in haystack.
+If needle is empty we return the empty span at the beginning of haystack.
 Examples:
 
-spanspan "abc" "b" -> "bc"
-spanspan "abc" "x" -> nullspan
+spanspan "abc" "b" -> "b"
+spanspan "abc" "x" -> "" (located after "c")
+spanspan "abc" ""  -> "" (located at "a")
 */
 
 span spanspan(span haystack, span needle) {
-  // If needle is empty, return the full haystack as strstr does.
-  if (empty(needle)) return haystack;
+  if (empty(needle)) return (span){haystack.buf, haystack.buf};
 
-  // If the needle is larger than haystack, it cannot be found.
   if (len(needle) > len(haystack)) return nullspan();
 
-  // Use memmem to find the first occurrence of needle in haystack.
   void *result = memmem(haystack.buf, len(haystack), needle.buf, len(needle));
 
-  // If not found, return nullspan.
-  if (!result) return nullspan();
+  if (!result) return (span){haystack.end, haystack.end};
 
-  // Return a span starting from the found location to the end of haystack.
-  span found;
-  found.buf = result;
-  found.end = haystack.end;
-  return found;
+  return (span){result, result + len(needle)};
 }
 
 // Checks if a given span is contained in a spans.
@@ -843,4 +846,68 @@ span out_compl() {
   return compl;
 }
 
-// END LIBRARY CODE
+/* Random or experimental prompts.
+
+You are writing a C program. You are not explaining how to write the code to me, rather I explain how to write the code to you and you actually write the code. Therefore do not include sample or "in actual implementation..." style comments. You are actually writing the production code, and it must be complete and functional.
+
+Here is information about spanio, the library we are using:
+
+
+--------
+
+Then we give it ctags
+
+Here's our ctags:
+
+```
+[...]
+```
+
+If in the future you need to see the implementation of any of these functions, you can ask. Reply with "OK".
+
+
+
+--------
+
+
+We have a few globals; to those already part of spanio (inp, out, cmp, etc.) we add state, a pointer to the ui_state struct, automatically available everywhere:
+
+typedef struct ui_state {
+    projfiles files;
+    span current_language;
+    spans blocks;
+    int current_index;
+    int marked_index;
+    span search;
+    span config_file_path;
+    int terminal_rows;
+    int terminal_cols;
+    #define X(name) span name;
+    CONFIG_FIELDS
+    #undef X
+} ui_state;
+
+ui_state* state;
+
+#define CONFIG_FIELDS \
+X(projdir) \
+X(revdir) \
+X(tmpdir) \
+X(buildcmd) \
+X(cbcopy) \
+X(cbpaste)
+
+- projdir, location of the project directory that we are working with as a span
+- revdir, a span containing a relative or absolute path to where we store our revisions
+- tmpdir, another path for temp files that we use for editing blocks
+- buildcmd, the command to do a build (e.g. by the "b" key)
+- cbcopy, the command to pipe data to the clipboard on the user's platform
+- cbpaste, the same but for getting data from the clipboard
+
+
+-------
+
+
+In the library intro there are some idioms and advice given at the end. Extremely briefly, summarize these in bullet form.
+
+*/

@@ -1,0 +1,85 @@
+  ✓ clean up tmp files
+  ✓ fix the build / update_symlink ergonomics
+  ✓ upload to github
+  ✓ support ? for keyboard help
+  ✓ support c to compile
+  ✓ add a license
+  ✓ single keystroke to ingest new code from clipboard "R"
+  ✓ links to discord/twitch/yt in repo
+  ✓ triple-quoted strings
+  ✓ implement "/" for search -- YES! we have search
+  ✓ block ends at the next one
+  ✓ the v thing because things going together
+  ✓ fit the block on the screen
+  ✓ parametrize the project / binary / code names, etc
+    ✓ parse .cmpr/conf
+    ✓ support --conf <alternate_conf_file>
+      ✓ fix build
+        ✓ fix or 'r' get_code
+    ✓ Python or C? later: arbitrary block defn
+    ✓ eventually the config will just be a block (?) but for now we'll use .cmpr in the current directory
+    ✓ finish all the settings
+  ✓ push v2-b1 to github
+  ✓ parametrize block_comment_part same as finding the blocks
+  ✓ clean up the code a bit
+  ✓ use it for chess_bpa
+  ✓ test it with a Python project
+  ✓ push v2 to github
+  ✓ add "init"
+    ✓ touch .cmpr/conf
+    ✓ create .cmpr/{revs,tmp}
+    ✗ set those conf vars and save
+  ✓ add 'g'
+  ✓ add 'G' (w/o numeric args)
+  ✓ genericize the arena allocation of array types
+      move this back into library code
+  ✓ Python crashing when only """ in block
+  ✓ "library" support
+    ✓ list of files in the conf, bring in blocks from each one in order
+    ✓ block type is per file, not per project
+    ✓ language build tool will manage dependencies, so we don't have any feature work here
+  ✓ don't symlink but just copy the new version (e.g. we shouldn't be committing a symlink for the main project file in git)
+  ✓ support an alternative conf file location
+  ✓ handle syntax highlighting / filetype issues: put an extension the tmp filename
+  ✓ push v3 to github
+  ✓ decide how to handle structs / other things that aren't functions
+  ✓ add "?"
+  ✓ pagination
+    ✓ implement space/b
+  ✓ add a build timestamp to the version string
+  ✓ add a Makefile
+  ✓ publish TODO in the repo
+    handle the multiple search result issue -- just make 'n' and 'N' work
+      the search should show the current matching line, in the center of the display
+      n goes to the next, which may or may not be in the same block
+      enter sets the current index but can also set a pagination mode
+      e might also do a +N or equivalent
+    add "settings mode" but for files
+    deal with the function declaration / header issue -> general-purpose code hygiene transforms
+    think about using the LLM to write the comment and not just the code (i.e. 'r' and 'R')
+    check if current file == latest rev on load, if not store a new rev
+    not mint a rev if block unchanged / basic diff features "d" for diff (by def. w/ prev rev) of block
+    support API usage
+    parametrize comment_to_prompt
+    make the prompts all config
+    editor should be a config
+    add o / O for block insertions
+      - works the same as editing a block except the file starts empty and instead of replacing we insert
+    add 'd', 'p', 'P' so that moving around blocks is easy
+    visual selection mode works with "r"
+    visual selection mode works with "e"
+    sometimes you want to unconditionally append, not replace the code part (p? v?)
+    something like "*" in vim, also "gd"
+    consider metadata on blocks: prompt "wrapper" functions, custom block end, etc
+    tagging blocks
+    bring compiler errors into the workflow (line no -> block, etc)
+    FIX code formatting issues once and for all
+    ****** have cmpr handle it's own TODO items ******
+    support system prompts / "spanio_prompt" and "code_prompt" / "bootstrap" prompt
+    add to the prompt all the library methods that there are, and let it either use only those OR forward declare any additions
+    think about library ergonomics around prt2cmp (belongs in a library TODO not here)
+    find the right way to handle blocks (language agnostic, ...)
+    TOC presentation of blocks (LLM summarization???)
+    intro video -- mp4 or gif in repo -- youtube (one more thing = language switch)
+    basic stats on blocks e.g. comment-code ratio
+    directory tree support: support projects in directories by reading everything into one buffer
