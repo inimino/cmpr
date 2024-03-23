@@ -233,6 +233,7 @@ void page_up();
 span count_physical_lines(span, int*);
 void print_multiple_partial_blocks(int,int);
 void print_single_block_with_skipping(int,int);
+int add_projfile(span); // helper for check_conf_vars
 /*
 Debugging helper
 */
@@ -1547,6 +1548,7 @@ void parse_config() {
 void settings_mode(){}
 /*
 In read_line, we get a span pointer to some space that we can use to store input from the user.
+Just to be sure, we always assert(len(buffer)) which helps catch some programming errors that have happened in the past.
 
 We first print our prompt, which is "> ".
 
@@ -1564,11 +1566,8 @@ The line editing we support:
 - everything else just gets appended to our span, which it extends.
 */
 
-
-
-#include <stdio.h>
-
 span read_line(span* buffer) {
+    assert(len(*buffer));
     prt("> ");
     flush();
 
@@ -1624,7 +1623,7 @@ First we will write into the cmp space the current configuration.
 Next, we will write that into the file named by state.config_file_path.
 Finally we can shorten the cmp space back to what it was.
 
-First we store a span that has buf pointing to the current cmp.end.
+First we store a span that has .buf pointing to the current cmp.end.
 Then we call prt2cmp() and use prt to print a line for each config var as described below.
 Then we call prt2std().
 Next we set the .end of that span to be the current cmp.end.
@@ -1637,83 +1636,119 @@ To print a config var, we print the name, a colon and single space, and then the
 Our X macro handles the "normal" config fields, but then we call another function, save_conf_files, that handles the file and language lines that are special.
 */
 
-
 void save_conf() {
-    span start = {cmp.end, cmp.end};
+    span original_cmp_end = {cmp.end, cmp.end};
     prt2cmp();
 
     #define X(name) prt(#name ": %.*s\n", len(state->name), state->name.buf);
     CONFIG_FIELDS
     #undef X
 
+    save_conf_files();
     prt2std();
-    start.end = cmp.end;
+    original_cmp_end.end = cmp.end;
 
-    write_to_file_span(start, state->config_file_path, 1);
-    cmp.end = start.buf;
+    write_to_file_span(original_cmp_end, state->config_file_path, 1);
+    cmp.end = original_cmp_end.buf;
+}
+/* #add_projfile(span)
+
+Here we add a file to the projfiles and ensure that the file exists on disk.
+This is a helper function for check_conf_vars.
+
+We add the file to the projfiles, but do not set a language on it (since that will be handled next by that function.)
+
+If it is not creatable, writable by the user, etc, we will report the error, wait for a keystroke, and then return 0, otherwise we return 1.
+*/
+
+int add_projfile(span file_path_span) {
+    char file_path[2048] = {0};
+    s(file_path, 2048, file_path_span);
+
+    FILE *file = fopen(file_path, "a+");
+    if (file == NULL) {
+        prt("Error: Cannot create or write to file %s.\nPress any key to continue...\n", file_path);
+        flush();
+        getch();
+        return 0;
+    }
+    fclose(file);
+
+    projfile new_file = {.path = file_path_span, .language = nullspan(), .contents = nullspan()};
+    projfiles_push(&state->files, new_file);
+    return 1;
 }
 /*
 In check_conf_vars() we test the state for all essential configuration variables and if any is missing we prompt the user to set that.
 
 The essential configuration variables, along with the reason why each is required, are:
 
-revdir: we save a revision every time you edit a block, this is where the revisions will be stored (.cmpr/revs is a good choice).
-tmpdir: we store a copy of a block for you to edit in your editor with the "e" key, this is where those live, can be .cmpr/tmp or a regular tmpdir like /tmp.
+revdir: We save a revision every time you edit a block, this is where they will be stored (.cmpr/revs is a good choice).
+tmpdir: Location for temporary files for editing a block in the editor, a good choice is .cmpr/tmp.
 
 TODO: probably all the above "config-related metadata" should be in one place in a table for all the conf vars; we'll do that later.
 For now, a local macro cleans up this code quite a bit.
 
-For each missing variable in the order given, we print a suitable message explaining what it is and why it is required (inspired by the above).
-We try to include all the relevant information from the above about what the conf var is and why it's required, but fitting the explanation in a sentence or two at most. 
+For each missing variable in the order given, we print the string after the colon above as a prompt to the user (and include the configuration parameter name).
 
 We then call read_line to get the new value from the user.
 For the buffer space to use we will first call cmp_compl() to get the complement of cmp space as a span.
-After read_line returns we will always set cmp.end to point to the end of the returned span; this makes sure nothing else uses that space later.
+After read_line returns we will always set cmp.end to point to the end of the RETURNED span; this makes sure nothing else uses that space later.
+NOTE: THIS MEANS THE VALUE THAT IS ****RETURNED**** BY THE READ_LINE FUNCTION.
 
-Additional to the "normal" conf vars, we also have the language setting for each file.
-If there is a file in projfiles that doesn't have a language set, then we tell the user that this is required and set the config on the projfile in this case.
+Additional to the "normal" conf vars, we also have the files, and the language setting for each file.
+
+First, it's a requirement that there be at least one file, even if it is empty, otherwise we have nowhere to put any blocks and no way to get things off the ground.
+Therefore if there are no files on the state, we will prompt the user to name one file that can be added to the project.
+We explain that at least one file is required otherwise there is nowhere to create any blocks and no way to proceed.
+We then create this as an empty file if it does not already exist by calling add_projfile() with the path.
+Note that this function may fail, in which case it will return 0.
+If it fails, we just loop until it succeeds as there's no going forward without it.
+
+Next, if there is a file in projfiles that doesn't have a language set, then we tell the user that this is required and set the language on the projfile in this case.
 We tell them that the language must be either "Python" or "C", and determines how blocks start and also where the comment part ends and code part starts.
-For Python, both are triple-quote, for C the block comment syntax is used.
 
-Once we have set all the required conf vars, if any of them were missing, including any languages on the projfiles, then we call save_conf() which just rewrites the conf file.
+Once we have set all the required conf vars, if any of them were missing, including any languages on the projfiles, or adding the first projfile, then we call save_conf() which just rewrites the conf file.
 
 TODO: use the ensure_conf_var thing that we added after this
 */
 
-
-
 void check_conf_vars() {
-    int missing_vars = 0;
+    #define CHECK_AND_SET(var, prompt) \
+    if (empty(state->var)) { \
+        prt("%s\n", prompt); \
+        flush(); \
+        span input_space = cmp_compl(); \
+        state->var = read_line(&input_space); \
+        cmp.end = state->var.end; \
+    }
 
-    #define CHECK_AND_PROMPT(var, msg) \
-        if (empty(state->var)) { \
-            printf(#var ": " msg "\n"); \
-            span cmp_space = cmp_compl(); \
-            read_line(&cmp_space); \
-            state->var = cmp_space; \
-            cmp.end = cmp_space.end; \
-            missing_vars = 1; \
+    CHECK_AND_SET(revdir, "revdir: Path for revisions (.cmpr/revs is a good choice)");
+    CHECK_AND_SET(tmpdir, "tmpdir: Path for temp files (.cmpr/tmp is a good choice)");
+
+    if (state->files.n == 0) {
+        while (1) {
+            prt("At least one file is required. Please specify a file path to add:\n");
+            flush();
+            span input_space = cmp_compl();
+            span file_path_span = read_line(&input_space);
+            cmp.end = file_path_span.end;
+            if (add_projfile(file_path_span)) break;
         }
+    }
 
-    CHECK_AND_PROMPT(revdir, "Revision directory required (.cmpr/revs recommended). Stores block revisions.");
-    CHECK_AND_PROMPT(tmpdir, "Temporary directory required (.cmpr/tmp or /tmp recommended). Stores temporary block files.");
-
-    #undef CHECK_AND_PROMPT
-
-    for (int i = 0; i < state->files.n; i++) {
+    for (int i = 0; i < state->files.n; ++i) {
         if (empty(state->files.a[i].language)) {
-            printf("Language for file %.*s is required. Must be \"Python\" or \"C\".\n", len(state->files.a[i].path), state->files.a[i].path.buf);
-            span cmp_space = cmp_compl();
-            read_line(&cmp_space);
-            state->files.a[i].language = cmp_space;
-            cmp.end = cmp_space.end;
-            missing_vars = 1;
+            prt("A language for each file is required. Please specify 'Python' or 'C' for the file: %.*s\n", len(state->files.a[i].path), state->files.a[i].path.buf);
+            flush();
+            span input_space = cmp_compl();
+            state->files.a[i].language = read_line(&input_space);
+            cmp.end = state->files.a[i].language.end;
         }
     }
 
-    if (missing_vars) {
-        save_conf();
-    }
+    #undef CHECK_AND_SET
+    save_conf();
 }
 /*
 In ensure_conf_var() we are given a span, which must be one of the conf vars on the state, a message for the user to explain what the conf setting does and why it is required, and a default or current value that we can pass through to read_line.

@@ -1,12 +1,13 @@
+projdir: 
 revdir: cmpr/revs
 tmpdir: cmpr/tmp
 buildcmd: (cd cmpr && make)
 cbcopy: xclip -i -selection clipboard
 cbpaste: xclip -o -selection clipboard
-
 language: C
 file: cmpr/conf
 file: cmpr/Makefile
 file: cmpr/README.md
 file: cmpr/cmpr.c
 file: cmpr/spanio.c
+

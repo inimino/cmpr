@@ -44,11 +44,11 @@ typedef struct { span *s; int n; } spans; // reminder of the type of spans, give
 
 We have a generic array implementation using arena allocation.
 
-- Call MAKE_ARENA(T,E,STACK_SIZE) to define array type E for elements of type T.
-  - E has .a and .n on it of type T* and int resp.
-- Use E_arena_alloc(N) and E_arena_free(), typically in main() or similar.
-- E_alloc(N) returns an array of type E, with .n = .cap = N.
-- E_arena_push() and E_arena_pop() manage arena allocation stack.
+- Call MAKE_ARENA(E,T,STACK_SIZE) to define array type T for elements of type E.
+  - T has .a and .n on it of type E* and int resp.
+- Use T_arena_alloc(N) and T_arena_free(), typically in main() or similar.
+- T_alloc(N) returns an array of type T, with .n = .cap = N.
+- T_arena_push() and T_arena_pop() manage arena allocation stack.
 
 Note that spans uses .s for the array member, not .a like all of our generic array types.
 
@@ -433,7 +433,11 @@ void write_to_file_2(span content, const char* filename, int clobber) {
   if (!clobber) flags |= O_EXCL;
   int fd = open(filename, flags, 0644);
   if (fd == -1) {
-    prt("Error opening %s for writing: File already exists or cannot be created.\n", filename);
+    if (clobber) {
+      prt("Error opening %s for writing: File cannot be created or opened.\n", filename);
+    } else {
+      prt("Error opening %s for writing: File already exists or cannot be created.\n", filename);
+    }
     flush();
     exit(EXIT_FAILURE);
   }
@@ -442,7 +446,7 @@ void write_to_file_2(span content, const char* filename, int clobber) {
   ssize_t written = write(fd, content.buf, len(content));
   if (written != len(content)) {
     // Handle partial write or write error
-    prt("Error writing to file.\n");
+    prt("Error writing to file %s.\n", filename);
     flush();
     close(fd); // Attempt to close the file before exiting
     exit(EXIT_FAILURE);
@@ -450,7 +454,7 @@ void write_to_file_2(span content, const char* filename, int clobber) {
 
   // Close the file
   if (close(fd) == -1) {
-    prt("Error closing file after writing.\n");
+    prt("Error closing %s after writing.\n", filename);
     flush();
     exit(EXIT_FAILURE);
   }
@@ -479,14 +483,17 @@ span read_file_into_span(char* filename, span buffer) {
   // Open the file
   int fd = open(filename, O_RDONLY);
   if (fd == -1) {
-    exit_with_error("Failed to open file");
+    prt("Failed to open %s\n", filename);
+    flush();
+    exit(1);
   }
 
   // Get the file size
   struct stat statbuf;
   if (fstat(fd, &statbuf) == -1) {
     close(fd);
-    exit_with_error("Failed to get file size");
+    prt("Failed to get file size for %s\n", filename);
+    flush();exit(1);
   }
 
   // Check if the file's size fits into the provided buffer
@@ -674,7 +681,7 @@ One is an already existing typedef and another will be created by the macro, and
 
 For example, to create the spans type we might call this macro with span and spans as the names.
 We call these the element type and array type names resp.
-(We may use "T" and "E" as variables in documentation to refer to them.)
+(We may use "E" and "T" as variables in documentation to refer to them.)
 
 This macro will create a typedef struct with that given name that has a pointer to the element type called "a", a number of elements, which is always called "n", and a capacity "cap", which are size_t's.
 
@@ -696,76 +703,76 @@ The stack size is also an argument to the macro.
 We do not support realloc on the entire arena, rather the programmer needs to choose a big enough value and if we exceed at runtime we will always crash.
 The programmer has to call the T_arena_alloc(N) and _free methods themselves, usually in a main() function or similar, and if the function is not called the arena won't be initialized and T_alloc() will always complain and crash (using prt, flush, exit as usual).
 
-The main entry point is the MAKE_ARENA(T,E) macro, which sets up everything and must be called before any references to E in the source code.
+The main entry point is the MAKE_ARENA(E,T) macro, which sets up everything and must be called before any references to T in the source code.
 Then the arena alloc and free functions must be called somewhere, and everything is ready to use.
 */
 
-#define MAKE_ARENA(T, E, STACK_SIZE) \
+#define MAKE_ARENA(E, T, STACK_SIZE) \
 typedef struct { \
-    T* a; \
+    E* a; \
     size_t n, cap; \
-} E; \
+} T; \
 \
 static struct { \
-    T* arena; \
+    E* arena; \
     size_t arena_size, allocated, stack[STACK_SIZE], stack_top; \
-} E##_arena = {0}; \
+} T##_arena = {0}; \
 \
-void E##_arena_alloc(int N) { \
-    E##_arena.arena = (T*)malloc(N * sizeof(T)); \
-    if (!E##_arena.arena) { \
-        prt("Failed to allocate arena for " #E "\n", 0); \
+void T##_arena_alloc(int N) { \
+    T##_arena.arena = (E*)malloc(N * sizeof(E)); \
+    if (!T##_arena.arena) { \
+        prt("Failed to allocate arena for " #T "\n", 0); \
         flush(); \
         exit(1); \
     } \
-    E##_arena.arena_size = N; \
-    E##_arena.allocated = 0; \
-    E##_arena.stack_top = 0; \
+    T##_arena.arena_size = N; \
+    T##_arena.allocated = 0; \
+    T##_arena.stack_top = 0; \
 } \
 \
-void E##_arena_free() { \
-    free(E##_arena.arena); \
+void T##_arena_free() { \
+    free(T##_arena.arena); \
 } \
 \
-void E##_arena_push() { \
-    if (E##_arena.stack_top == STACK_SIZE) { \
-        prt("Exceeded stack size for " #E "\n", 0); \
+void T##_arena_push() { \
+    if (T##_arena.stack_top == STACK_SIZE) { \
+        prt("Exceeded stack size for " #T "\n", 0); \
         flush(); \
         exit(1); \
     } \
-    E##_arena.stack[E##_arena.stack_top++] = E##_arena.allocated; \
+    T##_arena.stack[T##_arena.stack_top++] = T##_arena.allocated; \
 } \
 \
-void E##_arena_pop() { \
-    if (E##_arena.stack_top == 0) { \
-        prt("Stack underflow for " #E "\n", 0); \
+void T##_arena_pop() { \
+    if (T##_arena.stack_top == 0) { \
+        prt("Stack underflow for " #T "\n", 0); \
         flush(); \
         exit(1); \
     } \
-    E##_arena.allocated = E##_arena.stack[--E##_arena.stack_top]; \
+    T##_arena.allocated = T##_arena.stack[--T##_arena.stack_top]; \
 } \
 \
-E E##_alloc(size_t N) { \
-    if (E##_arena.allocated + N > E##_arena.arena_size) { \
-        prt("Arena overflow for " #E "\n", 0); \
+T T##_alloc(size_t N) { \
+    if (T##_arena.allocated + N > T##_arena.arena_size) { \
+        prt("Arena overflow for " #T "\n", 0); \
         flush(); \
         exit(1); \
     } \
-    E result; \
-    result.a = E##_arena.arena + E##_arena.allocated; \
+    T result; \
+    result.a = T##_arena.arena + T##_arena.allocated; \
     result.n = N; \
     result.cap = N; \
-    E##_arena.allocated += N; \
+    T##_arena.allocated += N; \
     return result; \
 } \
 \
-void E##_push(E* e, T elem) { \
-    if (e->n == e->cap) { \
-        prt("Capacity reached for " #E "\n", 0); \
+void T##_push(T* t, E e) { \
+    if (t->n == t->cap) { \
+        prt("Capacity reached for " #T "\n", 0); \
         flush(); \
         exit(1); \
     } \
-    e->a[e->n++] = elem; \
+    t->a[t->n++] = e; \
 }
 /*
 Other stuff.
@@ -903,6 +910,9 @@ X(cbpaste)
 - buildcmd, the command to do a build (e.g. by the "b" key)
 - cbcopy, the command to pipe data to the clipboard on the user's platform
 - cbpaste, the same but for getting data from the clipboard
+
+The projfiles type is created by MAKE_ARENA and has the methods defined for our generic array types (with element type projfile).
+In particular, we use projfiles_alloc with a sufficient capacity in main() and then we use projfiles_push() whenever we populate a project file.
 
 
 -------
