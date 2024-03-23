@@ -57,11 +57,10 @@ So the block size is determined by the amount of code that the LLM can write in 
 ## Quick start:
 
 1. Get the code and build; assuming git repo at ~/cmpr and you have gcc, `(cd cmpr && make)` should do. Put the executable in your path with e.g. `sudo install cmpr/dist/cmpr /usr/local/bin`.
-2. Go to the directory you want to work in and run `cmpr --init`, this creates a `.cmpr/` directory (similar to how git works).
+2. Go to the directory you want to work in and run `cmpr --init`, this creates a `.cmpr/` directory (similar to how git works) with a conf file and some other stuff.
 3. `export EDITOR=emacs` or whatever editor you use, or vi will be run by default.
 4. Run `cmpr` in this directory, and it will ask you some configuration questions.
    If you want to change the answers later, you can edit the .cmpr/conf file.
-   At the moment you'll also probably need to edit the conf file to add a line that says "file: ..." with at least one file that you want to have in your project.
 
 ### Bonus: cmpr in cmpr
 
@@ -74,7 +73,7 @@ Developed on Linux, please report any bugs on other platforms!
 The first time you use the 'r' or 'R' commands you will be prompted for the command to use to talk to the clipboard on your system.
 For Mac you would use "pbcopy" and "pbpaste", on Linux we are using "xclip".
 
-The tool is still very new and light on features.
+The tool is still new and light on features.
 We only support C and Python; mostly this is around syntax of where blocks start (in C we use block comments, and triple-quoted strings in Python).
 It's not hard to extend the support to other languages, just ask for what you want in the discord and it may happen soon!
 It's not hard to contribute, you don't need to know C well, but you do need to be able to read it (you can't trust the code from GPT without close examination).
