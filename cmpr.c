@@ -532,6 +532,54 @@ checksum selected_checksum(span); // our selected checksum implementation
 void find_all_lines(); // like find_all_blocks, but for lines; applies to the whole project
 void index_block_ids();
 void ingest(); // updates everything that needs to be updated after code has changed
+
+/* #set_default_clipboard_commands
+
+*/
+
+char* detect_os() {
+    #ifdef _WIN32
+        return "Windows";
+    #elif __APPLE__
+        return "MacOS";
+    #elif __linux__
+        return "Linux";
+    #else
+        return "Unknown";
+    #endif
+}
+
+int is_wsl() {
+    char buffer[256];
+    FILE* fp = fopen("/proc/version", "r");
+    if (fp != NULL) {
+        if (fgets(buffer, sizeof(buffer), fp)) {
+            fclose(fp);
+            return strstr(buffer, "Microsoft") != NULL || strstr(buffer, "WSL") != NULL;
+        }
+        fclose(fp);
+    }
+    return 0;
+}
+
+void set_default_clipboard_commands() {
+    char* os = detect_os();
+    if (is_wsl()) {
+        if (empty(state->cbcopy)) state->cbcopy = S("clip.exe");
+        if (empty(state->cbpaste)) state->cbpaste = S("powershell.exe Get-Clipboard");
+    } else if (strcmp(os, "MacOS") == 0) {
+        if (empty(state->cbcopy)) state->cbcopy = S("pbcopy");
+        if (empty(state->cbpaste)) state->cbpaste = S("pbpaste");
+    } else if (strcmp(os, "Linux") == 0) {
+        if (empty(state->cbcopy)) state->cbcopy = S("xclip -i -selection clipboard");
+        if (empty(state->cbpaste)) state->cbpaste = S("xclip -o -selection clipboard");
+    } else if (strcmp(os, "Windows") == 0) {
+        if (empty(state->cbcopy)) state->cbcopy = S("clip.exe");
+        if (empty(state->cbpaste)) state->cbpaste = S("powershell.exe Get-Clipboard"); 
+    }
+}
+
+
 /* #main
 
 In main,
@@ -586,6 +634,8 @@ int main(int argc, char** argv) {
     state->files = projfiles_alloc(1024);
     state->files.n = 0;
 
+    set_default_clipboard_commands();
+    
     read_openai_key();
 
     handle_args(argc, argv);
@@ -1405,6 +1455,7 @@ void index_block_ids() {
     for (int i = 0; i < state->blocks.n; i++) {
         span block = state->blocks.a[i];
         span line = next_line(&block);
+        if (line.buf == line.end) continue;
         if (line.buf[0] != '#') {
             spans tokens = split_whitespace(line);
             for (int j = 0; j < tokens.n; j++) {
@@ -1420,6 +1471,7 @@ void index_block_ids() {
     for (int i = 0; i < state->blocks.n; i++) {
         span block = state->blocks.a[i];
         span line = next_line(&block);
+        if (line.buf == line.end) continue;
         if (line.buf[0] != '#') {
             spans tokens = split_whitespace(line);
             for (int j = 0; j < tokens.n; j++) {
@@ -6382,7 +6434,7 @@ We complain and exit if anything goes wrong as per usual.
 */
 
 void send_to_clipboard(span content) {
-    ensure_conf_var(&(state->cbcopy), S("The command to pipe data to the clipboard on your system. For Mac try \"pbcopy\", Linux \"xclip -i -selection clipboard\", \"clip.exe\""), S(""));
+    ensure_conf_var(&(state->cbcopy), S("The command to pipe data to the clipboard on your system. For Mac try \"pbcopy\", Linux \"xclip -i -selection clipboard\", Windows \"clip.exe\""), S(""));
 
     char command[2048];
     snprintf(command, sizeof(command), "%.*s", (int)(state->cbcopy.end - state->cbcopy.buf), state->cbcopy.buf);
