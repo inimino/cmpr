@@ -48,7 +48,7 @@ Compare the English code with [the generated HTML, CSS, and JS](doc/examples/204
 Which one would you rather read?
 
 A more complex example is [the cmpr code itself](https://github.com/inimino/cmpr/cmpr.c).
-In constrast with 2048, this is not something the model was trained on, it's written in C, it's using an I/O library which is also not in the training set, so the LLM must be told about it, and it's a moderately complex program, not a toy.
+In contrast with 2048, this is not something the model was trained on, it's written in C, it's using an I/O library which is also not in the training set, so the LLM must be told about it, and it's a moderately complex program, not a toy.
 This proves that modern LLMs is capable of writing real-world production-ready code in a challenging environment.
 
 ## What's this then?
