@@ -1406,3 +1406,112 @@ A simple idea: comments apply to revs (a version fixed in time).
 That means if you comment on a rev, then you can refer to that rev, with its comments.
 For example the NL description can say "like #block@xyz" where block is a blockid and xyz is a short id string that is assigned when needed.
 For example, the first time someone refers to a block, it is added to a file "blockrefs" which contains the mapping "xyz = 0123456789ABCDEF".
+
+
+
+
+
+
+
+
+rationale
+----
+20240626
+
+While starting to write the `set_output_section` function, it turned into a design session, recorded here as the rationale for whatever design we end up with:
+
+`void set_output_section(span);`
+
+We are given a response message from an LLM.
+
+We want to add an output section to the current block, which goes after the block comment part, and before the rest of the code part.
+
+For example, using [[ and ]] to indicate block comment syntax, we have before the call:
+
+[[ block comment
+...
+]]
+
+...code...
+
+And after the call:
+
+[[ block comment
+...
+]]
+
+ [[output:
+...LLM output message...
+]]
+
+...code...
+
+
+The " [[output:" line represents a special kind of block comment, which is a comment, but not formatted like the kind of comment that starts a block.
+@- We might change how we handle this.
+@- An alternative idea is to have the output stored separately, even in a separate file, but have the UI know about it and display it somehow.
+@- These could be keyed on the block checksum, for example, which could let us find them quickly for display.
+@- On the other hand, that means that editing the block would break the link (which might even be what we want?).
+@- For now, we prefer to make everything explicit by putting it directly in the block and let the user handle it.
+@- Note that if we replace the code part (e.g. with 'r' or 'R') the output part will also get replaced.
+@- This is because that code replaces everything after the comment part.
+
+We might at some point replace the current output section's contents with the new contents, if there already is one.
+However, for now, we don't care about that, so we'll just unconditionally add a new output section.
+
+Problem: Python doesn't support having triple-quoted strings at the top level that are indented.
+However, we could have triple-quote followed by "output:" with no space between them, be treated specially.
+
+On the other hand, maybe it's better to just use a separate file for the output.
+
+A point in favor is that with compiler errors we are likely to want to deal with separate files (containing build command output) anyway.
+
+In general, we have some features planned that depend on blocks having outputs that should be stored separately (although a block's output is a slightly different concept).
+
+Another thing we could do for Python is to put the output directly into the comment part.
+But I don't like this idea as it makes the "NL PL agreement" action non-idempotent, as the second time you run in the output of the first time would be sent to the LLM.
+
+However, that's already true, as we're not stripping the output part from the code part... unless we modify that code.
+So, perhaps the output going into a separate file is really the best idea.
+
+But this means we have to think about how the output gets associated with the block, looked up, and displayed.
+
+However!
+There is another quicker and even cheaper idea.
+This is that we simply put the output, any output, in the same file (just like we might do with build process output).
+
+We can then have further prompt templates that use this output; for example we could have a prompt template that asks the LLM to suggest a fix.
+This means that we should probably include the block id, or something, in the output, so that when we are using one of these we can recreate the necessary context.
+
+I think I like this idea the best so far.
+
+So we might have an output format that looks like the following:
+
+block\_id: #xyz
+checksum: 0123456789ABCDEF
+action: NL PL agreement
+
+...text from the LLM...
+
+(I don't like the name "action" here either, but haven't come up with anything else yet.)
+
+Then if the user wants to do something with it, we could look up the block by ID, and if the checksum is different, warn them.
+(We could even use the SBV machinery to find a previous version with that checksum in most cases.)
+
+If the block has no ID, we would probably have to use the checksum alone.
+Alternatively, we could also hash all the checksums of all the historical blocks that we find, when we are hashing the revs.
+But actually, that doesn't really help, because it doesn't necessarily create a link to any current block, if it's been changed.
+
+One other issue here is that the context might change, but if the block itself hasn't changed, the checksum would be the same.
+So there's not necessarily a one-to-one correspondence between the same checksum and the same result from the LLM, depending on how different the context might be.
+(Even inline references would not change the checksum.)
+
+Probably the best current approach is the most direct, which is just have one current output file, and let the user worry about whether what they are doing makes any sense.
+
+For the header, instead of action:
+
+output\_of: NL PL agreement
+
+Looks fine.
+
+Actually, we could easily support these "follow-on actions" later by just showing something (in the ruler, say) if there's an output from the current block, and the checksum still matches.

@@ -1,0 +1,11 @@
+Write a summary of the following code.
+
+```{langtag}
+{comment}
+
+{code}
+```
+
+The summary should focus on the purpose of the code, in relation to the rest of the system, not the implementation details.
+
+Reply only with a single sentence.

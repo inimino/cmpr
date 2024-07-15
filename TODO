@@ -1,3 +1,6 @@
+# DONE
+
+```
   ✓ clean up tmp files
   ✓ fix the build / update_symlink ergonomics
   ✓ upload to github
@@ -25,28 +28,28 @@
   ✓ use it for chess_bpa
   ✓ test it with a Python project
   ✓ push v2 to github
-  ✓ add "init"
+  ✓ add "--init"
     ✓ touch .cmpr/conf
     ✓ create .cmpr/{revs,tmp}
     ✗ set those conf vars and save
   ✓ add 'g'
   ✓ add 'G' (w/o numeric args)
   ✓ genericize the arena allocation of array types
-      move this back into library code
+    ✓ move this back into library code
   ✓ Python crashing when only """ in block
-  ✓ "library" support
+  ✓ "library" support (= more than one file per project)
     ✓ list of files in the conf, bring in blocks from each one in order
     ✓ block type is per file, not per project
     ✓ language build tool will manage dependencies, so we don't have any feature work here
   ✓ directory tree support: support projects in directories by reading everything into one buffer
   ✓ don't symlink but just copy the new version (e.g. we shouldn't be committing a symlink for the main project file in git)
   ✓ support an alternative conf file location
-  ✓ handle syntax highlighting / filetype issues: put an extension the tmp filename
+  ✓ handle syntax highlighting / filetype issues: put an extension (e.g. .c or .py) on the tmp filename
   ✓ push v3 to github
   ✓ decide how to handle structs / other things that aren't functions
-  ✓ add "?"
+  ✓ add "?" (keyboard help)
   ✓ pagination
-    ✓ implement space/b
+    ✓ implement space/b (down/back by page)
   ✓ add a build timestamp to the version string
   ✓ add a Makefile
   ✓ publish TODO in the repo
@@ -98,7 +101,7 @@
   ✓ push code
   ✓ replace libcurl with curl
   ✓ update README
-  ✓ fix 'h' (it's '?' not 'h'...)
+  ✓ fix 'h' (it's '?' not 'h'...) (this is now displayed on the ruler)
   ✓ strip config directories
   ✓ support arrow keys in :model
   ✓ the respond with OK thing
@@ -130,9 +133,9 @@
     ✓ add block_by_id
     ✓ add block_transforms(b,f)
   ✓ add :expand, :toprefs, :inrefs
-  ✓ add "#" feature
+  ✓ add "#" feature to jump to a block by id (as a menu)
   ✓ turn off bootstrap on startup
-  ✓ make .n start at 0
+  ✓ make .n start at 0 (in generic arrays)
   ✓ checksum for block content in memory and on disk
       ✓ pick a placeholder or simple approach: SipHash?
       ✓ get something to compile
@@ -140,14 +143,13 @@
       ✓ checksum files, blocks, lines in all revs
   ✓ fix the first-line thing on @id:code
   ✓ replace spans arena with generic implementation
-  ✓ make "#" jump to block by id (as a menu)
   ✓ dataloss pass: think through everything; addresses control issue
     ✓ visibility into what's happening with process control; be chatty around tmp files
     ✓ user visibility into what's in the files and when it got there
-    ✓ "diffs and dates"
+    ✓ "diffs and dates" (so far this is the "U" feature, but should be more)
   ✓ update ? short help
   ✓ merge 2 PRs
-  ✓ bugfix :inrefs, :toprefs crashes
+  ✓ bugfix :inrefs, :toprefs crashes (removed these)
   ✓ chmod issue on Windows (exec bit)
   ✓ bump version and push v8
   ✓ basic diff features
@@ -164,24 +166,86 @@
       ✓ numbers shouldn't stop short
       ✓ optimization (caching?)
       ✓ put the whole thing behind a flag or disable it
+      ✓ re-enable with performance cost paid only when using the feature
   ✓ integrate sqlite
   ✓ remove sqlite
   ✓ improve revblock caching and re-enable undo feature
+  ✓ look into memory allocation and editor fork issues, build fixes (use vfork)
+  ✓ explore "prompt palette" idea
+    ✓ implement one or two by hand
+  ✓ agreement()
+    ✓ duplicate rewrite_current_block_with_llm, comment_to_prompt, and make call_llm take a callback function
+    ✓ implement minimal expand_prompt_template and parse_prompt_template
+    ✓ add filename_template
+    ✓ add filename_variables and a constant now value per main loop iteration
+    ✓ write the output in outputs/
+  ✓ agreement_to_nl_diff
+    ✓ look up the output of agreement()
+      ✓ #output_template_var
+      ✓ #lookup_output
+      ✓ #current_block_checksum
+      ✓ #read_output_headers
+      ✓ #read_output_body
+      ✓ #proposed_diff_SAV
+      ✓ extend #get_prompt_template
+  ✓ read default templates in from files instead of putting them into the binary; makes it easy for extension authors to add them
+  ✓ agreement_to_pl_diff
+  ✓ bug: seems reproducable by doing an undo on a block, then immediately editing it; Error: Inconsistent state after updating file contents.
+    ✓ add new inp_sanity_checks
+      ✓ nl2algo
+        ✓ get prompt templates from files under prompts/ instead
+          ✓ add dir_listing
+        ✗ give the output an id or a "dash-continuation" or something
+        ✗ actually add the output to the file, replacing any already there
+    ✓ SEGV on example block, U, k, which happens every second time; something to do with revblock ids
+  ✓ implement j/k order (i.e. unified file/block order, empty states for files and projects)
+    ✓ delete existing current_index from state, and then fix everywhere that it was used (~50 places)
+  ✓ make 'r' implementation match the other palette ops
+    ✓ implement nl2pl_rewrite
+    ✓ make 'r' simply call that
+  ✓ implement summarize_block
+  ✓ testing palette features
+  ✓ pl2nl_rewrite
+```
 
+# CURRENTLY
 
+  → llm.c (in git) to a set of blocks in the shortest time
+  → implement global context pragma
+  → revise README
 
+# FUTURE
 
-WHAT WE ARE CURRENTLY DOING:
-  → explore "prompt palette" idea
-  → bump version and push v9
-
-
-
-
-    rename bootstrap to global context block
+```
+    basically we want a "@llm_op" context that will create a nice English DSL for writing ops (we can derive this from existing impls)
+    add "diff" palette feature (the first non-LLM palette operation)
+    start to introduce block concept in our prompts
+    add {bcs} and {bce} block comment delimiters (block comment start, end) per language as prompt template variables
+    get rid of .bak when we write a rev (false sense of security anyway, once you save twice...) (let's wait until we detect files changing on disk)
+    follow block ids back in time (in "U") (actually no, the decision was intentional, but maybe document it?)
+    add machinery for maintaining block one-line summaries (block_id, checksum_prefix, summary...)
+    add palette op for suggesting context based on one-line summaries
+    perhaps add summaries to the block jump list?
+    when ' goes to the palette we should select the previous op; when ' is hit again we should run it; this makes '' similar to "@@" or "." in vim
+    our markdown blockizer is actually broken; e.g. the file "#test\n```c\n#include <stdio.h>\n```\n" will include two blocks but should be just one.
+    manually blockized the train_gpt2.c file; this could almost trivially be automated; maybe a script that we ship (as a block(?))
+    proposed diff handling
+      look up proposed diff to current block, if any
+      implement the patch application and testing for clean application
+        write the block to a file
+        extract the patch to a file
+        call patch with `patch orig_file patch_file` and check the exit status
+      show some indication in the UI
+      give some UI affordance to apply the diff
+    bump version and push v9
+    dedup transitive block references
+    add a "cmpr and git" section to the README: include conf, probably exclude the rest
+    data loss when two cmprs open (related to rev currency check) (or when cmpr backgrounded and separately vimming, which bit me)
+    build cmpr.ai using cmpr (and ideally deploy it the same way)
+    commenting stuff out in a block that's going into a bootstrap doesn't work! (shift over to gcb?)
+    get rid of all the prompts on initial startup
     scope the templating work (first pass: template our own stuff)
     change the "----" thing now that chatgpt does markdown everywhere
-    dedup transitive block references
     make opening the file instead of the block an option ('E'?)
     Arena overflow for spans
     I think flush should probably never apply to cmp, only out
@@ -203,16 +267,13 @@ WHAT WE ARE CURRENTLY DOING:
     idea: maybe go from spec to list of callable functions, approve this, then implementation; allows injecting library call documentation
     idea: (maybe optionally) put the cmp highwater in the ruler and then start unleaking span allocs
 
-
-
-
     QA on --init and setting language
     turn a template into a shell script with cmpr calls embedded
     idea: cmpr --expand takes a template on stdin and returns text on stdout (or --eval) (it makes cmpr a database)
     test / fix check_conf_vars (e.g. cmprdir missing)
     support other AIs via an external script
     idea: when a TODO item is done, put the relevant blocks in a comment
-    IDE mode
+    IDE mode (what is this?)
     think about LLM refactoring
     first steps on the road total rev awareness 4 4 16
     basic summarize feature (at least vjjjjj should give you something maximizing cols*5 chars worth)
@@ -221,25 +282,6 @@ WHAT WE ARE CURRENTLY DOING:
     add 'd', 'p', 'P' so that moving around blocks is easy  4 2 8
     add o / O for block insertions  3 2 6
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    data loss when two cmprs open (related to rev currency check)
     support markdown or HTML "views"
     handle deleted (or not-yet-created) files sensibly
     unified diff stuff
@@ -275,7 +317,7 @@ WHAT WE ARE CURRENTLY DOING:
     add a ":addfile" or something where we repeat the question about language
     add "settings mode" but for files
     deal with the function declaration / header issue -> general-purpose code hygiene transforms
-    support having "principles" that are checked/enforced by the LLM
+    support having "principles" that are checked/enforced by the LLM (aka "invariants")
       only on block changes for efficiency / over all code by special command
     think about using the LLM to write the comment and not just the code (i.e. 'r' and 'R')
     check if current file == latest rev on load, if not store a new rev
@@ -302,3 +344,4 @@ WHAT WE ARE CURRENTLY DOING:
     intro video -- mp4 or gif in repo
     basic stats on blocks e.g. comment-code ratio
     experiment with GPT4 finetunes
+```

@@ -2,56 +2,9 @@ rope rope_new(size_t);
 int rope_isnull(rope); // 1 if initialized, 0 otherwise
 void rope_release(rope*);
 span rope_alloc_atleast(rope*,size_t);
-void main_loop();
-char getch();
-void handle_keystroke(char);
-void keyboard_help();
-void call_llm(span model, json messages, void (*cb)(span));
-void read_openai_key();
-network_ret call_gpt(json messages, span model); // OpenAI API entry point
-network_ret call_gpt_curl(span,span,span); // network helper function
-network_ret call_ollama(json messages, span model);
-network_ret call_ollama_curl(span,span,span);
-void handle_args(int argc, char **argv);
-void save_conf();
-void check_conf_vars();
-void ensure_conf_var(span*, span, span);
-void print_config();
-void parse_config();
-int add_projfile(span); // helper for check_conf_vars
-void check_dirs();
-void reset_stdin_to_terminal();
-void toggle_visual();
-void edit_current_block();
-void rewrite_current_block_with_llm();
-json gpt_message(span role, span message);
-void send_to_llm(span prompt);
-void handle_openai_response(span, void (*)(span));
-void handle_ollama_response(span, void (*)(span));
-void replace_code_clipboard();
-span block_comment_part(span block);
-span block_comment_part_excl(span); // exclusive of comment delimiters
-span block_code_part(span);
-span block_transforms(span,span fn); // transform block by named function
-span comment_to_prompt(span comment);
-void ex_expandrefs();
-span expand_refs(span);
-void expand_refs_rec(span,int);
-span chase_ref(span);
-span strip_markdown_codeblock(span);
-void send_to_clipboard(span prompt);
-int file_for_block(span block);
-span current_block_language();
-span language_for_block(span);
-void replace_block_code_part(span new_code);
-int launch_editor(char* filename);
-void handle_edited_file(char* filename);
-span tmp_filename(); // used by 'e' edit command
-void new_rev(span, int); // save a new file revision after any change to a block in that file
-void update_projfile(int, span, span); // copies a rev into place over an existing file
-int copy_file(const char*, const char*);
-span pipe_cmd_cmp(span); // should probably be a library method
-void compile(); // aka 'B'uild
+Partial partial_sp_sp(span, void(*)(span,span));
+Partial partial_0_sp(void(*)(span));
+void apply_partial(Partial,span);
 void start_search();
 void perform_search();
 void finalize_search();
@@ -89,15 +42,31 @@ void get_code(); // read and index current code
 void get_revs(); // read and index revs
 spans find_blocks(span); // find the blocks in a file
 spans find_blocks_language(span file, span language); // find_blocks helper function dispatching on language
-checksum selected_checksum(span); // our selected checksum implementation
 void find_all_lines(); // like find_all_blocks, but for lines; applies to the whole project
 void index_block_ids();
 void ingest(); // updates everything that needs to be updated after code has changed
+int main(int, char**);
+void init();
+void read_(int argc, char** argv);
+void call_llm(span model, json messages, llm_message_handler cb);
+void read_openai_key();
+span filename_template(span);
+span assoc_spans_lookup(spans, span);
+spans filename_variables();
+network_ret call_gpt(json messages, span model);
+network_ret call_gpt_curl(span req, span resp, span err);
+network_ret call_ollama(json messages, span model);
+network_ret call_ollama_curl(span req, span resp, span err);
+void handle_args(int argc, char **argv);
+void inp_sanity_checks();
+checksum selected_checksum(span);
 void ingest();
 void index_block_ids();
 spans ids_for_block(span);
 int block_for_span(span);
 span id_for_block(span);
+checksum current_block_checksum();
+void set_current_block(int);
 void block_id_jump();
 span get_revdir();
 span read_file_into(span filename, rope*);
@@ -117,6 +86,7 @@ void get_revs_cache_put(checksums* working_set, span bname, span content);
 void pr_revinfo(span language, spans blocks, int prev_n_revblocks, span contents);
 void pr_checksum(checksum);
 void pr_relative_span(span,span);
+span prs_checksum(checksum);
 int getkey();
 void sbv_display(sbv_state* sbvs);
 void sbv_populate(sbv_state* sbvs);
@@ -126,20 +96,84 @@ void select_block_version();
 checksums sorted_line_checksums(span);
 int cksums_intersection(checksums,checksums);
 time_t parse_rev_fname(span);
+char getch();
 void main_loop();
+void render_empty_project_state();
+void render_empty_file_state();
 void handle_keystroke(char);
+void keyboard_help();
+void handle_j();
+void handle_k();
+void handle_g();
+void handle_G();
+int first_block_in_file(int);
+int last_block_in_file(int);
 void print_menu(spans,int);
 int select_menu(spans,int);
+void print_ruler();
+span get_debug_info();
+void parse_config();
+void save_conf();
+void check_dirs();
+void check_conf_vars();
+void ensure_conf_var(span* var, span message, span default_value);
+void edit_current_block();
+span tmp_filename();
+int launch_editor(char* filename);
+int file_for_block(span);
+span current_block_language();
+span guess_language_from_filename(span);
+span language_for_block(span block);
+void handle_edited_file(char *filename);
+void new_rev(span tmp_filename, int file_index);
+void update_projfile(int file_index, span tmp_filename, span rev_path);
+void send_to_llm(span, llm_message_handler cb);
+void handle_openai_response(span response, llm_message_handler cb);
+void handle_ollama_response(span response, llm_message_handler cb);
+int find_comment_end_c(span);
+int find_comment_end_python(span);
+span block_comment_part(span);
+span block_code_part(span);
 void prompt_palette();
 spans get_palette();
 void apply_prompt(span prompt_name);
-void apply_template(span prompt_template);
+span get_prompt_template(span);
+int main(int argc, char** argv);
+span get_prompt_template(span name);
+void agreement();
+void agreement_to_nl_diff();
+void output_template_var(spans* ctx, span human_name);
+span lookup_output(span output_of);
+span expand_template(span template, spans vars);
+void print_template_literal(span);
+spans current_block_template_vars();
+void eval_template_variable(span, spans);
+spans parse_template(span);
 int block_by_id(span id_no_hash);
-void ex_toprefs();
-void ex_inrefs();
 void ex_expand();
 span expand_refs_2(span,span);
 void expand_refs_2_rec(span,span,int,int);
 span chase_ref_2(span);
+span strip_markdown_codeblock(span);
+void send_to_clipboard(span);
+void compile();
+void replace_code_clipboard();
 span pipe_cmd_cmp(span);
+void replace_block_code_part(span);
+void agreement_SAV(span);
+void output_save(span operation, span message);
+llm_message_handler make_output_saver(span operation);
+void generic_output_save(span operation, span message);
+void agreement_SAV(span);
+void proposed_diff_SAV(span);
+int span_cmp_wrapper(const void*, const void*);
+void get_outputs();
+spans dir_listing(span dirname);
+spans read_output_headers(span bname);
+span read_output_body(span bname);
 void replace_block(span);
+llm_message_handler simple_message_handler(void(*f)(span));
+void agreement_to_pl_diff();
+void nl2pl_rewrite();
+void pl2nl_rewrite();
+void pl2nl_rewrite_cb(span message);

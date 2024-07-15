@@ -7,8 +7,6 @@ You must flush() before the output will be printed to stdout and be visible to t
 A common cmpr pattern is prt, flush, getch.
 To "complain and exit" means prt, flush, exit(n>0).
 A span has a start pointer and an end pointer, called .buf and .end respectively.
-A thran has three pointers and can be addressed as two spans which share an endpoint; it is naturally used internally for things like buffers, pipes, and in general anywhere where information is being consumed linearly (usually left-to-right, i.e. ascending addresses in memory, but could be in reverse), for example in parsing.
-You can think of it as a span with a progress bar.
 
 - empty(span): If a span is empty (start and end pointers are equal).
 - len(span): The length of a span. Prefer this over less clear .end minus .buf.
@@ -22,7 +20,6 @@ You can think of it as a span with a progress bar.
 - terpri(): Prints a newline (name courtesy Common Lisp).
 - out_sav out2cmp(), out_rst(out_sav): redirect all output functions to cmp (instead of out) and then undo (reset) back to given opaque state reprentation.
 - flush(), flush_err(): Flushes the output span to standard output or standard error.
-@- flush_atp(span): Flush the output span by appending to a given path.
 - write_to_file_span(span content, span path, int clobber): Write a span to a file, optionally overwriting.
 - write_to_file(span, const char*): Deprecated.
 - readable_file(span): whether a file exists as a regular file readable by us.
@@ -48,9 +45,6 @@ You can think of it as a span with a progress bar.
 - char* s(span): Returns a null-terminated string (in cmp space) containing the given contents.
 - char* s_buffer(char*,int,span): Copies $3 into $1 (of length $2) and null-terminates it, returning $1 for convenience.
 - nullspan(): Returns the empty span at address 0.
-- span_arena_alloc(int),span_arena_free(): top-level setup and free spans arena (typically once per program).
-- span_arena_push(),span_arena_pop(): checkpoint arena highpoint and reset it, releasing memory.
-- spans spans_alloc(int): alloc a spans with the given size (.n already set).
 - is_one_of(span, spans): Checks if a span textually equals one of the spans in a spans.
 - index_of(span,spans): Return first element of $2 which is span_eq $1, or -1 if none match.
 - spanspan(span, span): Finds the first occurrence of a span within another span and returns a span into haystack.
@@ -65,43 +59,69 @@ You can think of it as a span with a progress bar.
 
 typedef struct { u8* buf; u8* end; } span; // the type of span
 
-typedef struct { u8* buf; u8* end; u8* p; } thran; // a thran holds buf and end but also .p (pointer (or progress))
+*/
 
-- thran_of(span): the pointer always refers to some location in between buf and end, here it will be set equal to buf.
-- thran_a(thran): returns the "a" part of a thran, i.e. the part up to the pointer (e.g. empty(thran_a(thran_of(x))) for any x).
-- thran_b(thran): returns the "b" part, after the pointer, (span_eq (thran_b (thran_of x)) x) is true for any span x.
-- thran_full(thran): the dual of thran_of, returns both parts of the thran as a span (discarding the .p information).
+#define _GNU_SOURCE
+#include "siphash/siphash.h"
+#include <dirent.h>
 
-We have a generic array implementation using arena allocation.
+typedef uint64_t u64; // we should probably put all these in one place
 
-- Call MAKE_ARENA(E,T,STACK_SIZE) to define array type T for elements of type E.
-- T will have .a of type E*, and .n, and .cap of type size_t.
-- Use T_arena_alloc(N) and T_arena_free(), typically in main() or similar.
-- T_alloc(N) returns an array of type T, with .n = .cap = N.
-- T_arena_push() and T_arena_pop() manage arena allocation stack; use them as directed.
-- Use T_push(T,E) to push an element onto an array.
-
-This is used to declare a spans type and the associated functions.
-
-A common idiom is to iterate over something once to count the number of spans needed, then call spans_alloc and iterate again to fill the spans.
-
-A common idiom in functions returning span: use a span ret declared near the top, with buf pointing to one thing and end to something else found later or separately, they may be set anywhere in the function body as convenient, and the ret value is returned from one or more places.
-
+#define flush_exit(n) flush(); exit(n) // used only by handle_args; let's do this differently
+/* #span_ret
+The span ret pattern is a common idiom in functions returning span.
+Instead of collecting the start and end of the span in separate variables and then constructing a span value to return at the end, we instead declare a span variable called "ret" at the top, and then set the .buf and .end separately, wherever it is convenient to do so (not necessarily in that order), and whenever both have been set, the value is ready and can be returned or used.
+*/
+/* #const
 Note that we NEVER write const in C, as this feature doesn't pull its weight.
 There's some existing contamination around library functions but try to minimize the spread.
+*/
 
+/* #prt_usage
 Note that prt() has exactly the same function signature as printf, i.e. it takes a format string followed by varargs.
 We never use printf, but always prt.
 A common idiom when reporting errors is to call prt, flush, and exit.
 We could also use flush, prt, flush_err, exit, but up to now we've been lazy about the distinction between stdout and stderr as we have mainly interactive use cases.
 
 To prt a span x we use %.*s with len(x) and x.buf.
-
+*/
+/* #next_line
 A common idiom is next_line() in a loop with !empty().
+*/
+/* #spanio_initialization
+@- TODO: fill this out (with arenas and whatever else).
 
 In main() or similar it is common to call init_spans and often also read_and_count_stdin.
 */
 
+/* #thran
+@- experimental, may go away
+
+A thran has three pointers and can be addressed as two spans which share an endpoint; it is naturally used internally for things like buffers, pipes, and in general anywhere where information is being consumed linearly (usually left-to-right, i.e. ascending addresses in memory, but could be in reverse), for example in parsing.
+You can think of it as a span with a progress bar.
+
+typedef struct { u8* buf; u8* end; u8* p; } thran; // a thran holds buf and end but also .p (pointer (or progress))
+
+- thran_of(span): the pointer always refers to some location in between buf and end, here it will be set equal to buf.
+- thran_a(thran): returns the "a" part of a thran, i.e. the part up to the pointer (e.g. empty(thran_a(thran_of(x))) for any x).
+- thran_b(thran): returns the "b" part, after the pointer, (span_eq (thran_b (thran_of x)) x) is true for any span x.
+- thran_full(thran): the dual of thran_of, returns both parts of the thran as a span (discarding the .p information).
+*/
+/* #generic_array
+
+We have a generic array implementation using arena allocation.
+
+- T will have .a of type E*, and .n, and .cap of type size_t.
+- T_alloc(N) returns an array of type T, with .n = 0, .cap = N.
+- T_arena_push() and T_arena_pop() manage arena allocation stack; use them as directed.
+- Use T_push(T*,E) to push an element onto an array.
+
+*/
+
+/* #spans @generic_array
+
+Our generic array is used to declare a spans type and the associated functions.
+*/
 /* #s_pattern
 
 Note that in general our spans are NOT null-terminated, so casting a span.buf to a char* and hoping for the best in calling C library functions would be very wrong.
@@ -167,10 +187,12 @@ If you want the actual string value, you can use json_un_s, which returns a new 
 
 (We should probably have a similar function for getting a number out, but it hasn't been added yet.)
 */
-/* json library design notes
+/* #json_design
 
 - all the json constructor functions trim whitespace, so that all the predicate functions follow a pointer and examine one byte.
 - the json parser and constant-time wrapper functions are the low-trust and high-trust ways to make a json from a string.
+- if the json parser indicates that your span is valid json, that means that one of the json value-type predicates will return true for that json.
+- the json value returned from the parser will match the input span except that any whitespace will have been trimmed.
 */
 /* includes */
 
@@ -192,6 +214,7 @@ If you want the actual string value, you can use json_un_s, which returns a new 
 #include <errno.h>
 #include <time.h>
 #include <math.h>
+#include <stddef.h>
 /* convenient debugging macros */
 #define dbgd(x) prt(#x ": %d\n", x),flush()
 #define dbgx(x) prt(#x ": %x\n", x),flush()
@@ -263,6 +286,7 @@ int empty(span);
 int len(span);
 
 void init_spans(); // main spanio init function
+void init_spans_ioc(size_t,size_t,size_t);
 
 // basic spanio primitives
 
@@ -303,6 +327,7 @@ int span_eq(span, span);
 int span_cmp(span, span);
 span S(char*);
 span nullspan();
+int copy_file(const char *src, const char *dest); // TODO: maybe take spans instead
 
 span inp_compl();
 span cmp_compl();
@@ -318,28 +343,27 @@ If we can get an LLM to match this style it's a good result.
 
 int counts[256] = {0};
 
-//void read_and_count_stdin(); // populate inp and counts[]
 int empty(span s) {
   return s.end == s.buf;
 }
 
-
 inline int len(span s) { return s.end - s.buf; }
-
-//u8 in(span s, u8* p) { return s.buf <= p && p < s.end; } // still used?
 
 thran thran_of(span s) { return (thran){ s.buf, s.end, s.buf }; }
 span thran_a(thran t) { return (span){t.buf, t.p}; }
 span thran_b(thran t) { return (span){t.p, t.end}; }
 span thran_full(thran t) { return (span) {t.buf, t.end}; }
-//void thran_adv(thran *t, int n) { t.p += n; }
 
 int out_WRITTEN = 0, cmp_WRITTEN = 0;
 
 void init_spans() {
-  input_space = malloc(BUF_SZ);
-  output_space = malloc(BUF_SZ);
-  cmp_space = malloc(BUF_SZ);
+  init_spans_ioc(BUF_SZ,BUF_SZ,BUF_SZ);
+}
+
+void init_spans_ioc(size_t i, size_t o, size_t c) {
+  input_space = malloc(i);
+  output_space = malloc(o);
+  cmp_space = malloc(c);
   out.buf = output_space;
   out.end = output_space;
   inp.buf = input_space;
@@ -347,7 +371,6 @@ void init_spans() {
   cmp.buf = cmp_space;
   cmp.end = cmp_space;
   outp = &out;
-  //flush_target = stdout;
 }
 
 void bksp() { (*outp).end--; }
@@ -449,12 +472,63 @@ const int ALWAYS_FLUSH = 0;
 
 /* C convenience methods
 
-We have a "copy" already here (somewhere else currently).
+We have a copy_file already here.
 
 We add mkdir_p and pathpart just to simplify out2atp.
 
 */
 
+/* #copy_file
+The copy_file function copies the contents from one file to another.
+It operates by opening the source file for reading and the destination file for writing.
+The function reads chunks of data into a buffer and writes them out to the destination file, handling potential interruptions due to signals.
+It also performs error checks at each step, including during file opening, reading, and writing.
+If an error occurs, the function closes any open file descriptors and returns a negative error code corresponding to the step where the failure occurred.
+*/
+
+int copy_file(const char *src, const char *dest) {
+    int source_fd, dest_fd;
+    ssize_t n_read, n_written;
+    char buffer[4096];
+
+    source_fd = open(src, O_RDONLY);
+    if (source_fd < 0) {
+        return -1; // Error opening source file
+    }
+
+    dest_fd = open(dest, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (dest_fd < 0) {
+        close(source_fd);
+        return -2; // Error opening destination file
+    }
+
+    while ((n_read = read(source_fd, buffer, sizeof(buffer))) > 0) {
+        char *out_ptr = buffer;
+        ssize_t n_left = n_read;
+        while (n_left > 0) {
+            n_written = write(dest_fd, out_ptr, n_left);
+            if (n_written <= 0) {
+                if (errno == EINTR) {
+                    continue; // Retry if interrupted by signal
+                }
+                close(source_fd);
+                close(dest_fd);
+                return -3; // Error writing to destination file
+            }
+            n_left -= n_written;
+            out_ptr += n_written;
+        }
+    }
+
+    close(source_fd);
+    close(dest_fd);
+
+    if (n_read == 0) { // Successfully copied
+        return 0;
+    } else {
+        return -4; // Error reading from source file
+    }
+}
 /* #mkdir_p
 
 void mkdir_p(span dir) {
@@ -955,6 +1029,7 @@ span trim(span s) {
 }
 
 span concat(span a, span b) {
+  if (a.end == b.buf) return (span){a.buf, b.end};
   span ret = {cmp.end};
   out_sav o = out2cmp();
   wrs(a);
@@ -1003,54 +1078,21 @@ span consume_prefix(span prefix, span *input) {
   ret.end = input->buf;
   return ret;
 }
-/*
-The old spans arena implementation.
-*/
+/* #generic_array_implementation
 
-//spans spans_alloc(int n);
-
- /*void span_arena_alloc(int sz) {
-  span_arena = malloc(sz * sizeof *span_arena);
-  span_arenasz = sz;
-  span_arena_used = 0;
-  span_arena_stack_n = 0;
-}
-void span_arena_free() {
-  free(span_arena);
-}
-void span_arena_push() {
-  assert(span_arena_stack_n < SPAN_ARENA_STACK);
-  span_arena_stack[span_arena_stack_n++] = span_arena_used;
-}
-void span_arena_pop() {
-  assert(0 < span_arena_stack_n);
-  span_arena_used = span_arena_stack[--span_arena_stack_n];
-}
-spans spans_alloc(int n) {
-  assert(span_arena);
-  spans ret = {0};
-  ret.s = span_arena + span_arena_used;
-  ret.n = n;
-  span_arena_used += n;
-  assert(span_arena_used < span_arenasz);
-  return ret;
-}
-*/
-
-/* Generic arrays.
+Generic arrays.
 
 Here we have a macro that we can call with two type names (i.e. typedefs) and a number.
 One is an already existing typedef and another will be created by the macro, and the number is the size of a stack, described below.
 
-For example, to create the spans type we might call this macro with span and spans as the names.
+For example, to create the spans type we call this macro with span and spans as the names.
 We call these the element type and array type names resp.
-(We may use "E" and "T" as variables in documentation to refer to them.)
+We use "E" and "T" as variables in documentation.
+We also use E and T and STACK_SIZE as the names of the macro arguments.
 
 This macro will create a typedef struct with that given name that has a pointer to the element type called "a", a number of elements, which is always called "n", and a capacity "cap", which are size_t's.
 
-We don't implement realloc for simplicity and improved memory layout.
 We use an arena allocation pattern.
-Because we don't realloc, a common pattern is to make an initial loop over something to count some required number of elements and then to call the alloc function to get an array of the precise size and then to have a second loop where we populate that array.
 
 For every generic array type that we make, we will have:
 
@@ -1058,7 +1100,15 @@ For every generic array type that we make, we will have:
 - A corresponding T_arena_free().
 - A pair T_arena_push() and T_arena_pop().
 - A function T_alloc(N) which returns a T, having cap of N.
-- T_push(T*,E) which increments n, complains and exits if cap is reached, and stores the element provided.
+- T_push(T*,E) which increments n and stores the element provided.
+
+The T_push method may relocate the memory in the arena if necessary.
+It will only move it to a later position.
+When the cap would be exceeded, it uses the pointer and cap of the array, and the allocated memory on the arena to determine whether the end of this array is at the end of the allocated region of the arena.
+If it is, then it simply increases each of .n and .cap (and the arena's allocated count) by one.
+Otherwise, it doubles the capacity and moves the memory to be after all currently allocated memory in the arena.
+(As a special case, if the cap was zero, it sets it to 2 rather than doubling it.)
+Note that our reallocation strategy does not free the original allocated memory back to the pool, so we cannot subtract the original capacity from the allocated memory---memory is only given back to the pool by using T_arena_pop().
 
 The implementation makes a single global struct (both the typedef and the singleton instance) that holds the arena state for the array type.
 This includes the arena pointer, the arena size in elements, the number of allocated elements, and a stack of such numbers.
@@ -1068,76 +1118,161 @@ The programmer has to call the T_arena_alloc(N) and _free methods themselves, us
 
 The main entry point is the MAKE_ARENA(E,T) macro, which sets up everything and must be called before any references to T in the source code.
 Then the arena alloc and free functions must be called somewhere, and everything is ready to use.
+
+The global arena variable, while not technically part of the interface, is read directly for debugging memory usage, so we also make it part of the interface.
+The name should be T##_global_arena, and it should have members `arena_size` and `allocated`.
+@- Or we could just add getters to the actual interface.
 */
 
 #define MAKE_ARENA(E, T, STACK_SIZE) \
 typedef struct { \
     E* a; \
-    size_t n, cap; \
+    size_t n; \
+    size_t cap; \
 } T; \
 \
-static struct { \
+typedef struct { \
     E* arena; \
-    size_t arena_size, allocated, stack[STACK_SIZE], stack_top; \
-} T##_arena = {0}; \
+    size_t arena_size; \
+    size_t allocated; \
+    size_t stack[STACK_SIZE]; \
+    size_t stack_top; \
+} T##_arena; \
+\
+T##_arena T##_global_arena; \
 \
 void T##_arena_alloc(int N) { \
-    T##_arena.arena = (E*)malloc(N * sizeof(E)); \
-    if (!T##_arena.arena) { \
-        prt("Failed to allocate arena for " #T "\n", 0); \
+    T##_global_arena.arena = (E*)malloc(sizeof(E) * N); \
+    if (!T##_global_arena.arena) { \
+        prt("Failed to allocate memory for arena.\n"); \
         flush(); \
         exit(1); \
     } \
-    T##_arena.arena_size = N; \
-    T##_arena.allocated = 0; \
-    T##_arena.stack_top = 0; \
+    T##_global_arena.arena_size = N; \
+    T##_global_arena.allocated = 0; \
+    T##_global_arena.stack_top = 0; \
 } \
 \
 void T##_arena_free() { \
-    free(T##_arena.arena); \
+    free(T##_global_arena.arena); \
+    T##_global_arena.arena = NULL; \
+    T##_global_arena.arena_size = 0; \
+    T##_global_arena.allocated = 0; \
+    T##_global_arena.stack_top = 0; \
 } \
 \
 void T##_arena_push() { \
-    if (T##_arena.stack_top == STACK_SIZE) { \
-        prt("Exceeded stack size for " #T "\n", 0); \
+    if (T##_global_arena.stack_top >= STACK_SIZE) { \
+        prt("Arena stack overflow.\n"); \
         flush(); \
         exit(1); \
     } \
-    T##_arena.stack[T##_arena.stack_top++] = T##_arena.allocated; \
+    T##_global_arena.stack[T##_global_arena.stack_top++] = T##_global_arena.allocated; \
 } \
 \
 void T##_arena_pop() { \
-    if (T##_arena.stack_top == 0) { \
-        prt("Stack underflow for " #T "\n", 0); \
+    if (T##_global_arena.stack_top == 0) { \
+        prt("Arena stack underflow.\n"); \
         flush(); \
         exit(1); \
     } \
-    T##_arena.allocated = T##_arena.stack[--T##_arena.stack_top]; \
+    T##_global_arena.allocated = T##_global_arena.stack[--T##_global_arena.stack_top]; \
 } \
 \
 T T##_alloc(size_t N) { \
-    if (T##_arena.allocated + N > T##_arena.arena_size) { \
-        prt("Arena overflow for " #T "\n", 0); \
+    T t; \
+    if (!T##_global_arena.arena) { \
+        prt("Arena not allocated.\n"); \
         flush(); \
         exit(1); \
     } \
-    T result; \
-    result.a = T##_arena.arena + T##_arena.allocated; \
-    result.n = 0; \
-    result.cap = N; \
-    T##_arena.allocated += N; \
-    return result; \
+    if (T##_global_arena.allocated + N > T##_global_arena.arena_size) { \
+        prt("Arena overflow.\n"); \
+        flush(); \
+        exit(1); \
+    } \
+    t.a = T##_global_arena.arena + T##_global_arena.allocated; \
+    t.n = 0; \
+    t.cap = N; \
+    T##_global_arena.allocated += N; \
+    return t; \
 } \
 \
 void T##_push(T* t, E e) { \
-    if (t->n == t->cap) { \
-        prt("Capacity reached for " #T "\n", 0); \
-        flush(); \
-        exit(1); \
+    if (t->n >= t->cap) { \
+        if (t->a + t->cap == T##_global_arena.arena + T##_global_arena.allocated) { \
+            T##_global_arena.allocated += 1; \
+            t->cap += 1; \
+        } else { \
+            size_t new_cap = t->cap ? t->cap * 2 : 2; \
+            if (T##_global_arena.allocated + new_cap > T##_global_arena.arena_size) { \
+                prt("Arena overflow.\n"); \
+                flush(); \
+                exit(1); \
+            } \
+            E* new_a = T##_global_arena.arena + T##_global_arena.allocated; \
+            for (size_t i = 0; i < t->n; ++i) { \
+                new_a[i] = t->a[i]; \
+            } \
+            t->a = new_a; \
+            T##_global_arena.allocated += new_cap; \
+            t->cap = new_cap; \
+        } \
     } \
     t->a[t->n++] = e; \
 }
 
+/* #generic_array_initialization
+
+Generic arrays are given an array type T and an element type E.
+
+Memory is managed in an arena by setting a high-water mark and restoring to it with a push/pop function pair.
+
+We set the size of the stack used by this push/pop pair when we set up the generic array.
+
+To set up the generic array, we use the MAKE_ARENA macro with T, E, and the stack size as arguments.
+
+Later, before using the generic array, we must call the T_arena_alloc function.
+This also takes a size_t parameter, but in this case it is the number of elements to allocate memory for in the arena (which is fixed size).
+Finally, a T_arena_free function can be called, though we often do not need to do this as our arenas will be used until the process exits.
+*/
+/* #generic_array_usage
+@- We have a problem with abstraction here, the LLM isn't smart enough to make use of this documentation without it being specialized to the type in question.
+@- We can fix this by actually making the documentation take type names as variables, and expand the documentation as a template.
+@- This lets us generate documentation that's more explicit for the LLM while maintaining the documentation at the higher abstraction level of the generic implementation.
+
+Generic arrays use an arrena allocation pattern.
+
+Each generic array type is created by a macro with E and T type variables.
+
+The E type is the element type of the array, and the T type is the type of the array itself.
+
+In the spanio library itself the spans array type is already created, where the element type E is `span`, and the array type T is `spans`.
+
+For every generic array type, we get the following functions available, with E and T being placeholders:
+
+- T_arena_push()                       pushes the current arena allocation size onto a stack
+- T T_alloc(size_t)                    returns a newly allocated array with the given capacity
+- T_push(T*,E)                         pushes an element (type E) onto an array (type pointer to T)
+- T_arena_pop()                        sets the arena allocation point to the previous call to T_arena_push, freeing memory
+
+When pushing onto an array, it will be extended in place if nothing has been allocated after it in the arena, otherwise it will be doubled in capacity and moved.
+The only way to free memory is with T_arena_pop(), which invalidates anything allocated since the last T_arena_push().
+Anything that was pushed onto may also be invalidated.
+So caution must be used when deciding where to put the T_arena_push and T_arena_pop calls.
+
+When iterating over a T array type, the .n member (a size_t) can be used to get the number of elements in the array.
+The .a member is the array itself, so for(size_t i = 0; i < x.n; i++) { ... x.a[i] ... } is a common pattern.
+*/
+
+/* #spans_usage @generic_array_usage
+
+The spans array has T = spans and E = span.
+
+spans_arena_push, spans_alloc, spans_push(spans*, span), and spans_arena_pop are the main methods used.
+
+@- TODO: this can be generated from the #generic_array_usage as a template
+*/
 /*
 Our first generic array is spans, which has a stack depth of 256.
 

@@ -1,0 +1,39 @@
+We are translating code from C to English.
+The English code should be explicit enough that the C code can be recreated from it. We also have a context, which describes some general principles.
+
+Context:
+
+```{langtag}
+{context}
+```
+
+Code:
+
+```c
+{code}
+```
+
+Translate the above code. Reply with a C block comment, inside a markdown code section, like this:
+
+```c
+/* [block_id]
+
+Function:
+[C function declaration]
+
+Purpose:
+[Summary sentence]
+
+Algorithm:
+[Detailed step-by-step translation]
+*/
+```
+
+Do not use any indentation inside the code block (every line begins flush left).
+Be concise, and use newlines sparingly, trying to make your English shorter than the original code.
+Use the existing code to write the function declaration, include parameter names as they are in the existing code, and include the semicolon.
+Assume that the context, which is provided above, is already known.
+Don't repeat the context in your output, but rely on it to make the translation more precise, idiomatic, and concise.
+Create the block id by taking the function (or struct) name and prepending a "#", e.g. if the function declaration is "int add(int a, int b);" the block id should be "#id".
+If there are comments in the original code, include them verbatim, but remove the comment syntax and again make them flush left.
+Reply only with the C code block, with no other commentary, beginning with "```c".
