@@ -206,17 +206,22 @@
   ✓ implement summarize_block
   ✓ testing palette features
   ✓ pl2nl_rewrite
+  ✓ support Anthropic's Claude
 ```
 
 # CURRENTLY
 
   → llm.c (in git) to a set of blocks in the shortest time
-  → implement global context pragma
-  → revise README
+  → dedup transitive block references
 
 # FUTURE
 
 ```
+    implement global context pragma
+    revise README
+    perhaps we allow "@- " comment syntax to be indented (using trim first on each line)
+    add {NL} and {PL} as template expansion variables
+    if bootstrap output is empty and bootstrap command isn't then run the bootstrap before any llm API calls
     basically we want a "@llm_op" context that will create a nice English DSL for writing ops (we can derive this from existing impls)
     add "diff" palette feature (the first non-LLM palette operation)
     start to introduce block concept in our prompts
@@ -238,7 +243,6 @@
       show some indication in the UI
       give some UI affordance to apply the diff
     bump version and push v9
-    dedup transitive block references
     add a "cmpr and git" section to the README: include conf, probably exclude the rest
     data loss when two cmprs open (related to rev currency check) (or when cmpr backgrounded and separately vimming, which bit me)
     build cmpr.ai using cmpr (and ideally deploy it the same way)

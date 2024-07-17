@@ -22,7 +22,8 @@ Algorithm:
 - Return the sum of integers a and b.
 */
 
-int add(int a, int b) {
+int add(int a, int b)
+{
     return a + b;
 }
 
@@ -350,6 +351,7 @@ This includes, so far:
 - terminal_rows and _cols which stores the terminal dimensions
 - scrolled_lines, the number of physical lines that have been scrolled off the screen upwards, supporting pagination of blocks
 - openai_key, an OpenAI API key, or an empty span
+- anthropic_key, an Anthropic API key, or an empty span
 - bootstrapprompt, either empty or contains the bootstrap prompt (set by :bootstrap)
 - ollama_models, a spans of the configured ollama model names if any
 - now, a struct timespec, used by main_loop to give a consistent timestamp per loop iteration
@@ -378,6 +380,7 @@ typedef struct ui_state {
     int terminal_cols;
     int scrolled_lines;
     span openai_key;
+    span anthropic_key;
     span bootstrapprompt;
     spans ollama_models;
     struct timespec now;
@@ -635,7 +638,9 @@ Here we just write the directive that comes before the main function.
 
 In main,
 
-First we initialize, then we read, then we go into the main loop.
+We set up a stack_state variable, a zeroed ui_state, and point the state global to its address.
+
+Then we initialize, then we read, then we go into the main loop.
 
 To initialize, we will set up our i/o library, memory areas, and globals.
 These decisions are recorded in the init() function which we define later.
@@ -721,20 +726,15 @@ We will hit this limit soon with prompt template expansion and other features, s
 
 Our checksums size a "binary billion," is an overestimate, but we will are still adding checksum related features.
 
+We set config_file_path on state to ".cmpr/conf", which is the default (but may be changed later by handle_args).
+We set state->files, allocating space for 1024 files.
+This means we only handle 1024 files in a project, which we might need to revisit if there are some larger projects out there (e.g. the linux kernel).
 
-globals
-----
+We then call:
 
-Above (in #ui_state), we have declared a global ui_state* called state.
-After declaring our ui_state variable, which we call stack_state since it's on the stack, and which we initialize to {0}, we then set this global pointer to its address.
-
-Our other globals are inp, out, and cmp, which are set up by the spanio library already.
-
-
-summary
-----
-
-In init() we set up spanio, our arenas, and our global ui_state* state.
+- set_default_clipboard_commands
+- read_openai_key
+- read_anthropic_key
 */
 
 void init() {
@@ -751,6 +751,7 @@ void init() {
     set_default_clipboard_commands();
     
     read_openai_key();
+    read_anthropic_key();
 }
 
 /* #read_
@@ -834,40 +835,57 @@ In existing codebases, we should get blocks for free and also ids for most of th
 This means we should allow using tags such as "main()" to identify the block that defines the main function in the current namespace as per ctags.
 That means we can do block references as "@main()" or "@main():all", without needing to do any extra work to define block ids.
 */
-/* #call_llm
+/* #call_llm @complain_and_prompt @network_ret:code
 
 void call_llm(span model, json messages, llm_message_handler cb);
 
 Here we get a model name, a json object containing chat messages, and a callback function to handle LLM output from a successful API call.
 
 We dispatch on model name.
-If it starts with "gpt" or matches "llama.cpp" we use the call_gpt function, otherwise we call_ollama.
-In either case we get back a network_ret object.
 
-In the case of error we report the error to the user, prompt them to hit any key, and wait with getch so they can read the error.
+- if it starts with "gpt" or matches "llama.cpp" we will use call_gpt and handle_openai_response
+- if it starts with "claude" we use call_anthropic and handle_anthropic_response
+- otherwise we use call_ollama and handle_ollama_response
 
-Otherwise we pass the .response and the callback on to either handle_openai_response, for a gpt/llama.cpp model, or handle_ollama_response otherwise.
+In any case we call the appropriate function and get back a network_ret object.
+In the case of error we #complain_and_prompt, printing only the error as-is.
+Otherwise we pass on the .response and the callback function to the appropriate handle_*_response function.
+
+Implementation:
+1. Call the model.
+2. Handle the error handling.
+3. Handle the successful case.
+
+First set an indicator variable to distinguish between the three model types, since only steps 1 and 3 branch on the model type.
 */
 
 void call_llm(span model, json messages, llm_message_handler cb) {
-    network_ret result;
-    if (starts_with(model, S("gpt")) || span_eq(model, S("llama.cpp"))) {
-        result = call_gpt(messages, model);
+    network_ret ret;
+    int is_gpt = starts_with(model, S("gpt")) || span_eq(model, S("llama.cpp"));
+    int is_claude = starts_with(model, S("claude"));
+
+    if (is_gpt) {
+        ret = call_gpt(messages, model);
+    } else if (is_claude) {
+        ret = call_anthropic(messages, model);
     } else {
-        result = call_ollama(messages, model);
+        ret = call_ollama(messages, model);
     }
 
-    if (!result.success) {
-        prt("Error: %.*s\n", len(result.error), result.error.buf);
-        prt("Hit any key to continue...\n");
+    if (!ret.success) {
+        wrs(ret.error);
+        prt("\nPress any key to continue...");
         flush();
-        getch(); // User acknowledgment to move past error
+        getch();
+        return;
+    }
+
+    if (is_gpt) {
+        handle_openai_response(ret.response, cb);
+    } else if (is_claude) {
+        handle_anthropic_response(ret.response, cb);
     } else {
-        if (starts_with(model, S("gpt")) || span_eq(model, S("llama.cpp"))) {
-            handle_openai_response(result.response, cb);
-        } else {
-            handle_ollama_response(result.response, cb);
-        }
+        handle_ollama_response(ret.response, cb);
     }
 }
 
@@ -903,6 +921,27 @@ void read_openai_key() {
     if (stat(path, &st) != 0) return;
 
     state->openai_key = trim(read_file_into_cmp(S(path)));
+}
+
+/* #read_anthropic_key @read_openai_key:all
+
+void read_anthropic_key();
+
+This the same as #read_openai_key, with s/openai/anthropic everywhere.
+*/
+
+void read_anthropic_key() {
+    char path[PATH_MAX];
+    struct stat st;
+    char *home = getenv("HOME");
+  
+    if (!home) return;
+
+    snprintf(path, PATH_MAX, "%s/.cmpr/anthropic-key", home);
+
+    if (stat(path, &st) != 0) return;
+
+    state->anthropic_key = trim(read_file_into_cmp(S(path)));
 }
 
 /* #filename_template @template_language_design @assoc_spans
@@ -1259,6 +1298,115 @@ network_ret call_ollama_curl(span req, span resp, span err) {
         ret.success = 1;
     }
 
+    return ret;
+}
+
+/* #call_anthropic @filename_template @jsonlib
+
+network_ret call_anthropic(json messages, span model);
+
+Here we call an anthropic model.
+
+We are given a json which contains an array of messages, and a span which contains a model string, and return a network_ret.
+
+We set up a json object for the message body.
+Using the json api functions, we make a json object j and extend it with "messages" being the messages, with "model" being json_s of the model string, and with "max_tokens" being 4096.
+
+We will write the request body and response or error to disk, so first we set up three filenames.
+The filename is <cmprdir>/api_calls/<timestamp>-{req,resp,err}.
+We can do this with three calls to #filename_template.
+
+We write the request body j.s to disk, without clobbering as it should not exist, then we call call_anthropic_curl to handle the HTTP request, passing in the three filename spans, and we return what it returns.
+*/
+
+network_ret call_anthropic(json messages, span model) {
+    json j = json_o();
+    json_o_extend(&j, S("messages"), messages);
+    json_o_extend(&j, S("model"), json_s(model));
+    json_o_extend(&j, S("max_tokens"), json_n(4096));
+
+    span req_template = filename_template(S("{cmprdir}/api_calls/{timestamp}-req"));
+    span resp_template = filename_template(S("{cmprdir}/api_calls/{timestamp}-resp"));
+    span err_template = filename_template(S("{cmprdir}/api_calls/{timestamp}-err"));
+
+    write_to_file_span(j.s, req_template, 0);
+
+    return call_anthropic_curl(req_template, resp_template, err_template);
+}
+
+/* #call_anthropic_curl @prt_usage
+
+network_ret call_anthropic_curl(span req, span resp, span err);
+
+This is the network part of call_anthropic().
+
+We require state->anthropic_key to be set, if it is not, we return a network_ret with success = 0 and error of "No anthropic API key provided."
+
+We get three filenames, req, resp, and err, respectively, and we return a network_ret.
+
+The HTTP request body as a JSON object has already been written into the req file.
+
+We handle the communication by calling curl using system().
+We put the binary name in a span, either state->curlbin, or just "curl" if that is empty.
+
+Next we construct a curl command.
+
+We need to tell curl / the system shell:
+- to be silent except in case of error with -sS,
+- to do a POST request,
+- the name of the file with the JSON payload,
+- to set the content-type header,
+- to set an x-api-key header having the contents of state->anthropic_key,
+- to add a header "anthropic-version: 2023-06-01",
+- to put the output into the resp file,
+- the API endpoint,
+- and to redirect stderr to the err file.
+
+We put the command together with prs.
+
+We must quote HTTP headers when composing the curl command with -H to protect them from being split by the shell.
+
+Our return value is a network_ret, declared above, which either has success = 1 and the .response contains the body of the API response or success = 0 and .error contains a human-readable error message.
+
+We read the contents of the resp file with read_file_into_cmp and set this on .response.
+If the curl command returned non-zero, we also read the contents of the err file into .err.
+We always read the resp file, even in cases of error.
+
+API endpoint: "https://api.anthropic.com/v1/messages"
+*/
+
+network_ret call_anthropic_curl(span req, span resp, span err) {
+    network_ret ret = {0};
+    if (empty(state->anthropic_key)) {
+        ret.success = 0;
+        ret.error = S("No anthropic API key provided.");
+        return ret;
+    }
+    
+    span curlbin = empty(state->curlbin) ? S("curl") : state->curlbin;
+    
+    span command = prs("%.*s -sS -X POST -d @%.*s -H \"Content-Type: application/json\" "
+                        "-H \"x-api-key: %.*s\" -H \"anthropic-version: 2023-06-01\" "
+                        "-o %.*s --stderr %.*s https://api.anthropic.com/v1/messages",
+                        len(curlbin), curlbin.buf,
+                        len(req), req.buf,
+                        len(state->anthropic_key), state->anthropic_key.buf,
+                        len(resp), resp.buf,
+                        len(err), err.buf);
+    
+    int curl_ret = system(s(command));
+    
+    span response_content = read_file_into_cmp(resp);
+    ret.response = response_content;
+    
+    if (curl_ret != 0) {
+        span error_content = read_file_into_cmp(err);
+        ret.success = 0;
+        ret.error = error_content;
+    } else {
+        ret.success = 1;
+    }
+    
     return ret;
 }
 
@@ -4775,7 +4923,7 @@ int select_menu(spans options, int selected_index) {
     return selected_index;
 }
 
-/* #select_model
+/* #select_model @spans_usage
 
 Here we allow the user to select the model.
 
@@ -4783,12 +4931,16 @@ We set up a spans and the currently selected index and then call select_menu.
 
 The list of models:
 
+- "clipboard"
 - "gpt-3.5-turbo"
 - "gpt-4-turbo"
 - "gpt-4o"
+- "claude-3-5-sonnet-20240620"
+- "claude-3-opus-20240229"
+- "claude-3-sonnet-20240229"
+- "claude-3-haiku-20240307"
 - "llama.cpp"
 - all ollama models listed in state->ollama_models
-- "clipboard"
 
 The initially selected option should be the one that matches state->model.
 
@@ -4798,23 +4950,30 @@ We can avoid leaking spans arena memory with the appropriate _push and _pop func
 */
 
 void select_model() {
-    spans models = spans_alloc(7 + state->ollama_models.n);
     spans_arena_push();
-    models.a[0] = S("gpt-3.5-turbo");
-    models.a[1] = S("gpt-4-turbo");
-    models.a[2] = S("gpt-4o");
-    models.a[3] = S("llama.cpp");
-    models.a[4] = S("clipboard");
-    for (int i = 0; i < state->ollama_models.n; i++) {
-        models.a[5 + i] = state->ollama_models.a[i];
+    spans models = spans_alloc(20);
+    spans_push(&models, S("clipboard"));
+    spans_push(&models, S("gpt-3.5-turbo"));
+    spans_push(&models, S("gpt-4-turbo"));
+    spans_push(&models, S("gpt-4o"));
+    spans_push(&models, S("claude-3-5-sonnet-20240620"));
+    spans_push(&models, S("claude-3-opus-20240229"));
+    spans_push(&models, S("claude-3-sonnet-20240229"));
+    spans_push(&models, S("claude-3-haiku-20240307"));
+    spans_push(&models, S("llama.cpp"));
+    for (size_t i = 0; i < state->ollama_models.n; ++i) {
+        spans_push(&models, state->ollama_models.a[i]);
     }
-    models.n = 5 + state->ollama_models.n;
 
-    int selected_index = index_of(state->model, models);
-    if (selected_index == -1) selected_index = 0;
+    int selected_index = 0;
+    for (size_t i = 0; i < models.n; ++i) {
+        if (span_eq(models.a[i], state->model)) {
+            selected_index = i;
+            break;
+        }
+    }
 
     selected_index = select_menu(models, selected_index);
-
     if (selected_index >= 0 && selected_index < models.n) {
         state->model = models.a[selected_index];
         save_conf();
@@ -6156,6 +6315,45 @@ void handle_ollama_response(span response, llm_message_handler cb) {
     span content_span = json_un_s(content);
     //span stripped_content = strip_markdown_codeblock(content_span);
     apply_partial(cb, content_span);
+}
+
+/* #handle_anthropic_response @handle_openai_response
+
+void handle_anthropic_response(span response, llm_message_handler cb);
+
+This is similar to #handle_openai_response, above, except that we index into the JSON response by:
+
+content, 0, text
+
+*/
+
+void handle_anthropic_response(span response, llm_message_handler cb) {
+    json response_json = json_parse(response);
+    if (json_is_null(response_json)) {
+        prt("Failed to parse response: %s", s(response));
+        flush_exit(1);
+    }
+
+    json content_json = json_key(S("content"), response_json);
+    if (json_is_null(content_json)) {
+        prt("Failed to index 'content' in response: %s", s(response));
+        flush_exit(1);
+    }
+
+    json text_json = json_index(0, content_json);
+    if (json_is_null(text_json)) {
+        prt("Failed to index '0' in 'content': %s", s(response));
+        flush_exit(1);
+    }
+
+    json text_value_json = json_key(S("text"), text_json);
+    if (json_is_null(text_value_json)) {
+        prt("Failed to index 'text' in 'content': %s", s(response));
+        flush_exit(1);
+    }
+
+    span text_value = json_un_s(text_value_json);
+    apply_partial(cb, text_value);
 }
 
 /* #block_comment_part @langtable
@@ -8380,33 +8578,52 @@ span read_output_body(span bname) {
     return nullspan();
 }
 
-/* #replace_block @replace_block_code_part @blocks
+/* #replace_block @blocks @files @inp_sanity_checks
 
-void replace_block(span);
+Updates the current block with new contents, adjusting memory to maintain the invariants mentioned in #inp_sanity checks.
 
-This is the same as replace_block_code_part, above, except that instead of being given the code part of a block, we are given the entire contents of a block.
-So we simply ignore everything having to do with code parts or comment parts, and replace the entire block contents, then otherwise proceed as before.
+void replace_block(span new_block);
+
+Algorithm:
+Set original_block to the current block.
+Get the file index of the file containing the current block.
+
+Calculate lengths of the new and original blocks, length of the rest of inp after the original block, and the difference in length of the block.
+
+If the lengths differ, adjust memory for the rest of the contents using memmove.
+We also adjust inp.end.
+
+Copy the new block contents over the original block's buffer.
+
+Update the end of the modified file's contents span.
+
+Shift subsequent files' content spans to accommodate changes.
+
+Re-index blocks by calling ingest().
+Create a new revision by calling new_rev() with a null span and file index.
 */
 
 void replace_block(span new_block) {
     span original_block = state->blocks.a[state->curr_block_idx];
-    int file_index = file_for_block(original_block);
+    int file_index = state->curr_file_idx;
 
-    size_t new_block_len = len(new_block);
-    size_t old_block_len = len(original_block);
-    size_t rest_len = state->files.a[file_index].contents.end - original_block.end;
+    size_t original_len = len(original_block);
+    size_t new_len = len(new_block);
+    size_t rest_len = inp.end - original_block.end;
+    ssize_t diff = new_len - original_len;
 
-    if (new_block_len != old_block_len) {
-        memmove(original_block.buf + new_block_len, original_block.end, rest_len);
+    if (diff != 0) {
+        memmove(original_block.buf + new_len, original_block.end, rest_len);
+        inp.end += diff;
     }
 
-    memcpy(original_block.buf, new_block.buf, new_block_len);
+    memcpy(original_block.buf, new_block.buf, new_len);
 
-    state->files.a[file_index].contents.end = original_block.buf + new_block_len + rest_len;
+    state->files.a[file_index].contents.end += diff;
 
-    for (int i = file_index + 1; i < state->files.n; i++) {
-        state->files.a[i].contents.buf = state->files.a[i - 1].contents.end;
-        state->files.a[i].contents.end = state->files.a[i].contents.buf + len(state->files.a[i].contents);
+    for (size_t i = file_index + 1; i < state->files.n; i++) {
+        state->files.a[i].contents.buf += diff;
+        state->files.a[i].contents.end += diff;
     }
 
     ingest();

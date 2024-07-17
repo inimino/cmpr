@@ -1427,7 +1427,7 @@ json json_s(span s) {
 json json_n(double n) {
   out_sav rst = out2cmp();
   json ret = {.s = {.buf = cmp.end }};
-  prt("%F", n);
+  prt("%G", n);
   ret.s.end = cmp.end;
   out_rst(rst);
   return ret;
