@@ -38,19 +38,15 @@ A span has a start pointer and an end pointer, called .buf and .end respectively
 - first_n(span, int): Returns n leading chars of a span.
 - skip_n(span, int): Returns a new span skipping n initial chars.
 - take_n(int, span*): Returns as a new span the first n characters from a span, mutating it; often used when parsing.
-- skip_whitespace(span*): modifies a span, returning a prefix span of zero or more removed whitespace.
 - next_line(span*): Extracts the next line (up to \n or .end) from a span and returns it as a new span.
 - span_eq(span, span), span_cmp(span, span): Compares two spans for equality or lexicographical order.
 - S(char*): Creates a span from a null-terminated string.
 - char* s(span): Returns a null-terminated string (in cmp space) containing the given contents.
 - char* s_buffer(char*,int,span): Copies $3 into $1 (of length $2) and null-terminates it, returning $1 for convenience.
 - nullspan(): Returns the empty span at address 0.
-- is_one_of(span, spans): Checks if a span textually equals one of the spans in a spans.
 - index_of(span,spans): Return first element of $2 which is span_eq $1, or -1 if none match.
 - spanspan(span, span): Finds the first occurrence of a span within another span and returns a span into haystack.
-- w_char_esc(char), w_char_esc_pad(char), w_char_esc_dq(char), w_char_esc_sq(char), wrs_esc(): Write characters (or for wrs_esc, spans) to the output span, applying various escape sequences.
 - trim(span): Gives the possibly smaller span with any isspace(3) trimmed on both sides.
-- split_commas_ws(span): splits a span into a spans on commas, stripping whitespace
 - split_whitespace(span): split a span into tokens on whitespace
 - concat(span,span): Returns a new span (in cmp space) containing a concatenation.
 - parse_int(span): Parse an int, but without altering the span.
@@ -60,6 +56,16 @@ A span has a start pointer and an end pointer, called .buf and .end respectively
 typedef struct { u8* buf; u8* end; } span; // the type of span
 
 */
+/* #spanio_advanced
+
+These should probably be documented separately.
+
+- skip_whitespace(span*): modifies a span, returning a prefix span of zero or more removed whitespace.
+- split_commas_ws(span): splits a span into a spans on commas, stripping whitespace
+- w_char_esc(char), w_char_esc_pad(char), w_char_esc_dq(char), w_char_esc_sq(char), wrs_esc(): Write characters (or for wrs_esc, spans) to the output span, applying various escape sequences.
+*/
+
+/**/
 
 #define _GNU_SOURCE
 #include "siphash/siphash.h"
@@ -80,13 +86,22 @@ There's some existing contamination around library functions but try to minimize
 /* #prt_usage
 Note that prt() has exactly the same function signature as printf, i.e. it takes a format string followed by varargs.
 We never use printf, but always prt.
-A common idiom when reporting errors is to call prt, flush, and exit.
-We could also use flush, prt, flush_err, exit, but up to now we've been lazy about the distinction between stdout and stderr as we have mainly interactive use cases.
+A common idiom when reporting errors is to call prt, flush_err, and exit.
 
 To prt a span x we use %.*s with len(x) and x.buf.
+If the span would be the only thing in the formatting string, just use wrs(x) (maybe with terpri() after if you need a newline).
 */
-/* #next_line
+/* #span_usage
+
+A span is only two u8* elements, .buf and .end.
+
+Always use len() to get the length of a span.
+
 A common idiom is next_line() in a loop with !empty().
+
+As next_line() leaves out the newline, you can implement cat by using a next_line + empty loop with wrs and terpri in the body.
+
+In a next_line loop, to tell if you are on the last line, since next_line() has already removed the line you are processing, you can test whether the thing you are consuming is empty; if it is, the line next_line gave you was the last line.
 */
 /* #spanio_initialization
 @- TODO: fill this out (with arenas and whatever else).
@@ -1270,6 +1285,8 @@ The .a member is the array itself, so for(size_t i = 0; i < x.n; i++) { ... x.a[
 The spans array has T = spans and E = span.
 
 spans_arena_push, spans_alloc, spans_push(spans*, span), and spans_arena_pop are the main methods used.
+
+index_of finds a span's location in a spans (or -1).
 
 @- TODO: this can be generated from the #generic_array_usage as a template
 */

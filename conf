@@ -5,7 +5,7 @@ cbcopy: xclip -i -selection clipboard
 cbpaste: xclip -o -selection clipboard
 curlbin: 
 ollamas: llama3,llama3:70b
-model: gpt-3.5-turbo
+model: claude-3-5-sonnet-20240620
 debug: sa,inp
 
 language: C

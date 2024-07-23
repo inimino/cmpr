@@ -207,33 +207,35 @@
   ✓ testing palette features
   ✓ pl2nl_rewrite
   ✓ support Anthropic's Claude
+  ✓ dedup transitive block references
 ```
 
 # CURRENTLY
 
   → llm.c (in git) to a set of blocks in the shortest time
-  → dedup transitive block references
 
 # FUTURE
 
 ```
+    add block dedup to relnotes
+    perhaps: add a marker in block top line, such that any references following it are implementation-only (i.e. not transitive context)
+      perhaps: the same thing in the body, indicating where the block "ends" for purposes of callers
     implement global context pragma
     revise README
-    perhaps we allow "@- " comment syntax to be indented (using trim first on each line)
-    add {NL} and {PL} as template expansion variables
     if bootstrap output is empty and bootstrap command isn't then run the bootstrap before any llm API calls
-    basically we want a "@llm_op" context that will create a nice English DSL for writing ops (we can derive this from existing impls)
-    add "diff" palette feature (the first non-LLM palette operation)
     start to introduce block concept in our prompts
-    add {bcs} and {bce} block comment delimiters (block comment start, end) per language as prompt template variables
-    get rid of .bak when we write a rev (false sense of security anyway, once you save twice...) (let's wait until we detect files changing on disk)
     follow block ids back in time (in "U") (actually no, the decision was intentional, but maybe document it?)
     add machinery for maintaining block one-line summaries (block_id, checksum_prefix, summary...)
     add palette op for suggesting context based on one-line summaries
     perhaps add summaries to the block jump list?
-    when ' goes to the palette we should select the previous op; when ' is hit again we should run it; this makes '' similar to "@@" or "." in vim
-    our markdown blockizer is actually broken; e.g. the file "#test\n```c\n#include <stdio.h>\n```\n" will include two blocks but should be just one.
+    bump version and push v9
     manually blockized the train_gpt2.c file; this could almost trivially be automated; maybe a script that we ship (as a block(?))
+    add cmpr --usage to give a nice output breaking down tokens used per model and by day or week
+    our markdown blockizer is actually broken; e.g. the file "#test\n```c\n#include <stdio.h>\n```\n" will include two blocks but should be just one.
+    add {bcs} and {bce} block comment delimiters (block comment start, end) per language as prompt template variables
+    add {NL} and {PL} as template expansion variables
+    check for C-specific stuff in our palette ops
+    perhaps we allow "@- " comment syntax to be indented (using trim first on each line)
     proposed diff handling
       look up proposed diff to current block, if any
       implement the patch application and testing for clean application
@@ -242,7 +244,10 @@
         call patch with `patch orig_file patch_file` and check the exit status
       show some indication in the UI
       give some UI affordance to apply the diff
-    bump version and push v9
+    add "diff" palette feature (the first non-LLM palette operation)
+    basically we want a "@llm_op" context that will create a nice English DSL for writing ops (we can derive this from existing impls)
+    get rid of .bak when we write a rev (false sense of security anyway, once you save twice...) (let's wait until we detect files changing on disk)
+    when ' goes to the palette we should select the previous op; when ' is hit again we should run it; this makes '' similar to "@@" or "." in vim
     add a "cmpr and git" section to the README: include conf, probably exclude the rest
     data loss when two cmprs open (related to rev currency check) (or when cmpr backgrounded and separately vimming, which bit me)
     build cmpr.ai using cmpr (and ideally deploy it the same way)

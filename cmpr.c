@@ -10,16 +10,14 @@ Each block starts with a block comment, which is often followed by some code.
 The blocks can be read in sequence from start to end inside this file.
 */
 
-/* #example_block @a @b @c
+/* #example_block
 
-Function:
+Add two integers.
+
 int add(int a, int b)
 
-Purpose:
-Define a function that adds two integers.
-
 Algorithm:
-- Return the sum of integers a and b.
+- Return the sum of the arguments.
 */
 
 int add(int a, int b)
@@ -27,7 +25,7 @@ int add(int a, int b)
     return a + b;
 }
 
-/* #example_refs @test_block @config_fields
+/* #example_refs @example_block @config_fields
 
 Here's a block that contains block references as an example of how these features work.
 
@@ -2075,6 +2073,8 @@ Despite the name, blocks can have more than one id, for example (using "[[" as s
 
 This block would have two ids, as well as two "context" references to other blocks.
 
+We have ids_for_block, which takes a span and returns all its (0 or more) block ids.
+
 As a special case, markdown blocks always begin with "#" and they do not have ids.
 
 The current block is always set.
@@ -2083,6 +2083,9 @@ To get the block as a span the current index is used with state->blocks.
 It is never necessary to bounds-check curr_block_idx as it is known to always be in range (and if not, we should crash anyway).
 When displaying block numbers to the user, we add one so that the first block is Block 1 not Block 0.
 To set the current block, we call set_current_block, which also handles pagination, the file index, etc.
+
+To go from an id to a block, we have block_by_id.
+This takes the block id (without a leading hash, i.e. if you have "#id", use advance1 or similar) and returns an index (into state->block), or -1.
 */
 
 /* #files @projfiles:all
@@ -7330,18 +7333,24 @@ int block_by_id(span id_no_hash) {
 We print "Press any key to continue...", flush, and getch.
 */
 
-/* #ex_expand @ex_expandrefs
+/* #ex_expand @blocks @press_any_key
 
 void ex_expand();
 
-Ex command handler, similar to the old ex_expandrefs, but now calling expand_refs_2 with the current block, with "both" as the mode.
+Ex command handler, calling expand_refs_2 with the trim of the comment part of the current block, with "both" as the mode.
+
+Then we clear_display, wrs the expanded result, and #press_any_key.
 */
 
 void ex_expand() {
     span current_block = state->blocks.a[state->curr_block_idx];
-    span expanded = expand_refs_2(current_block, S("both"));
+    span comment_part = block_comment_part(current_block);
+    span trimmed_comment = trim(comment_part);
+    span expanded = expand_refs_2(trimmed_comment, S("both"));
+    
     clear_display();
     wrs(expanded);
+    
     prt("Press any key to continue...");
     flush();
     getch();
@@ -7549,6 +7558,9 @@ Once the file has been written to disk, we can give back the memory in the buffe
 */
 /* #blockref_id #blockref_fname
 
+span blockref_id(span ref);
+span blockref_fname(span ref);
+
 These two helper functions parse parts out of a block reference.
 
 Block references look like:
@@ -7584,6 +7596,9 @@ span blockref_fname(span ref) {
 
 /* #language_comment_starter #language_comment_ender @langtable
 
+span language_comment_starter(span language);
+span language_comment_ender(span language);
+
 In these functions, we are given a language, and based on #langtable, above, Cols. 4 and 5, we return the comment start or end delimiter, respectively, not terminated by a newline.
 */
 
@@ -7601,7 +7616,7 @@ span language_comment_ender(span language) {
     return nullspan();
 }
 
-/* #expand_refs_2
+/* #expand_refs_2 @spans_usage
 
 span expand_refs_2(span,span);
 
@@ -7614,30 +7629,36 @@ We call spans_arena_push.
 
 @out2cmp
 
-We call expand_refs_2_rec for the recursive part (which will output the expanded block into cmp space using prt).
-It takes our two args, a 0 for suppressing block delims, and a 0 for recursion depth.
+Our mode is one of "context", "body", or "both".
+Depending on this, we dispatch to one of the expand_refs_2_rec_{context,body,both} functions defined below.
+(This handles the recursive part, outputting the expanded block into cmp space.)
+These functions take our input block, the transform "comment", a spans which we set up and starts out empty, a 0 since we're not initially in context mode, and a 0 for recursion depth.
 
 Finally we call spans_arena_pop.
 We update our ret span's .end to the current cmp.end, and return it.
 */
 
-span expand_refs_2(span refs, span mode) {
-    span ret;
-    ret.buf = cmp.end;
-
+span expand_refs_2(span block, span mode) {
+    span ret = {cmp.end, cmp.end};
     spans_arena_push();
-    out_sav saved_out_sav = out2cmp();
+    out_sav sav = out2cmp();
+    spans already = spans_alloc(16);
     
-    expand_refs_2_rec(refs, mode, 0, 0);
+    if (span_eq(mode, S("context"))) {
+        expand_refs_2_rec_context(block, S("comment"), &already, 0, 0);
+    } else if (span_eq(mode, S("body"))) {
+        expand_refs_2_rec_body(block, S("comment"), &already, 0, 0);
+    } else {
+        expand_refs_2_rec_both(block, S("comment"), &already, 0, 0);
+    }
     
-    out_rst(saved_out_sav);
+    out_rst(sav);
     spans_arena_pop();
-
     ret.end = cmp.end;
     return ret;
 }
 
-/* #expand_refs_2_rec
+/* (old) expand_refs_2_rec
 @- TODO: probably this should be two or three functions that are mutually recursive, instead of just one
 
 @- TODO: depth check
@@ -7735,8 +7756,331 @@ Then we print the last line just like it was any other body line, followed by a 
 @- After handling all the body lines, if the comment-delimiter-stripping argument is 0, we print the closing delimiter on a line by itself.
 */
 
+/* #expand_refs_2_rec @blocks @language_comment_starter @spans_usage @blockref_id
+
+Recursively expands block references.
+
+Here we have three mutually recursive functions:
+
+void expand_refs_2_rec_context(span block, span transform, spans* already, int comment_context, int depth);
+void expand_refs_2_rec_body   (span block, span transform, spans* already, int comment_context, int depth);
+void expand_refs_2_rec_both   (span block, span transform, spans* already, int comment_context, int depth);
+
+In the _context form, we print the context references of the given block, except for those already printed.
+In the _body form, we print the "body" of a block comment.
+This actually means the entire block comment, but with references (tokens starting with "@") on the top line removed.
+This is the format that blocks are always printed in when we present them to the LLM, i.e. we do not show the "@" block reference syntax to the LLM.
+
+In the _both form, we print the context blocks followed by the block itself.
+All blocks have inline references expanded inline.
+This is equivalent to calling the _context form followed by the _body form.
+
+In the context of the rest of the system, the _context and _body forms are used to implement the {context} and {comment} prompt template variables.
+The _both form is not called externally, but it is called in recursive calls
+
+In this block we implement only the _both form, with the other two functions implemented in following blocks.
+
+Implementation:
+@- We get the ids for the block, we check if each is already seen, and add it to `already` if not.
+- Check if recursion depth exceeds 512, print error and exit if so
+  - message: block expansion depth limit (512) exceeded, possible reference cycle?
+- Recursively call _context and _body forms, with all arguments unchanged.
+- Note the depth doesn't increase, since "both" means "context" + "body".
+*/
+
+void expand_refs_2_rec_both(span block, span transform, spans* already, int comment_context, int depth) {
+    if (depth > 512) {
+        prt("block expansion depth limit (512) exceeded, possible reference cycle?");
+        flush_exit(1);
+    }
+    expand_refs_2_rec_context(block, transform, already, comment_context, depth);
+    expand_refs_2_rec_body(block, transform, already, comment_context, depth);
+}
+
+/* #expand_refs_2_rec_context @expand_refs_2_rec:all @prt_usage @complain_and_prompt
+
+Here we implement the _context form.
+
+We want to print context references of this block, and context references of any block that is included inline in this block.
+
+Therefore, we first handle the top line of the block, recursing into the _both form, so that we get, for any dependency of this block, its transitive dependencies, and also itself (i.e. its body).
+
+This implies that blocks are included in a depth-first traversal of the dependency graph.
+This means (in the absence of dependency cycles) that any block that requires another block in its context can be assured that that block will be included before it.
+
+We then handle the body of the block, finding the inline references, and recursing on each of those into the _context form.
+This means we will get any context blocks asked for by the inline references, but we don't include the body of an inline reference.
+(Since an inline reference is included inline, its body is part of the body of whatever includes it; however, the transitive context dependencies of an inline reference are indeed part of the context of what includes it.)
+
+Each block should only be included once in the expansion of a dependency tree, this is why we have `already`.
+Before recursing on any reference, we check `already` (using index_of) to see if we have already included it, and we skip it if so.
+This breaks reference cycles.
+
+Implementation:
+
+- If the transform is "code", we return, as :code references break context following.
+- Take the top line of the block, and split on whitespace into tokens.
+- For each token that starts with "@", i.e. a blockref:
+  - get the blockref's id and transform parts
+  - check if the ref id is in `already`, and skip it
+  - get the block for the id; if it is not found, #complain_and_prompt, and skip it
+    - message: "no block found matching reference [token]"
+  - get the span for the block
+  - recurse on the _both form, increasing the depth (this will add that block's id(s) to `already`)
+- For the remainder of the lines in the block, for any that begin with "@":
+  - if it begins with "@- " it's a comment; skip it
+  - get the ref id and transform parts as before
+  - check if the ref id is in `already`, if so, it's already been context-followed; skip it
+  - look up the id as before and complain in the same way
+  - get the span
+  - recurse on the _context form; we just want the context for inline references; the depth increases here
+*/
+
+void expand_refs_2_rec_context(span block, span transform, spans* already, int comment_context, int depth) {
+    if (span_eq(transform, S("code"))) return;
+
+    span top_line = next_line(&block);
+    spans tokens = split_whitespace(top_line);
+
+    for (size_t i = 0; i < tokens.n; i++) {
+        if (tokens.a[i].buf[0] == '@') {
+            span id = blockref_id(tokens.a[i]);
+            span fname = blockref_fname(tokens.a[i]);
+            if (index_of(id, *already) == -1) {
+                int block_idx = block_by_id(id);
+                if (block_idx == -1) {
+                    prt("no block found matching reference %.*s\n", len(tokens.a[i]), tokens.a[i].buf);
+                    prt("Press any key to continue...\n");
+                    flush();
+                    getch();
+                    continue;
+                }
+                span ref_block = state->blocks.a[block_idx];
+                expand_refs_2_rec_both(ref_block, fname, already, comment_context, depth + 1);
+            }
+        }
+    }
+
+    while (!empty(block)) {
+        span line = next_line(&block);
+        if (line.buf[0] == '@') {
+            if (starts_with(line, S("@- "))) continue;
+            span id = blockref_id(line);
+            span fname = blockref_fname(line);
+            if (index_of(id, *already) == -1) {
+                int block_idx = block_by_id(id);
+                if (block_idx == -1) {
+                    prt("no block found matching reference %.*s\n", len(line), line.buf);
+                    prt("Press any key to continue...\n");
+                    flush();
+                    getch();
+                    continue;
+                }
+                span ref_block = state->blocks.a[block_idx];
+                expand_refs_2_rec_context(ref_block, fname, already, comment_context, depth + 1);
+            }
+        }
+    }
+}
+
+/**/
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+/* @expand_refs_2_rec_context:all @span_usage
+
+Here we implement the _body form.
+
+When we are printing the body of a block, we have already handled the context, so all we need to do is expand the body itself.
+
+We may already be in a comment context, meaning we are already in a block comment and don't want to try to open a block comment again.
+
+This will be the case when we are recursively called from the _body form itself.
+
+In other cases, we need to output the comment delimiters, and on the top line of the block we also want to include the ids if any.
+
+(However, we don't include any context references or pragmas on the top line, as those are hidden from the LLM.)
+
+Here is also where we add to `already`, since only actually printing the body of a block counts as output.
+However, we don't add to this when we are included inline; this is also when comment_context is true.
+This means that circular dependencies can still overflow, if they are inline dependencies.
+(We don't add to `already` on inline references because inline references can appear in multiple blocks and should be expanded inline each time.)
+@- We could add another spans later to track only the inline expansion stack to catch these circularities; for now the depth limit will handle it.
+
+We also don't add to `already` if we are just printing the code.
+This means one block :code reference won't prevent some other reference elsewhere in the tree from referencing the comment part.
+
+Implementation:
+- If the depth limit is exceeded, complain as before.
+  - Also say "while expanding the block:\n", and wrs the block; if the depth limit is hit because of a loop this will help the user find it.
+- Get the ids for the block.
+- If any id is in `already`, and transform is "comment" or "all", then we return.
+- If transform is "comment" or "all", then add all the ids to `already`.
+- Get the language for block (our argument, not the current block: use language_for_block).
+- Get the comment start and comment ender strings using the helper functions.
+- (We will need these variables later in some code paths.)
+- Before processing the block body further we handle the transform:
+  - If it is "comment", we put the comment part of the block in a variable for use later, and we will output only the comment part.
+    - Trim it, as the comment part may include trailing whitespace and blank lines.
+  - If it is "code", we take the code part (which is the complement of the comment part) in another variable and we will output only the code part.
+  - If it is "all", we set up both variables and we will use both of them as described below.
+  - (Setting some indicator variables here may make the rest of the code flow more smoothly.)
+- For the "comment" part, if we are handling it:
+  - If we are not in comment context, then output the reduced top line:
+    - Print the comment start, a space, then each id followed by a space in a loop.
+    - There will be a trailing space on the line, use bksp() to clean it up and terpri() to end the line.
+    - (If we *are* in comment context, we don't output any of the first line.)
+  - Discard the top line of the comment part, and for all remaining lines except the last:
+    - If the line is a comment line (starts with "@-") skip it.
+    - If it is an inline reference, expand it:
+      - Get the blockref id and fname (transform) parts as before.
+      - Lookup the block or complain, as before.
+      - Recurse on the referenced's block's content, with comment context set, and depth increased.
+    - If it is the last line, it will end with a block comment delimiter.
+      - If we are in comment context already, we cannot end the block comment too soon; therefore we must strip the block comment delimiter.
+      - We can do this using shorten() and the length of the comment ender for the language.
+      - Then we output the truncated last line and terpri().
+      - If we are *not* in comment context, then we should output the last line entire, closing the block comment, followed by a terpri().
+    - Otherwise, it is an ordinary line of the block comment; simply print it (using wrs and terpri).
+- If we are outputting both the comment and code parts ("all" transform):
+  - We have already handled the comment part, and we are going to output the code part too, so add a blank line to separate them.
+- For the code part, if we are outputting that:
+  - simply output the entire code part using wrs; it already includes a terminating newline so nothing is needed after it.
+*/
+
+void expand_refs_2_rec_body(span block, span transform, spans* already, int comment_context, int depth) {
+    if (depth > 512) {
+        prt("block expansion depth limit (512) exceeded, possible reference cycle?\n");
+        prt("while expanding the block:\n");
+        wrs(block);
+        flush_exit(1);
+    }
+
+    spans ids = ids_for_block(block);
+    for (size_t i = 0; i < ids.n; i++) {
+        if (index_of(ids.a[i], *already) != -1 && (span_eq(transform, S("comment")) || span_eq(transform, S("all")))) {
+            return;
+        }
+    }
+
+    if (span_eq(transform, S("comment")) || span_eq(transform, S("all"))) {
+        for (size_t i = 0; i < ids.n; i++) {
+            spans_push(already, ids.a[i]);
+        }
+    }
+
+    span lang = language_for_block(block);
+    span comment_start = language_comment_starter(lang);
+    span comment_end = language_comment_ender(lang);
+
+    span comment_part = nullspan();
+    span code_part = nullspan();
+    int handle_comment = 0;
+    int handle_code = 0;
+
+    if (span_eq(transform, S("comment"))) {
+        comment_part = trim(block_comment_part(block));
+        handle_comment = 1;
+    } else if (span_eq(transform, S("code"))) {
+        code_part = block_code_part(block);
+        handle_code = 1;
+    } else if (span_eq(transform, S("all"))) {
+        comment_part = trim(block_comment_part(block));
+        code_part = block_code_part(block);
+        handle_comment = handle_code = 1;
+    }
+
+    if (handle_comment) {
+        if (!comment_context) {
+            wrs(comment_start);
+            sp();
+            for (size_t i = 0; i < ids.n; i++) {
+                wrs(ids.a[i]);
+                sp();
+            }
+            bksp();
+            terpri();
+        }
+
+        span top_line = next_line(&comment_part);
+        while (!empty(comment_part)) {
+            span line = next_line(&comment_part);
+            if (starts_with(line, S("@-"))) continue;
+            if (line.buf[0] == '@') {
+                span id = blockref_id(line);
+                span fname = blockref_fname(line);
+                int block_idx = block_by_id(id);
+                if (block_idx == -1) {
+                    prt("no block found matching reference %.*s\n", len(line), line.buf);
+                    prt("Press any key to continue...\n");
+                    flush();
+                    getch();
+                    continue;
+                }
+                span ref_block = state->blocks.a[block_idx];
+                expand_refs_2_rec_body(ref_block, fname, already, 1, depth + 1);
+            } else if (empty(comment_part)) {
+                if (comment_context) {
+                    shorten(&line, len(comment_end));
+                    wrs(line);
+                    terpri();
+                } else {
+                    wrs(line);
+                    terpri();
+                }
+            } else {
+                wrs(line);
+                terpri();
+            }
+        }
+    }
+
+    if (handle_comment && handle_code) {
+        terpri();
+    }
+
+    if (handle_code) {
+        wrs(code_part);
+    }
+}
+/**/
+#pragma GCC diagnostic pop
+/*
+- If mode is "context":
+  - Extract the first line of the block
+  - Split the first line into tokens on whitespace
+  - For each token:
+    - Skip tokens starting with '#'
+    - For tokens starting with '@':
+      - Extract reference ID and transformation type
+      - Chase the reference with chase_ref_2
+      - If reference content is empty, print the original token followed by a blank line (wrs, terpri) and continue
+      - Based on transformation type (comment, code, all):
+        - For "comment": expand comment part recursively in mode "both"
+        - For "code": print code part directly
+        - For "all": expand comment part recursively, then print code part
+- If mode is "body":
+  - Extract and process the first line of the block
+  - If not in comment context:
+    - Print comment start followed by a space (sp())
+    - Print each '#' token from the first line followed by space
+    - Remove trailing space and print newline (bksp and terpri)
+  - Process remaining lines:
+    - Skip lines starting with "@- "
+    - For lines starting with '@':
+      - Extract reference ID and transformation type
+      - Chase the reference
+      - If reference content is empty, print the original line and continue
+      - Based on transformation type (comment, code, all):
+        - For "comment": expand comment part recursively with comment context
+        - For "code": print code part directly
+        - For "all": expand comment part recursively, then print code part
+    - For other lines:
+      - If it's the last line and in comment context, remove comment end syntax
+      - Print the line and a newline
+*/
+/* original
 void expand_refs_2_rec(span block, span mode, int comment_context, int depth) {
-    if (depth > 512) { prt("block expansion depth limit (512) exceeded, possible reference cycle?\n"); flush(); exit(1); } // late manual addition
+    if (depth > 512) { prt("block expansion depth limit (512) exceeded, possible reference cycle?\n"); flush(); exit(1); }
 
     span language = language_for_block(block);
     span comment_start = language_comment_starter(language);
@@ -7769,7 +8113,6 @@ void expand_refs_2_rec(span block, span mode, int comment_context, int depth) {
 
                 if (span_eq(transform, S("comment"))) {
                     span comment = block_comment_part(ref_content);
-                    //expand_refs_2_rec(comment, S("both"), 1, depth + 1);
                     expand_refs_2_rec(comment, S("both"), comment_context, depth + 1);
                     terpri();
                 } else if (span_eq(transform, S("code"))) {
@@ -7778,7 +8121,6 @@ void expand_refs_2_rec(span block, span mode, int comment_context, int depth) {
                     terpri();
                 } else if (span_eq(transform, S("all"))) {
                     span comment = block_comment_part(ref_content);
-                    //expand_refs_2_rec(comment, S("both"), 1, depth + 1);
                     expand_refs_2_rec(comment, S("both"), comment_context, depth + 1);
                     terpri();
                     span code = block_code_part(ref_content);
@@ -7794,13 +8136,10 @@ void expand_refs_2_rec(span block, span mode, int comment_context, int depth) {
         span top_line = next_line(&block);
         spans tokens = split_whitespace(top_line);
 
-        // manual:
         if (!comment_context) {
           wrs(comment_start);
           sp();
-        //}
 
-          // I guess we actually only want to print the id when we're not in a comment already, i.e. not when inline-expanding
           for (int i = 0; i < tokens.n; ++i) {
               if (tokens.a[i].buf[0] == '#') {
                   wrs(tokens.a[i]);
@@ -7811,24 +8150,6 @@ void expand_refs_2_rec(span block, span mode, int comment_context, int depth) {
           terpri();
 
         }
-
-        /*
-        span block_id = nullspan();
-        for (int i = 0; i < tokens.n; ++i) {
-            if (tokens.a[i].buf[0] == '#') {
-                block_id = tokens.a[i];
-                break;
-            }
-        }
-
-        if (!comment_context && !empty(block_id)) {
-            wrs(comment_start);
-            sp();
-            wrs(block_id);
-            terpri();
-            terpri();
-        }
-        */
 
         while (!empty(block)) {
             span line = next_line(&block);
@@ -7869,7 +8190,7 @@ void expand_refs_2_rec(span block, span mode, int comment_context, int depth) {
         }
     }
 }
-
+*/
 /* #chase_ref @sio
 
 Here we get a reference like "@id" where "id" is any block identifier.
