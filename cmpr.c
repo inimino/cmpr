@@ -3128,14 +3128,10 @@ We also have a function to get the ids for the block.
 
 Once we have the data we then write it into a cache file in an ASCII format as given by #revs_cache_design above.
 
-@- TODO: fix the rest of this comment (the out2atp stuff was a bad idea and didn't work)
-
 The name of this file is "<cmprdir>/cache/v8/revs/<bname>".
-We expand this using prs and the cmprdir (from state) and bname (one of our arguments).
-Then we call out2atp to redirect the output to append to that constructed path.
-We call pr_revinfo(), which outputs the revinfo data, and then out_rst.
-
-@- The idea of the name out2atp is that we are appending to a path; if we appended to a file, the file would need to exist, but a path is more abstract and it will be created; this is very similar to redirection of expressions into files as seen in awk and similar.
+We expand this using prs with the cmprdir from state and bname passed in as an argument.
+We call pr_revinfo(), which appends the revinfo data to the output buffer.
+The newly written span of bytes is then appended to the cache file using write_to_file_span.
 
 @- TODO: mmap the files into the rope; this lets the OS page out the memory which we mostly won't be needing to access
 */
