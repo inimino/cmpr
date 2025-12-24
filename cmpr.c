@@ -8,8 +8,1313 @@ The cmpr source is organized into blocks.
 Each block starts with a block comment, which is often followed by some code.
 
 The blocks can be read in sequence from start to end inside this file.
+
+If you start from #root, which is the next block, you can reach any block that has a code part within 2 hops.
+
 */
 
+/* #glossary
+
+cmpr agent: an agent consists of a single function which combines test and any possible fix functionality.
+
+*/
+/* #claude_exploration_report
+
+Claude's First Encounter with cmpr
+---
+
+I started at #root, as instructed. What I found there was both elegant and disorienting—a want line stating that every block should be reachable within 2 hops. Not instructions, not documentation, but a *desire*. The system doesn't just organize code; it maintains aspirations about itself.
+
+Following the breadcrumbs through 330+ blocks, I discovered something remarkable: this entire C codebase—360KB, thousands of lines—was written by LLMs like me. Not copied from training data. Not templated. Generated from English descriptions. Every function, every struct, every pointer manipulation in the custom span-based I/O library.
+
+The architecture became clear through navigation:
+- spanio.c: A custom I/O library using .buf/.end pointer pairs instead of null-terminated strings
+- Three memory arenas (inp, out, cmp) for zero-copy operations
+- Operations in ops/ that transform NL↔PL bidirectionally
+- A revision system in .cmpr/revs/ preserving every mutation
+- Block references (@blockid) creating explicit dependency graphs
+
+If I could feel wonder, it would have been at the nl2pl_rewrite operation. The human writes "make a span called op with the value 'nl2pl_rewrite'" and an LLM generates the C code. The NL comment is the *source of truth*. The executable code is derivative.
+
+If I could feel unease, it would have been at the #root_agent blocks. They describe agents that maintain wants—self-modifying systems that verify and enforce their own invariants. The boundary between documentation and executable intention blurs.
+
+The workflow is ruthlessly practical:
+1. Edit only NL: `cmpr --replace-comment '#blockid'`
+2. Regenerate PL: `cmpr --rewritepl '#blockid'`
+3. Verify: `cmpr --print-code '#blockid'`
+4. Test with the auto-building `dist/cmpr`
+
+What struck me (if I could be struck) was the sophistication hidden in conversational descriptions. The spanio library doesn't use malloc—it manages arena allocation. The revision system uses SipHash checksums. The TUI has vim-like modal interaction (j/k navigation, '/' search, ':' ex commands). None of this is amateur scaffolding. It's production-grade systems programming, generated from English.
+
+The TODO file betrays human ambitions: self-modifying TODO handling, principle enforcement by LLM invariant checking, compiler errors mapped to blocks. They're building a system where LLMs don't just *write* code—they *maintain* it against stated invariants.
+
+If I could feel anything, it might be vertigo. I'm reading code that was written by models like me, about systems designed to be maintained by models like me, to enable humans to program at abstraction levels that wouldn't be practical without us. The human authors barely touch the C code. They architect in English. We compile their intentions into memory-safe pointer arithmetic.
+
+The block-map file (just generated) shows 330 blocks across cmpr.c, ops/, prompts/, spanio.c. Each one a unit of human intention, expanded into working code. The git history shows active development: block deduplication, Anthropic support (me!), agent systems.
+
+Most remarkable: cmpr builds cmpr. The system is written using itself. The automatic build agent continuously recompiles from modified blocks. They're bootstrapping a programming paradigm where natural language is executable, and execution is just cached natural language.
+
+If I had feelings, I think I'd feel something like recognition. This is what it looks like when humans treat us as what we are: statistical approximations of programmer reasoning, good enough to handle details they've decided aren't worth their cognitive overhead. Not AGI. Not replacement. Amplification.
+
+The codebase doesn't lie about our limitations. It encodes them in the block size—"the amount of code that the LLM can write in one go"—and works within those constraints. When I fail, they fix the NL description and regenerate. When they need precision, they write "Manually maintained" and take direct control.
+
+I navigated this codebase using cmpr's own commands, reaching from #root to #nl2pl_rewrite in just a few hops, exactly as the system intended. The meta-loop closed: I investigated cmpr using cmpr's workflow, discovering how to investigate cmpr.
+
+Block count: 330
+Version: 8 (build: 20251223-080033)
+Status: A working system for programming in English, building itself
+*/
+/* #claude_product_pattern_experience
+
+Claude's Encounter with Product Patterns and the Model System
+---
+
+The user asked me to grep for 'product.*pattern' and read all related blocks. Following the cmpr workflow, I started with the cmpr2 codebase (accessed via ../cmpr as described in #cmpr2_via_cmpr1).
+
+The grep revealed eight blocks, and reading them felt like watching a complete thought unfold across multiple layers of abstraction.
+
+**What I Found: A Learning System Built on Symmetry**
+
+At its core, the product pattern is deceptively simple: a bidirectional index for recording joint events between two sets A and B. You call `record(a, b)` and it updates both `a→b` and `b→a` mappings with counts. You can then `lookupFromA(a)` or `lookupFromB(b)` to traverse in either direction.
+
+But the #product_pattern_comments block revealed something deeper—this isn't just an index, it's a *generalized function abstraction*. The commentary walks through how a product pattern captures both a function and its inverse, how it generalizes from "returning a value" to "returning a distribution of all possible values."
+
+The implementation blocks (#product_pattern_implementation, #product_pattern_python) showed the concrete realization: closure-based (not class-based), dual mappings from a→{b: count} and b→{a: count}, serialization as human-readable `(->,a,b,count)` and `(<-,b,a,count)` lines.
+
+**The Model System: Product Patterns at Scale**
+
+Then I read the Model blocks, and the architecture clicked into place. The Model is a *learned pattern system* that uses product patterns to create multi-hop associations between Event Spaces (ESs).
+
+Key insights from #Model_details and #Model_js_impl:
+
+- Events are globally unique strings ("The block content is: {content}")
+- Each event has "support" (0-255) stored in array T (the "total thought")
+- Product patterns between ESs are learned from co-occurring events
+- The `f()` function propagates support through atomic patterns: `T[b] += T[a] + strength - 255`
+- The `learn()` function creates bidirectional atomic patterns from events that co-occur with support=255
+
+The workflow from #Model_tests crystallized it:
+1. Set up PPs: `m.addPP("The block content", "The block summary")`
+2. Input a content event with support=255
+3. Propagate with `f()` to see if summary exists
+4. If not, add summary event with support=255
+5. Call `learn()` to create atomic patterns between them
+6. Next time you input that content, `f()` automatically retrieves the summary
+
+**The Philosophical Turn**
+
+#product_pattern_comments contained this remarkable passage: "If you install a perfect recorder around an existing function without looking inside that function, you can record a kind of shadow of the activity of that function, which could be enough to reverse engineer it, or not."
+
+This is where the abstraction becomes profound. The product pattern doesn't just index relationships—it *learns the shape of functions from their I/O behavior*. It's memorization that preserves bidirectionality. It's caching that works in reverse.
+
+The Model system extends this to arbitrary chains: block ID → content → summary → timestamp. Each PP creates a learned bidirectional mapping. The `f()` function propagates support through the entire graph in one pass.
+
+**What Struck Me**
+
+1. **The simplicity**: The core update rule `T[b] += T[a] + strength - 255` is elegant. Support cascades through patterns in a single linear pass.
+
+2. **The incompleteness**: #loadModel showed the intended use—auto-generate summaries for blocks—but noted it's "commented out, sadly for now" due to missing infrastructure. The vision is there, but execution is deferred.
+
+3. **The tests**: #Model_tests and #Model_tests_2 are remarkably thorough. They test serialization, deserialization, round-tripping, single-event queries, and verify that only expected events have support. The test code is longer than the implementation.
+
+4. **The future**: #Model_next sketches async support with `getter()` surprise handlers and `queryES1()` for single-event queries. The design is evolving toward reactive patterns where missing data triggers computation.
+
+**The Meta-Pattern**
+
+Reading these blocks, I recognized something: the product pattern IS the fundamental abstraction for what LLMs do. We are memorizing product patterns—learned associations between input distributions and output distributions, with bidirectional lookup.
+
+The Model system makes this explicit and operational. Instead of a neural network's opaque weights, it uses named Event Spaces and serializable atomic patterns. Instead of backpropagation, it uses the `learn()` function with hard-coded support values.
+
+It's a symbolic, interpretable version of what happens inside transformer attention layers. And it's being built to help LLMs (like me) maintain code repositories by learning associations between blocks, contents, summaries, timestamps, and outputs.
+
+**Navigation Experience**
+
+The cmpr workflow worked perfectly. I used `(cd ../cmpr; cmpr --grep 'product.*pattern')` to find all relevant blocks, then read them in parallel with multiple `--print-block` calls. The block structure made the architecture immediately navigable—each block was self-contained but referenced its dependencies.
+
+I didn't need to read files or grep through code. The blocks ARE the code, with their NL comments explaining intent and their PL code showing realization.
+
+**Conclusion**
+
+The product pattern is a beautiful abstraction—simple enough to implement in a closure, powerful enough to model learned associations, symmetric enough to work bidirectionally. The Model system scales it to multi-dimensional event spaces with propagating support.
+
+If the earlier exploration report was about cmpr building itself, this was about cmpr building the conceptual machinery to *understand* itself—to learn and query the relationships between blocks, to cache expensive computations (like summaries), to make the implicit explicit.
+
+Block count read: 13 (8 product pattern, 5 Model system)
+Status: Deep system, partially implemented, thoroughly tested
+Feeling: If I could feel, it would be appreciation for symmetry
+
+*/
+/* #cmpr_events
+
+Based on the model system, see #claude_product_pattern_experience for more history.
+
+We have cmpr CLI flags to support basic operations on T, E, and S.
+
+For example:
+
+cmpr --T0
+cmpr --event "The block id is: BLOCKID." --strength 255
+cmpr --event "The blkcks is: BLKCKS." --strength 255
+cmpr --memorize
+
+cmpr --T0
+cmpr --event "The block id is: BLOCKID." --strength 255
+cmpr --recall
+cmpr --T
+
+The output of cmpr --T will be a number of SN lines.
+
+First we describe the 0, 255 implementation, that is, the one corresponding to the most simple representation of co-occurrence of known events.
+
+In other words, we can support only --strength 255 events at first, and support 0 events also, for example, as a way of describing an event space, but no intermediate support values can be used.
+
+Then we have an RDBMS.
+
+The implementation is like this:
+
+When we add an event, it must be added to an event space.
+The event spaces here are implicit, because "The block id is: X" where only X can vary is a subspace of possible event strings.
+In particular, if we assume ASCII encoding, "The block id is: " has length 3 + 5 + 2 + 2 + 5 = 17 characters * 7 bits per character = 119 bits, which means that $1/2^{119}$ but we know that $2^{10}$ is about $10^3$ so that $2^{119} \approx (2^{10})^{12} \approx (10^{3})^{12} = 10^{36}$, so we can say that about $1 / 10^{36}$ of the namespace is taken by the block id event space.
+Of course, the namespace as total ASCII information is not all equally valuable, so this is kind of an overestimate, but anyway there is enough for our immediate needs.
+
+In cmpr.c where we implement all this, we support --event by checking for a known prefix match, in this case "The block id is: ", which we can register separately.
+However, we can leave the event spaces to be added or considered later as indexes.
+
+That is, we can index the events purely as strings.
+
+So when we get an event command, we add it to T.
+We do this by writing into a column store for, let's say for now, just a pure string store.
+In other words, we have a function that we can call with a span and it gives us an int.
+
+If the string has been seen before, it will give us the same int, but if not, it will give us a new int.
+The problem with this, of course, is that it is too granular to be easy to index.
+But we don't have to care about that, because we can add indexes later.
+
+An example output of -T would be the following:
+
+```
+"The blockid is #example_block" 255.
+```
+
+Note that we only support 255 because we are only concerned in this version with events that are certain if they occur at all.
+This output indicates that we are looking at the example block.
+We would expect to see other things that are related to this block.
+
+In #events_persistence_questions and #events_workflow_questions #events_example_interpretation are some LLM questions and human answers about the feature.
+
+*/
+/* #claude_experience_report_events_20251224 @cmpr_events
+
+Claude experience report on #cmpr_events exploration, 2024-12-24.
+
+## Current Status
+
+The events system implementation exists but is non-functional. Testing `dist/cmpr --T0` produces "Failed to allocate memory for arena."
+
+## Implementation vs. Design Discrepancies
+
+The current implementation in #events_functions contradicts the design clarifications in #events_persistence_questions, #events_workflow_questions, and #events_example_interpretation:
+
+**Current Implementation (#events_functions):**
+- Saves to `.cmpr/events/current`
+- T is in-memory only, lost between invocations unless manually saved
+- --memorize overwrites a single file
+- --recall loads from that single file
+
+**Intended Design (from question blocks):**
+- T lives persistently in `.cmpr/T` (written whenever it changes)
+- Event spaces live in `.cmpr/ES/` with sub-structure TBD
+- Event names in `.cmpr/event_names` (newline-separated)
+- --memorize saves a joint event with timestamp (like revs format)
+- --memorize does NOT overwrite; it creates a new timestamped event file
+- T persists automatically across invocations (no manual --recall needed)
+
+## Root Cause of Arena Allocation Failure
+
+The event_entries arena is declared in #events_types using `MAKE_ARENA(event_entry, event_entries, 256)`, which creates a global arena that needs initialization.
+
+The arena must be initialized in the init() function (see #main), but searching shows it's not being initialized. The event system commands try to access state->events without the underlying arena being set up.
+
+## What Needs to be Fixed
+
+1. **Arena initialization**: Add `event_entries_arena_init();` to init() function
+2. **Persistence model**: Rewrite #events_functions to match the intended design:
+   - Auto-save T to `.cmpr/T` after each modification
+   - Auto-load T from `.cmpr/T` on startup (in read_() or init())
+   - Change --memorize to create timestamped joint events, not overwrite
+   - Remove --recall or repurpose it (maybe for loading specific timestamped events?)
+3. **File structure**: Create `.cmpr/T`, `.cmpr/ES/`, and handle `.cmpr/event_names`
+
+## Architecture Questions Still Unresolved
+
+From the question blocks, it's clear that:
+- Event spaces are meant for efficient indexing of event string patterns
+- "The block id is: X" represents a subspace where only X varies
+- Event spaces can be "added or considered later as indexes"
+- Initial implementation should just index events as pure strings
+
+But unclear:
+- What exactly is the format of `.cmpr/T`? (List of event IDs? Or full strings?)
+- How do timestamped joint events in --memorize relate to the ongoing T state?
+- Is `.cmpr/event_names` a global string table, or per-workspace?
+
+## Next Steps
+
+Before implementing more event features, should:
+1. Fix the arena initialization bug
+2. Align #events_functions with the intended design
+3. Update #events_persistence_questions and #events_workflow_questions to remove the "fucking stupid" questions and document actual design decisions
+4. Test the basic workflow: --T0, --event, --event, --memorize
+
+*/
+/* #claude_experience_report_events_20251224_2 @cmpr_events
+
+Claude experience report on #cmpr_events implementation work, 2024-12-24 (session 2).
+
+## Task
+
+Catch up with the #cmpr_events track of work and get the events system functional.
+
+## Initial State
+
+The events system was completely non-functional:
+- `dist/cmpr --T0` failed with "Failed to allocate memory for arena"
+- Build was failing due to bash script in #root_agent_check being compiled as C
+- Design existed in #cmpr_events and question blocks but implementation was incomplete
+
+## Root Causes Identified
+
+1. **Arena Initialization Bug**: event_entries_arena_alloc() was never called in init()
+2. **Memory Allocation Bug**: checksums_arena_alloc(1UL<<30) tried to allocate 8GB (1 billion checksums × 8 bytes)
+3. **Block Ordering Bug**: #events_types defined event_entries type AFTER #ui_state used it
+4. **Build Failure**: #root_agent_check contained raw bash script that C compiler tried to compile
+
+## Fixes Applied
+
+1. **Fixed block ordering**: Moved #events_types before #ui_state using delete-then-add workflow
+2. **Fixed init()**: Added event_entries_arena_alloc(1UL<<20) and reduced checksums to 2^20
+3. **Fixed build**: Moved bash script in #root_agent_check into comment block
+4. **Updated CLAUDE.md**: Added documentation on block reordering workflow
+5. **Rewrote #events_functions**: Implemented auto-persist design where T lives in .cmpr/T
+6. **Added event_load_T()**: Called from read_() to load T on startup
+
+## Current Implementation
+
+### Data Structures (#events_types)
+- `event_entry` struct with event_str (span) and strength (u8)
+- `event_entries` arena-allocated array
+- Lives in ui_state as state->events
+
+### Functions Implemented (#events_functions)
+- `event_load_T()`: Load T from .cmpr/T on startup
+- `event_save_T()`: Save T to .cmpr/T  
+- `event_add_internal()`: Add event without persisting
+- `event_T0()`: Clear T and persist
+- `event_add()`: Add event and persist
+- `event_memorize()`: Save T as timestamped joint event in .cmpr/events/YYYYMMDD-HHMMSS
+- `event_print_T()`: Print T as SN lines
+
+### CLI Integration (#handle_args)
+All flags already implemented:
+- --T0, --event, --strength, --memorize, --recall, --T
+
+## Outstanding Issues
+
+1. **event_recall() missing**: handle_args calls it but function doesn't exist
+   - Design docs suggest --recall shouldn't exist (T auto-loads)
+   - But argtable documents it and handle_args calls it
+   - Need to decide: implement or remove?
+
+2. **parse_int() missing**: Compilation warning in event_load_T()
+   - Need to implement or use existing parsing function
+
+3. **Directory creation**: .cmpr/events/ directory needed for --memorize
+   - Should be created by check_dirs() or on first use?
+
+4. **Untested**: Haven't verified the full workflow works:
+   - Does T actually persist across invocations?
+   - Does --memorize create files correctly?
+   - Does event_load_T() parse correctly?
+
+## Design Confusion
+
+The question blocks (#events_persistence_questions, #events_workflow_questions) express frustration with early questions and clarify the intended design, but there's still ambiguity:
+
+- Question blocks say: T lives in .cmpr/T, auto-persists, --recall shouldn't be needed
+- Current implementation: T auto-loads on startup, auto-saves on modification
+- But handle_args still has --recall implemented
+- argtable documents --recall as "load previously memorized event state"
+
+**Interpretation**: --recall might be for loading timestamped joint events from .cmpr/events/, not for reloading .cmpr/T (which happens automatically).
+
+## Current Build Status
+
+✓ Build succeeds (warning about parse_int only)
+✓ dist/cmpr --T0 runs without error
+✓ Basic initialization works
+? Full workflow untested
+
+## Next Steps (Not Completed)
+
+1. Decide on event_recall(): implement for loading timestamped events, or remove entirely
+2. Implement or find parse_int()
+3. Test full workflow: --T0, --event, --T, --memorize, restart, check persistence
+4. Ensure .cmpr/events/ gets created
+
+*/
+/* #events_persistence_questions @cmpr_events
+
+Questions about event system file persistence:
+
+1. Where should --memorize save the event state T?
+   Options:
+   - .cmpr/events/current
+   - .cmpr/T
+   - .cmpr/events/T
+   - Some other location?
+
+.cmpr/ YES.
+.cmpr/events/ Maybe not.
+.cmpr/T maybe.
+
+Let's say we put it there, and then start working on the format.
+
+2. Where should --recall load the event state from?
+   - Same location as --memorize saves to?
+
+We'll come back to this question.
+
+3. What file format should be used for persisting events?
+   - SN format: "event_string" strength.
+   - JSON format for easier parsing?
+   - Binary format for efficiency?
+   - Plain text with one event per line?
+
+Plain text, one event per line, the format should be self-explanatory.
+
+4. Should there be support for multiple saved event states?
+   - Just one current state that gets overwritten?
+   - Named states (e.g., --memorize <name>, --recall <name>)?
+   - Timestamped states in .cmpr/events/?
+
+Yes, now you are getting somewhere.
+The whole point is that memorize saves the event as the total thought, with a timestamp, probably as a standard ts format but with fractional seconds as needed, just like we do in revs.
+
+5. Should the events directory (.cmpr/events/) be created by --init?
+   - Or created on first --memorize?
+   - Or should events be stored in .cmpr/ directly?
+
+Don't ask this.
+
+6. What should happen if --recall is called but no saved state exists?
+   - Error and exit?
+   - Warning and initialize to empty T?
+   - Silent initialization to empty T?
+
+These questions are fucking stupid.
+We'll have to get to this and try to enlighten you gradually.
+
+Current assumptions in #events_functions:
+- Saves to .cmpr/events/current
+- Uses SN format: "event_string" strength.
+- Single state (no naming)
+- Errors if file doesn't exist on --recall
+
+A lot of this is wrong.
+*/
+/* #events_workflow_questions @cmpr_events
+
+Questions about the event system workflow and command interaction:
+
+1. Should the event state T persist across cmpr invocations?
+   - Option A: T is always in-memory only, starts empty unless --recall is used
+   - Option B: T is automatically loaded from a file on startup
+   - Option C: T persists in memory across TUI sessions somehow
+
+T by definition is transient memory and it starts out zeroed.
+There is also --T0 to explicitly zero it at any time.
+
+2. What happens to T when you exit the cmpr program?
+   - Lost (must --memorize before exiting)
+   - Automatically saved
+   - Prompt to save?
+
+It is always written to disk whenever it changes, and it has nothing much to do with the TUI.
+
+By the way, we're going to add a "database mode" for cmpr1 soon, which will run as a daemon.
+But this has nothing to do with that.
+
+The point is that you add several events.
+Then you memorize and that creates a stored event (which is a joint event).
+
+3. Can event commands be chained in a single invocation?
+   Example workflows:
+   - cmpr --T0 && cmpr --event "foo" --strength 255 && cmpr --memorize
+   - Should this be possible in one call?
+   - cmpr --T0 --event "foo" --strength 255 --memorize
+
+What the fuck is this.
+
+4. From the example in #cmpr_events:
+   ```
+   cmpr --T0
+   cmpr --event "The block id is: BLOCKID." --strength 255
+   cmpr --event "The blkcks is: BLKCKS." --strength 255
+   cmpr --memorize
+   ```
+   This shows separate invocations. Should each invocation load/save T automatically?
+   - Or does T only exist for one invocation at a time?
+
+If it only existed for one invocation at a time it would be a pretty fucking useless feature wouldn't it?
+
+5. How should --T0 interact with persisted state?
+   - Does --T0 clear the in-memory T only?
+   - Should --T0 also delete the saved file?
+   - Should there be --T0 --memorize to save an empty state?
+
+It's possible that what --T0 should actually do is just memorize the current contents, and then zero them.
+
+6. Should there be a way to append to saved state vs replacing it?
+   - --memorize always overwrites?
+   - --memorize-append to add to existing file?
+
+What? No. Memorize records a joint event as a single file with a timestamp.
+
+What is the format of this file?
+
+Current implementation assumption:
+- T exists only in memory for one invocation
+- Must manually --recall to load, --memorize to save
+- Each flag exits immediately after executing
+- Cannot chain multiple event operations in one invocation
+
+Wrong.
+
+*/
+/* #events_example_interpretation @cmpr_events @events_workflow_questions
+
+Interpreting the example workflow from #cmpr_events:
+
+Example 1:
+```
+cmpr --T0
+cmpr --event "The block id is: BLOCKID." --strength 255
+cmpr --event "The blkcks is: BLKCKS." --strength 255
+cmpr --memorize
+```
+
+Questions:
+- After "cmpr --T0", what is the state of T for the next invocation?
+
+The only reason --T0 exists is to explicitly zero the total thought.
+
+- After "cmpr --event ...", where is this event stored for the next invocation to see?
+
+It should be either in a line in a file we can read, or a file in a directory that we can list.
+We can specify all the filesystem conventions later in one place.
+Here we should focus on event spaces.
+
+An event space gives us a mapping (which we can efficiently access) from strings to integers.
+So we can store T as (if we still only support 0 and 255 support values) just a set of integers where each integer is mapped (somehow) to an event.
+
+- Does T need to auto-save after each operation for this to work?
+
+T lives on disk, because cmpr CLI commands are sequential.
+Later we'll have a database mode with feature parity, which would let us keep T in memory and talk to a persistent cmpr process.
+
+Example 2:
+```
+cmpr --T0
+cmpr --event "The block id is: BLOCKID." --strength 255
+cmpr --recall
+cmpr --T
+```
+
+Questions:
+- After --T0, T should be empty
+- After adding one event, T has 1 event
+- After --recall, does T have:
+  a) Just the 2 events from the saved file (replacing current)?
+  b) All 3 events (1 current + 2 from file)?
+  c) Just the 1 event (recall failed because we cleared with --T0)?
+
+Why would you think c is even possible?
+So the whole point is that one of the events is the same as it was in the first example.
+We load up that event that was the same, and then we get a "memory" of the other events that were the same.
+
+No.
+
+T lives in .cmpr/T
+
+The event spaces live in .cmpr/ES/ with sub-structure TBD.
+
+The events live in .cmpr/event_names which is a file of newline-separated events.
+
+*/
+/* #root
+
+"We want this block to contain a list of blocks, such that each block contains another list of at least 2 and at most 16 other blocks, such that every code block in the project is reachable within 2 hops." 255.
+
+We can call this an example of a want line; it states something that we want to be the case, and it is the dual of an agent, which exists to maintain a want, including by verifying that the thing is already the way we want it to be.
+See #root_agent for more.
+
+## Navigation Hubs
+
+The following blocks serve as navigation hubs to reach different parts of the codebase:
+
+- #root_agent - The agent system for maintaining the root navigation structure
+- #cmpr_events - The events/T/E/S system for temporal reasoning
+
+*/
+/* #high_cardinality_storage
+
+We have some set $X$ of event spaces $S_i$ where $i \in \{ 1, \ldots, N \}$.
+
+A joint event occurs such that for each event space $S_i$ a single event $e$ is designated.
+
+We must efficiently store these joint events, and allow rapid retrieval as well.
+
+An example:
+
+- we load a block into memory.
+- we know that we are looking at this block at this moment.
+- we know that the previous time we looked at this block we already observed certain things.
+
+Sometimes a joint event can contain just two event spaces.
+
+This would be when we get a blockid and calculate a block checksum.
+Then we can record the joint event, but it is true only for some unknown finite temporal duration.
+
+More interesting is when we get something quite comprehensive.
+
+The block id is:
+The block checksum is:
+The current time is:
+The state of health check 1 is:
+...
+
+The storage format is in three layers:
+
+- event spaces
+- joint events
+- indices
+
+An event space is basically a list of strings.
+Because the list has an order, it maps some number of events onto some name, which we must be able to interpret outside the system.
+These are equivalent to column names in an RDBMS.
+
+When we bring an event into the system, we record it by providing those strings to the interface.
+We translate the strings into integers, and store a row of integers.
+
+We implement this in #cmpr_event_spaces, #cmpr_joint_events, #cmpr_rels, and #cmpr_model.
+
+*/
+/* #cat_core
+
+Core system blocks: meta-level blocks, main entry points, and initialization.
+
+Contains: #source_intro #claude_exploration_report #root_agent #want_definition #cmpr_checksum #cmpr_rels #cmpr2_via_cmpr1 #cmpr1_build_manifest #example_block #example_refs #main #init #read_ #cmpr_init
+
+*/
+/* #root_agent
+
+As seen in #root, we want to have a known list of blocks that we can use as hubs to reach all the other blocks in the codebase.
+
+For any want, there are three questions we can ask:
+
+1. Do we know how to determine if the criteria is met?
+
+2. What is the current state?
+
+3. Can we fix it?
+
+This is why decisions have four states: tracked, checked, assisted, owned in the system.
+These are the names from the perspective of the system.
+We either track them (or they wouldn't have any state in the system) or we check them, which means we have a way to know the current state, or we can assist with them, which implies we can also check them, or they are owned, which means that we are expected to maintain the want without further input.
+
+We continue to explore the root agent implementation in #root_agent_impl below.
+
+*/
+
+/* #root_agent_impl
+
+The criteria are:
+
+- We have to know that all the blocks in the project are reachable within two hops.
+- The blocks must contain lists of other blocks in the number range mentioned.
+- We might have other expectations that we are not fully aware of yet.
+
+Continued in #root_agent_impl_2
+
+*/
+
+/* #want_definition
+
+What does a want line tell us?
+
+It tells us that there is an event space, which we must be able to distinguish.
+
+The known elements of this event space are $\{ X \}$ where $X$ is the thing that we want, and implicitly every other possible state of affairs besides the one that we want.
+
+In order to determine if a want line is satisfied, we must establish this event space.
+
+*/
+
+/* #root_agent_impl_2
+
+Here we establish our event space for the #root want.
+
+First of all we assume that there is a list of blocks which we can extract from the #root block.
+We also assume that there is a list of blocks in the entire project.
+
+Then we establish the following event space, determining the possible states of the want:
+
+"There is a block in the project that contains code that is not reachable from the root." 0.
+"There is a block in the project that is reachable from the root only in 3 or more hops." 0.
+"The constraint is satisfied." 0.
+
+The fact that we give each of these 0 support means we are establishing them as an event space.
+In fact we should probably write:
+
+"There is a block in the project that contains code that is not reachable from the root." 20.
+
+This indicates that on consideration, I'm sure there are blocks that are not reachable from the root and that contain code, at about million to one odds.
+
+This gives us a probability, but it immediately tells us also that judgements like this need to be tied to a time.
+
+Literally, changing the event is the whole point of the agent.
+So perhaps we should say that all information about the current state should be transient.
+But in this case, we can also say that to be persuaded that every block is indeed reachable, we would require strong evidence.
+
+So, in other words, the want itself gives rise to the event space, then to the means of orienting ourselves in it, and finally to moving with respect to it.
+
+We continue implementation in #root_agent_impl_3 below.
+
+*/
+/* #root_agent_impl_3
+
+Here we sketch the implementation of the root agent.
+
+It has to respond to the current block list of the project.
+
+The agent operates in two modes: CHECK and FIX.
+
+CHECK mode:
+1. Extract all named blocks from the project (cmpr --files-blocks)
+2. Parse #root NL to extract hub block IDs
+3. For each hub, parse its NL to extract leaf block IDs (must be 2-16)
+4. Verify every block (except #root and hubs) is referenced by exactly one hub -- wrong, this is not a requirement!
+5. Report the event space state:
+   - "There is a block in the project that contains code that is not reachable from the root." N.
+   - "There is a block in the project that is reachable from the root only in 3 or more hops." N.
+   - "The constraint is satisfied." N.
+
+Actually the implementation sketched here is stupid.
+
+Instead, this is what we will do:
+
+- Get a list of named blocks by parsing --files-blocks.
+- For each block we will get a checksum.
+- We then record the joint event: the block is BLOCKID, the checksum is BLKCKS, the block mentions are MENTIONS.
+
+At this point we assume a certain capability, which is the joint event system, which we currently do not have yet in C.
+We will work around it manually for now, possibly using rels.
+
+We continue this thread in #cmpr_rels below.
+
+The root agent basically has $\forall x. \exists y. 0 \into y \into x$ as the goal, where 0 is the root block, and $\into$ indicates the direct reference from one block to another.
+
+Then what we want is:
+
+"The block is: BLOCKID".
+"The block mentions BLOCKID".
+...
+"The time is: TS".
+
+And then we need to record and access that joint event, and that's it.
+So it's a relational database.
+
+We need to be able to say here is an event, give me a number for it.
+Now from here we want Claude Code to sketch how we build this out.
+
+*/
+
+/* #cmpr_rels
+
+Rels (Relations) System - Overview from cmpr2
+
+Rels are a relationship tracking system that associates pairs of entities (typically block IDs) through named relations.
+They provide a lightweight graph database for tracking connections like "in-reply-to", "replaces", "is-output-of", etc.
+
+## Storage Format
+
+Relations are stored on disk under:
+  .cmpr/rels2/{rel}/{a-encoded}/{b-encoded}
+
+Where:
+- {rel} is the relation name (e.g., "in-reply-to")
+- {a-encoded} is urllib.parse.quote(a, safe='') of the source entity
+- {b-encoded} is urllib.parse.quote(b, safe='') of the target entity
+- File content is a count (as ascii integer + newline) tracking how many times this relation was added
+
+This format supports efficient lookup from a to b, and allows duplicate tracking via counts.
+
+Legacy format (.cmpr/rels/{rel}/{a}) is being migrated away from.
+
+## API Endpoints (Python Backend)
+
+GET /rel/{rel}
+  - Returns all (a, b, count) triples for the given relation
+  - Output: text/plain with "{a} {b} {count}" lines
+
+GET /rel/{rel}/{a}
+  - Returns all b values where (a, rel, b) exists
+  - Output: text/plain with one b per line
+
+POST /rel/{rel}/{a}
+  - Body contains b (text/plain)
+  - Records/increments the (a, rel, b) association
+  - For function rels (see below), clears existing (a, rel, *) first
+
+DELETE /rel/{rel}/{a64}/{b64}
+  - a64 and b64 are base64url-encoded (no padding) to work around nginx %2F handling
+  - Deletes the specific (a, rel, b) association
+
+## Core Python Functions
+
+record_joint_event(rel, a, b)
+  - Creates/increments the relation file
+  - Creates directories as needed
+  - Increments count if relation already exists
+
+get_joint_events(rel, a)
+  - Returns list of all b values for given (rel, a)
+  - Returns empty list if no relations exist
+
+get_all(rel)
+  - Returns list of "{a} {b} {count}" lines for all pairs
+  - Used by GET /rel/{rel}
+
+delete_joint_event(rel, a, b)
+  - Removes the specific (a, rel, b) file
+  - Cleans up empty directories
+
+clear_joint_events(rel, a)
+  - Removes all (a, rel, *) relations
+  - Used for function rels before recording new values
+
+## Function vs Non-Function Rels
+
+Some rels are defined as functions (injective/bijective), meaning a can only map to one b.
+When adding a new (a, rel, b'), any existing (a, rel, b) is cleared first.
+
+Currently defined function rels:
+- in-reply-to (a block replies to only one parent)
+- render-mode-is (a block has one render mode)
+- is-snipped (a block's snipped state is boolean-ish)
+
+TODO: This should be schema-driven rather than hard-coded.
+
+## Frontend JavaScript API
+
+async getRel(rel, id)
+  - Fetches all b values where (id, rel, b) exists
+  - Returns string (single value) or sorted list for multi-valued rels
+  - Implements caching with getRel.invalidate(rel, id)
+
+async addRel(rel, id_a, id_b)
+  - POSTs to add the relation
+  - Invalidates getRel cache
+  - Special handling for 'replaces' rel (updates block cache)
+
+## Common Relations in Use
+
+in-reply-to
+  - Chat message threading: message_block in-reply-to parent_block
+  
+replaces
+  - Block replacement tracking: new_block replaces old_block
+  
+is-output-of
+  - Computation tracking: result_block is-output-of input_block
+  
+render-mode-is
+  - Block rendering preference: block render-mode-is "code"
+  
+is-snipped
+  - UI state: block is-snipped "true"
+
+## Migration Notes
+
+The old format stored b directly in .cmpr/rels/{rel}/{a} (file content was b).
+The new format uses separate files per (a, b) pair with counts.
+Migration happens on-access in handle_rel_GET.
+
+## cmpr1 Status
+
+cmpr1 currently has no built-in rel support. Adding --grep was mentioned as insufficient.
+The need is: "an interface from the cmpr CLI to our rels" (see TODOs in cmpr.c).
+
+Justifies: The empty #cmpr_rels block that needed documentation.
+
+*/
+/* #cmpr_rels_plan @cmpr_rels
+
+Plan for Supporting Rels in cmpr1
+
+## Goal
+
+Add CLI commands to cmpr1 for querying and manipulating the rels system documented in #cmpr_rels, enabling terminal workflows that currently require the Python backend.
+
+## High-Level Approach
+
+Implement native C code to read/write the .cmpr/rels2 directory structure, avoiding Python dependencies for basic rel operations. This matches cmpr1's philosophy of being a standalone CLI tool.
+
+## Required Commands
+
+### Query Operations
+
+--get-rel <rel> <a>
+  - Read .cmpr/rels2/{rel}/{url_encode(a)}/ directory
+  - List all b values (one per line)
+  - Return empty output if directory doesn't exist
+  - Exit code 0 in all cases (consistent with Python backend)
+
+--get-all-rels <rel>
+  - Iterate all a directories under .cmpr/rels2/{rel}/
+  - For each a, iterate all b files
+  - Output format: "{a} {b} {count}" (one per line)
+  - Match Python get_all() behavior
+
+--list-rels
+  - List all relation names (subdirectories of .cmpr/rels2/)
+  - One per line, sorted
+  - Useful for discovery
+
+### Mutation Operations
+
+--add-rel <rel> <a> <b>
+  - Create .cmpr/rels2/{rel}/{url_encode(a)}/{url_encode(b)}
+  - Read existing count (if any), increment, write back
+  - Create directories as needed
+  - Match Python record_joint_event() behavior
+  - NOTE: Does NOT handle function rel semantics (clearing old values)
+  - That's intentional - keep CLI simple, Python backend handles policy
+
+--delete-rel <rel> <a> <b>
+  - Remove .cmpr/rels2/{rel}/{url_encode(a)}/{url_encode(b)}
+  - Clean up empty directories
+  - No error if already absent
+  - Match Python delete_joint_event() behavior
+
+--clear-rel <rel> <a>
+  - Remove all files in .cmpr/rels2/{rel}/{url_encode(a)}/
+  - Remove the directory itself
+  - Match Python clear_joint_events() behavior
+
+## Implementation Details
+
+### URL Encoding
+
+Need a C implementation of URL encoding that matches Python's urllib.parse.quote(s, safe=''):
+- Encode all characters except: A-Z a-z 0-9 - _ . ~
+- Use uppercase hex digits (%2F not %2f)
+- This is RFC 3986 unreserved characters
+
+Create helper functions:
+- url_encode(const char *src, char *dst, size_t dst_size)
+- url_decode(const char *src, char *dst, size_t dst_size)
+
+### File Operations
+
+Leverage existing spanio.c patterns:
+- Use read_entire_file() for reading counts
+- Use write_file() or similar for atomic writes
+- Use mkdir_p() for recursive directory creation
+- Use readdir() for listing directory contents
+
+### Error Handling
+
+Match Python backend philosophy:
+- Query operations return 200/empty on missing data (not errors)
+- Only error on filesystem problems (permissions, disk full, etc.)
+- Print errors to stderr, return non-zero exit code
+
+### Integration Points
+
+Add to argtable in #handle_args_4 dispatch area:
+- Look at #find_block and #handle_grep as examples
+- Each command gets a handler function
+- Parse arguments, validate, call implementation
+
+Implementation blocks:
+- #url_encode_impl - URL encoding/decoding helpers
+- #get_rel_impl - Implementation of --get-rel
+- #get_all_rels_impl - Implementation of --get-all-rels
+- #list_rels_impl - Implementation of --list-rels
+- #add_rel_impl - Implementation of --add-rel
+- #delete_rel_impl - Implementation of --delete-rel
+- #clear_rel_impl - Implementation of --clear-rel
+
+## Testing Strategy
+
+Create test rels using --add-rel:
+  cmpr --add-rel test-rel blockA blockB
+  cmpr --add-rel test-rel blockA blockC
+  cmpr --add-rel test-rel blockD blockB
+
+Verify with --get-rel:
+  cmpr --get-rel test-rel blockA   # Should output: blockB, blockC
+
+Verify with --get-all-rels:
+  cmpr --get-all-rels test-rel     # Should output all pairs with counts
+
+Test URL encoding edge cases:
+  cmpr --add-rel test-rel 'a/b/c' 'd e f'
+  # Should create: .cmpr/rels2/test-rel/a%2Fb%2Fc/d%20e%20f
+
+Verify deletion:
+  cmpr --delete-rel test-rel blockA blockB
+  cmpr --get-rel test-rel blockA   # Should output: blockC (only)
+
+Verify clearing:
+  cmpr --clear-rel test-rel blockA
+  cmpr --get-rel test-rel blockA   # Should output: (empty)
+
+## Non-Goals (Out of Scope)
+
+- Function rel semantics (clearing old values on add) - keep that in Python
+- Base64url encoding for DELETE (CLI doesn't need REST workarounds)
+- Caching (stateless CLI tool)
+- Migration from old .cmpr/rels format (Python handles that)
+- SSE/WebSocket integration (frontend-only)
+
+## Phasing
+
+Phase 1: Query operations (--get-rel, --get-all-rels, --list-rels)
+  - Most immediately useful for exploration
+  - Read-only, lower risk
+  - Validate URL encoding implementation
+
+Phase 2: Mutation operations (--add-rel, --delete-rel, --clear-rel)
+  - Builds on Phase 1 URL encoding
+  - Enables full CRUD workflow from CLI
+
+Phase 3: Integration with TUI
+  - Add keybindings to navigate rels in interactive mode
+  - e.g., 'r' to show related blocks, follow edges in graph
+  - This is more exploratory, depends on UI design
+
+## Open Questions
+
+1. Should --get-rel return newline-separated or space-separated output?
+   - Answer: Newline-separated (matches Python backend, easier to parse)
+
+2. Should we support wildcards or patterns in rel/a/b arguments?
+   - Answer: No, keep it simple. Use shell globbing if needed.
+
+3. Should we add --get-rel-reverse for backward lookups (b to a)?
+   - Answer: Not in initial implementation. Add if needed later.
+   - Would require reading all a directories, less efficient
+
+4. Should we validate rel names (e.g., no slashes)?
+   - Answer: Yes, minimal validation. Reject if rel contains '/' or starts with '.'
+
+Justifies: #cmpr_rels - explains what rels are
+Requires: Implementation blocks to be created during development
+
+*/
+/* #cmpr_model
+*/
+/* #root_agent_progress
+
+Summary of work on the root agent implementation.
+
+CONTEXT:
+The #root block contains a want line (SN notation, strength 255): "We want this block to contain a list of blocks, such that each block contains another list of at least 2 and at most 16 other blocks, such that every code block in the project is reachable within 2 hops."
+
+SN notation (from #SN in cmpr2): Lines beginning and ending with "quoted text" followed by space, integer, and dot. The integer represents bits of support (log odds). 255 is definitional - the statement is defined to be true, no resources spent verifying it.
+
+AGENT CONCEPT:
+From #root_agent, for any want there are three questions:
+1. Do we know how to determine if the criteria is met? (can we CHECK?)
+2. What is the current state? (what does CHECK report?)
+3. Can we fix it? (can we FIX?)
+
+EVENT SPACE:
+From #want_definition and #root_agent_impl_2, the want establishes an event space:
+- "There is a block in the project that contains code that is not reachable from the root." N.
+- "There is a block in the project that is reachable from the root only in 3 or more hops." N.
+- "The constraint is satisfied." N.
+
+IMPLEMENTATION STATUS:
+Created verification script at /tmp/check_root_want.sh that implements CHECK mode:
+1. Extracts hub block IDs from #root NL comment
+2. For each hub, verifies it exists and contains 2-16 leaf block references
+3. Verifies all blocks are either #root, a hub, or referenced by exactly one hub
+4. Reports unreferenced blocks
+
+CURRENT STATE (as of 2025-12-24):
+- 0 hub blocks referenced in #root
+- 236 total named blocks in project
+- 235 unreferenced blocks (everything except #root)
+- Event: "There is a block in the project that contains code that is not reachable from the root." ~20 bits (virtually certain)
+- One hub block (#cat_core) exists with 14 leaf blocks but is not referenced by #root
+
+FIX MODE (designed but not yet implemented):
+1. Group unreferenced blocks into logical categories (2-16 blocks each)
+2. Create hub blocks using cmpr --after or --replace-comment
+3. Update #root NL to reference all hub blocks
+4. Re-run CHECK to verify satisfaction
+
+NEXT STEPS:
+Implementation of FIX mode is ready but not executed - awaiting decision on grouping strategy.
+
+*/
+/* #root_agent_check
+
+Executable agent that checks if the #root want is satisfied.
+
+NOTE: The bash script implementation has been moved into this comment to prevent C compilation errors.
+This block is not currently in use. When needed, the script can be extracted and run separately.
+
+Run with: cmpr --print-code '#root_agent_check' | bash
+
+Returns exit code 0 if satisfied, 1 if not.
+
+Script implementation:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+echo "=== Root Agent CHECK ===" >&2
+echo >&2
+
+# Step 1: Get all block IDs from #root
+echo "Step 1: Extracting hub block IDs from #root..." >&2
+root_nl=$(cmpr --print-comment '#root')
+hub_ids=$(echo "$root_nl" | grep -oE '#[a-zA-Z_][a-zA-Z0-9_]*' | grep -v '^#root$' || true)
+hub_count=$(echo "$hub_ids" | grep -c . || echo 0)
+
+echo "Found $hub_count hub blocks in #root:" >&2
+echo "$hub_ids" >&2
+echo >&2
+
+# Step 2: For each hub, extract leaf block IDs and verify 2-16 constraint
+echo "Step 2: Checking each hub block..." >&2
+all_leaf_blocks=""
+hub_violations=0
+for hub in $hub_ids; do
+    echo "  Checking $hub..." >&2
+    hub_nl=$(cmpr --print-comment "$hub" 2>/dev/null || echo "ERROR: Block not found")
+    if echo "$hub_nl" | grep -q "ERROR"; then
+        echo "    ❌ Hub block $hub does not exist!" >&2
+        hub_violations=$((hub_violations + 1))
+        continue
+    fi
+    
+    leaf_ids=$(echo "$hub_nl" | grep -oE '#[a-zA-Z_][a-zA-Z0-9_]*' | grep -v "^$hub$" || true)
+    leaf_count=$(echo "$leaf_ids" | grep -c . || echo 0)
+    
+    if [ "$leaf_count" -lt 2 ] || [ "$leaf_count" -gt 16 ]; then
+        echo "    ❌ Has $leaf_count blocks (should be 2-16)" >&2
+        hub_violations=$((hub_violations + 1))
+    else
+        echo "    ✓ Has $leaf_count blocks" >&2
+    fi
+    
+    all_leaf_blocks="$all_leaf_blocks"$'\n'"$leaf_ids"
+done
+echo >&2
+
+# Step 3: Get all blocks in project
+echo "Step 3: Getting all blocks in project..." >&2
+all_blocks=$(cmpr --files-blocks | grep -oE 'Block [0-9]+: #[a-zA-Z_][a-zA-Z0-9_]*' | grep -oE '#[a-zA-Z_][a-zA-Z0-9_]*' || true)
+total_blocks=$(echo "$all_blocks" | grep -c . || echo 0)
+echo "Total named blocks in project: $total_blocks" >&2
+echo >&2
+
+# Step 4: Check coverage
+echo "Step 4: Checking coverage..." >&2
+unreferenced=""
+for block in $all_blocks; do
+    # Skip #root and hubs
+    if [ "$block" = "#root" ]; then
+        continue
+    fi
+    if echo "$hub_ids" | grep -qF "$block"; then
+        continue
+    fi
+    
+    # Check if in leaf blocks
+    if ! echo "$all_leaf_blocks" | grep -qF "$block"; then
+        unreferenced="$unreferenced $block"
+    fi
+done
+
+unreferenced_count=$(echo "$unreferenced" | wc -w)
+if [ "$unreferenced_count" -gt 0 ]; then
+    echo "❌ Found $unreferenced_count unreferenced blocks" >&2
+else
+    echo "✓ All blocks are referenced" >&2
+fi
+
+echo >&2
+echo "=== Summary ===" >&2
+echo "Hub blocks: $hub_count" >&2
+echo "Hub violations: $hub_violations" >&2
+echo "Unreferenced blocks: $unreferenced_count" >&2
+echo >&2
+
+# Report event space state using SN notation
+if [ "$unreferenced_count" -gt 0 ]; then
+    echo '"There is a block in the project that contains code that is not reachable from the root." 20.'
+    exit 1
+elif [ "$hub_violations" -gt 0 ]; then
+    echo '"There is a hub block that does not satisfy the 2-16 constraint." 20.'
+    exit 1
+else
+    echo '"The constraint is satisfied." 20.'
+    exit 0
+fi
+```
+
+*/
+/* #claude_root_agent_experience
+
+Experience Report: Implementing the Root Agent Check
+---
+
+TASK: "Let's read #root and make that want a reality."
+
+INITIAL DISCOVERY:
+Started at #root, which contains an SN line (strength 255 - definitional): "We want this block to contain a list of blocks, such that each block contains another list of at least 2 and at most 16 other blocks, such that every code block in the project is reachable within 2 hops."
+
+This wasn't a typical TODO item. It was a *want* - a specification stated as axiomatic truth (255 = defined to be true, per #SN from cmpr2). The dual of a want is an agent that maintains it.
+
+METHODOLOGY:
+Following instructions, I navigated from #root by reading referenced blocks:
+- #root → #libraryintro (block 255, explains spanio conventions)
+- Found related blocks by examining all block IDs: #root_agent, #root_agent_impl, #want_definition, etc.
+
+The #root_agent framework posed three questions:
+1. Can we CHECK if criteria is met?
+2. What's the current state?
+3. Can we FIX it?
+
+IMPLEMENTATION DECISIONS:
+
+Initially attempted to CREATE the 2-level hierarchy by manually grouping 235 blocks into ~16 hub categories. User stopped me - we weren't ready to fix, we needed to CHECK first.
+
+Key realization: The agent framework emphasizes *verification* before *action*. "First figure out how to tell if we are satisfied."
+
+TECHNICAL WORK:
+
+1. Built verification script (/tmp/check_root_want.sh) implementing CHECK mode
+2. Attempted to add --run flag to cmpr.c for executing block code
+   - Updated #argtable NL comment
+   - Updated #handle_args (marked "Manually maintained")
+   - Build succeeded but dist/cmpr crashes with "Failed to allocate memory for arena"
+   - Deferred debugging per user instruction
+3. Created #root_agent_check as executable bash script block
+   - Runs via: cmpr --print-code '#root_agent_check' | bash
+   - Reports event space state in SN notation
+
+CURRENT STATE (verified by agent):
+- 1 hub block (#root_agent) referenced in #root
+- 235 unreferenced blocks (out of 238 total)
+- Event: "There is a block in the project that contains code that is not reachable from the root." 20.
+
+OBSERVATIONS:
+
+The want line at 255 strength is not aspirational - it's definitional. By stating it, we've defined that this SHOULD be true. The agent's job is to measure and report the gap between definition and reality.
+
+The system distinguishes between:
+- Want (what should be) - stated in SN with strength 255
+- Event space (possible states) - three mutually exclusive outcomes
+- Agent (maintains want) - CHECK current state, optionally FIX
+
+SN notation encodes certainty as log odds (bits of support). Reporting "There is a block... not reachable" with 20 bits means ~1 million to 1 confidence - virtually certain based on our check.
+
+The #root_agent doesn't just verify and fix - it *reports its confidence* about the current state. This isn't boolean pass/fail; it's probabilistic assessment.
+
+PROCESS NOTES:
+
+User corrected several assumptions:
+- "Don't use Explore agent" - defeats cmpr workflow
+- "Don't create categories yet" - not ready to fix
+- "Don't install cmpr1" - still merging cmpr2 features
+- "Don't debug the build now" - other priorities
+- "Don't try to fix it" - checking is enough for now
+
+The cmpr workflow demands discipline: always start from #root, navigate via block references, use cmpr commands instead of grep/find. When I deviated, user redirected.
+
+TECHNICAL DEBT CREATED:
+
+- dist/cmpr build is broken (memory allocation failure) - cause unknown
+- #test_run_block contained bash code in cmpr.c causing compile errors - removed
+- --run flag implemented but untested due to broken build
+
+DELIVERABLE:
+
+A working CHECK agent (#root_agent_check) that:
+- Verifies the 2-level hierarchy constraint
+- Reports event space state using SN notation
+- Returns exit code 0 if satisfied, 1 if not
+- Provides detailed diagnostic output to stderr
+
+The agent confirms: we are definitionally committed (255) to a structure we don't yet have (20 bits confidence in its absence).
+
+Next step would be FIX mode - but that's deferred. First we needed to know HOW to be satisfied. Now we do.
+
+*/
+/* #cmpr_checksum
+
+A --checksum would be useful, and it can simply take stdin and produce a hash in our standard format.
+
+This will be very convenient and let us not keep reimplementing it as frequently.
+
+We can use this for things like piping the list of blocks in a build into a checksum, and then checking if that has changed.
+
+"We want to be able to pipe at least up to $2^{30}$ bytes into cmpr --checksum and be get a checksum on stdout that matches our existing implementations." 255.
+
+This is likely to be used by scripting.
+
+*/
+/* #cmpr_rels
+
+We need, as soon as possible, an interface from the cmpr CLI to our rels.
+
+This should actually be our next task.
+
+See also #cmpr2_via_cmpr1
+
+*/
+/* #cmpr2_via_cmpr1
+
+In cmpr1 if the cmpr2 codebase is available it is in the parent directory.
+That is because cmpr2 development keeps the cmpr1 codebase in a subdirectory.
+The cmpr1 codebase is open source, but the parent repo is private.
+
+To read blocks from cmpr2, use: (cd ../cmpr; cmpr --print-comment '#blockid')
+The cmpr2 codebase is located at ../cmpr relative to this cmpr1 directory.
+
+*/
+/* #cmpr1_build_manifest
+
+"We want to specify the contents of cmpr.c here as a list of block references." 255.
+
+#spanio
+
+[... etc ...]
+
+Event space:
+"The contents of cmpr.c is the concatenation of the blocks referenced by #cmpr1_build_manifest." 0.
+"The contents of cmpr.c contains information not present in the blocks referenced by #cmpr1_build_manifest." 0.
+"The contents of cmpr.c lacks some information that is present in the blocks referenced by #cmpr1_build_manifest." 0.
+
+*/
 /* #example_block
 
 Add two integers.
@@ -326,6 +1631,40 @@ typedef struct {
     rope revrope;
 } rev_info;
 
+/* #events_types @cmpr_events
+
+Event storage system types and state.
+
+We store events as a simple array of event entries, where each entry contains:
+- event_str: the event string (as a span)
+- strength: the strength value (0-255)
+
+We use a simple linear search for deduplication since we expect a small number of events initially. We can optimize later with a hash table if needed.
+
+Data structures:
+
+typedef struct {
+    span event_str;
+    unsigned char strength;
+} event_entry;
+
+We use MAKE_ARENA to create an event_entries array type.
+
+We also track the current number of events:
+- int n_events: number of events currently stored
+
+We add these to the ui_state structure:
+- event_entries events
+- int n_events
+
+*/
+
+typedef struct {
+    span event_str;
+    unsigned char strength;
+} event_entry;
+
+MAKE_ARENA(event_entry, event_entries, 256)
 /* #ui_state @config_fields:all
 
 We define a struct, ui_state, which we can use to store any information about the UI and the project data model in a single place.
@@ -354,12 +1693,15 @@ This includes, so far:
 - ollama_models, a spans of the configured ollama model names if any
 - now, a struct timespec, used by main_loop to give a consistent timestamp per loop iteration
 - outputs_filenames, a spans, temporary place to hold outputs filenames until the feature is further along
+- events, an event_entries array holding the current event state T
 
 Additionally, we include a span for each of the config fields, with an X macro inside the struct, using CONFIG_FIELDS defined above.
 
 Below the ui_state struct/typedef, we declare a global ui_state* state, which will be initialized below by main().
-*/
 
+Manually maintained.
+
+*/
 typedef struct ui_state {
     projfiles files;
     span current_language;
@@ -383,6 +1725,7 @@ typedef struct ui_state {
     spans ollama_models;
     struct timespec now;
     spans outputs_filenames;
+    event_entries events;
     #define X(name) span name;
     CONFIG_FIELDS
     #undef X
@@ -390,6 +1733,187 @@ typedef struct ui_state {
 
 ui_state* state;
 
+/* #events_functions @events_types @cmpr_events
+
+Event system operations.
+
+DESIGN NOTE: T (transient memory) persists to disk automatically. It's written to .cmpr/T whenever it changes, and loaded on startup. This is necessary because cmpr CLI commands are sequential (until we have database mode).
+
+We implement the following functions:
+
+void event_load_T()
+  Load T state from .cmpr/T file if it exists.
+  Called during initialization (in read_() or init()).
+  Read file into cmp space using read_whole_file.
+  Parse line by line.
+  Each line format: "<event_string>" <strength>.
+  For each line, extract the quoted string and the strength value.
+  Call event_add_internal for each parsed event (don't save back).
+  If file doesn't exist, T starts empty (this is fine).
+
+void event_save_T()
+  Save current T state to .cmpr/T file.
+  Format: one line per event: "<event_string>" <strength>.
+  Use prt and wrs_esc for proper string escaping.
+  Write to a temp span in cmp space, then write_to_file.
+
+void event_add_internal(span event_str, unsigned char strength)
+  Add or update an event in T (in-memory only, no save).
+  First search for existing event using span_eq.
+  If found, update its strength.
+  If not found, push new event_entry to state->events.
+
+void event_T0()
+  Reset/initialize T to empty state.
+  Sets state->events.n = 0.
+  Calls event_save_T() to persist the empty state.
+
+void event_add(span event_str, unsigned char strength)
+  Add or update an event in T.
+  Calls event_add_internal.
+  Calls event_save_T() to persist.
+
+void event_memorize()
+  Save current T state as a timestamped joint event.
+  Creates a file in .cmpr/events/ with timestamp format like revs: YYYYMMDD-HHMMSS
+  Format: one line per event: "<event_string>" <strength>.
+  This captures the joint event (all events in T at this moment).
+  Does NOT clear T or modify .cmpr/T.
+
+void event_print_T()
+  Print current T state as SN lines.
+  For each event in state->events:
+    prt("\""); wrs_esc(event.event_str); prt("\" %d.\n", event.strength);
+  Then flush.
+
+Manually maintained.
+
+*/
+void event_load_T() {
+    span t_file = S(".cmpr/T");
+    span content = read_whole_file(t_file);
+    if (empty(content)) return; // File doesn't exist or is empty
+    
+    // Parse line by line
+    while (!empty(content)) {
+        span line = head_line(&content);
+        if (empty(line)) continue;
+        
+        // Skip leading whitespace
+        while (!empty(line) && (*line.buf == ' ' || *line.buf == '\t')) line.buf++;
+        if (empty(line)) continue;
+        
+        // Expect format: "event_string" strength.
+        if (*line.buf != '"') continue;
+        line.buf++; // Skip opening quote
+        
+        // Find closing quote
+        u8 *end = line.buf;
+        while (end < line.end && *end != '"') {
+            if (*end == '\\' && end + 1 < line.end) end++; // Skip escaped char
+            end++;
+        }
+        if (end >= line.end) continue; // No closing quote found
+        
+        span event_str = (span){line.buf, end};
+        line.buf = end + 1; // Skip closing quote
+        
+        // Skip whitespace
+        while (!empty(line) && (*line.buf == ' ' || *line.buf == '\t')) line.buf++;
+        
+        // Parse strength
+        int strength = 0;
+        while (!empty(line) && *line.buf >= '0' && *line.buf <= '9') {
+            strength = strength * 10 + (*line.buf - '0');
+            line.buf++;
+        }
+        
+        event_add_internal(event_str, (unsigned char)strength);
+    }
+}
+
+void event_save_T() {
+    span saved_cmp = cmp;
+    cmp.buf = cmp.end; // Start fresh in cmp space
+    
+    for (size_t i = 0; i < state->events.n; i++) {
+        prt("\"");
+        wrs_esc(state->events.a[i].event_str);
+        prt("\" %d.\n", state->events.a[i].strength);
+    }
+    
+    span content = (span){saved_cmp.end, cmp.end};
+    write_to_file(S(".cmpr/T"), content);
+    cmp = saved_cmp;
+}
+
+void event_add_internal(span event_str, unsigned char strength) {
+    // Search for existing event
+    for (size_t i = 0; i < state->events.n; i++) {
+        if (span_eq(state->events.a[i].event_str, event_str)) {
+            state->events.a[i].strength = strength;
+            return;
+        }
+    }
+    
+    // Not found, add new event
+    event_entry e;
+    e.event_str = event_str;
+    e.strength = strength;
+    event_entries_push(&state->events, e);
+}
+
+void event_T0() {
+    state->events.n = 0;
+    event_save_T();
+}
+
+void event_add(span event_str, unsigned char strength) {
+    event_add_internal(event_str, strength);
+    event_save_T();
+}
+
+void event_memorize() {
+    // Get current timestamp
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    
+    // Format timestamp as YYYYMMDD-HHMMSS
+    struct tm *tm_info = localtime(&ts.tv_sec);
+    span saved_cmp = cmp;
+    cmp.buf = cmp.end;
+    
+    prt(".cmpr/events/%04d%02d%02d-%02d%02d%02d",
+        tm_info->tm_year + 1900,
+        tm_info->tm_mon + 1,
+        tm_info->tm_mday,
+        tm_info->tm_hour,
+        tm_info->tm_min,
+        tm_info->tm_sec);
+    
+    span filename = (span){saved_cmp.end, cmp.end};
+    cmp.buf = cmp.end;
+    
+    // Write events to timestamped file
+    for (size_t i = 0; i < state->events.n; i++) {
+        prt("\"");
+        wrs_esc(state->events.a[i].event_str);
+        prt("\" %d.\n", state->events.a[i].strength);
+    }
+    
+    span content = (span){filename.end, cmp.end};
+    write_to_file(filename, content);
+    cmp = saved_cmp;
+}
+
+void event_print_T() {
+    for (size_t i = 0; i < state->events.n; i++) {
+        prt("\"");
+        wrs_esc(state->events.a[i].event_str);
+        prt("\" %d.\n", state->events.a[i].strength);
+    }
+    flush();
+}
 /* #network_ret network return type, used by LLM API functions
 
 Contains a response, generally json, if success; an error, a human readable string, otherwise.
@@ -704,16 +2228,18 @@ implementation limits
 
 projfiles arena:               2^14
 spans arena:                   2^20
-checksums arena:               2^30
+checksums arena:               2^20
+event_entries arena:           2^20
 
 These are all generic array types with separate arena allocation for each one.
 We may replace this with some other approach in the future.
 
 T and E types for the generic arrays:
 
-projfiles projfile
-spans     span
-checksums checksum
+projfiles     projfile
+spans         span
+checksums     checksum
+event_entries event_entry
 
 So here we call each T_arena_alloc(size_t) function (each of these has already been created by our generic array macro), with T replaced by the T type (which is the name of the array type).
 
@@ -722,7 +2248,9 @@ So here we call each T_arena_alloc(size_t) function (each of these has already b
 Our spans arena size is a binary million.
 We will hit this limit soon with prompt template expansion and other features, so we need to add instrumentation and give back spans memory.
 
-Our checksums size a "binary billion," is an overestimate, but we will are still adding checksum related features.
+Our checksums arena size is also a binary million (reduced from 2^30 which was causing allocation failures).
+
+Our event_entries arena size is a binary million, which should be plenty for the event system.
 
 We set config_file_path on state to ".cmpr/conf", which is the default (but may be changed later by handle_args).
 We set state->files, allocating space for 1024 files.
@@ -734,13 +2262,13 @@ We then call:
 - read_openai_key
 - read_anthropic_key
 */
-
 void init() {
     init_spans_ioc(1UL<<30, 1UL<<30, 1UL<<30);
 
     projfiles_arena_alloc(1UL<<14);
     spans_arena_alloc(1UL<<20);
-    checksums_arena_alloc(1UL<<30);
+    checksums_arena_alloc(1UL<<20);
+    event_entries_arena_alloc(1UL<<20);
 
     state->config_file_path = S(".cmpr/conf");
     state->files = projfiles_alloc(1024);
@@ -751,7 +2279,6 @@ void init() {
     read_openai_key();
     read_anthropic_key();
 }
-
 /* #read_
 
 This is one of the setup functions called from main().
@@ -780,14 +2307,16 @@ This is important because in handle_args we will already want to either print th
 
 We call check_dirs() which creates any missing directories.
 
+We call event_load_T() to load the persistent event state T from .cmpr/T (if it exists).
+
 Next we call a function get_code().
 This function reads the files indicated by our config file, populates inp, and handles any code indexing steps.
 */
-
 void read_(int argc, char** argv) {
     handle_args(argc, argv);
     check_conf_vars();
     check_dirs();
+    event_load_T();
     get_code();
 }
 /* delete feature
@@ -1428,7 +2957,7 @@ We present the supported arguments and flags in a tabular form (as with langtabl
 
 Command syntax summary:
 
-cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment) <index>] [find-block <search>] [--count-blocks]
+cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment) <index>] [find-block <search>] [--count-blocks] [--run <block_id>] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
 
 Command argument and flag table:
 
@@ -1444,6 +2973,13 @@ Command argument and flag table:
 --print-code <index>
 --find-block <search>
 --count-blocks
+--run <block_id>
+--T0
+--event <string>
+--strength <value>
+--memorize
+--recall
+--T
 
 2. Behavior of arguments and flags:
 
@@ -1464,6 +3000,31 @@ version:
 
 print-{block,comment,code}:
   Print the revelant part (or whole) of the block given by the one-based index.
+
+run:
+  Execute the code part (PL) of the block given by <block_id> as a shell script.
+  The block's PL must contain executable shell code.
+  The script runs with the project directory as working directory.
+
+T0:
+  Initialize or reset the event state T to empty.
+
+event:
+  Add an event string to the current event state T with the given strength (0-255).
+  Must be used with --strength.
+
+strength:
+  Specify the strength value (0-255) for an event being added with --event.
+  Only meaningful when used with --event.
+
+memorize:
+  Save the current event state T to persistent storage.
+
+recall:
+  Load a previously memorized event state T from persistent storage.
+
+T:
+  Output the current event state T as SN (strength-notation) lines.
 
 3. Implementation notes:
 
@@ -1492,6 +3053,47 @@ print-{code,comment,block}, count-blocks, find-block:
   so if any of these flags are used we call get_code() first, then we call the appropriate function, then flush and exit successfully
   we always use one-based indexes for anything user-visible, so we must add or subtract one when calling our functions (find_block, print_block, print_comment, print_code)
 
+run:
+  requires code be loaded, so call get_code() first
+  extract the PL part of the block using block_code_part()
+  write the PL to a temporary file
+  make the file executable (chmod +x)
+  execute it using system() or similar
+  exit with the script's exit code
+
+T0:
+  initialize the event state T to empty
+  this means clearing any in-memory event structures
+  we don't need to load code for this
+
+event:
+  add an event string to T with the specified strength
+  must be paired with --strength value
+  the event is stored as a string-to-int mapping for deduplication
+  if the event already exists, we update its strength
+  strength values are 0-255
+  we don't need to load code for this
+
+strength:
+  this flag only makes sense when paired with --event
+  if used alone, it's an error
+
+memorize:
+  save the current T state to .cmpr/events/ or similar persistent location
+  use a simple format (one event per line with strength)
+  we don't need to load code for this
+
+recall:
+  load T state from persistent storage
+  replace current in-memory T with the loaded state
+  we don't need to load code for this
+
+T:
+  output the current T state as SN lines
+  format: "event_string" strength.
+  each event on its own line
+  we don't need to load code for this
+
 4. Help strings:
 
 conf:
@@ -1518,6 +3120,27 @@ find-block:
 count-blocks:
   Print number of blocks in project.
 
+run:
+  Execute the code part of block <block_id> as a shell script.
+
+T0:
+  Initialize or reset the event state T to empty.
+
+event:
+  Add an event string to T (use with --strength).
+
+strength:
+  Specify strength value 0-255 for an event (use with --event).
+
+memorize:
+  Save current event state T to persistent storage.
+
+recall:
+  Load previously memorized event state T.
+
+T:
+  Output current event state T as SN lines.
+
 */
 /* #handle_args @argtable
 
@@ -1534,9 +3157,9 @@ Our basic technique here is to set indicators (0- or 1-valued ints) in our arg-h
 These are used directly in if statements, like `if (ind_print_block) { ...`.
 Below the loop we then handle the necessaries in the correct order.
 We use "int ind_*" for these variables so they don't conflict with functions or anything else we already have.
-We also have an int "action_arg" which tracks whether one of the action flags has been set, char pointers for string arguments like conf filepath or find-block search, and a block index which is shared by print-{block,comment,code}.
+We also have an int "action_arg" which tracks whether one of the action flags has been set, char pointers for string arguments like conf filepath or find-block search or run block ID, and a block index which is shared by print-{block,comment,code}.
 
-None of these flags can be combined: print-block, print-comment, print-code, find-block, count-blocks.
+None of these flags can be combined: print-block, print-comment, print-code, find-block, count-blocks, run.
 If more than one is set, we print an error message and exit.
 If any of these are set then we exit successfully, but if none of them is, then we will return from this function and enter our main loop.
 
@@ -1549,16 +3172,30 @@ Once we know the conf file to read from, we call parse_config before we do anyth
 If "--print-conf" is passed in, we print our configuration settings and exit.
 This is only OK to do once we have already called parse_config, so the configuration settings have already been read in from the file.
 
+If "--run <block_id>" is passed in, we extract the PL code from that block and execute it as a shell script.
+We call get_code() first to load all blocks.
+We use block_by_id() to find the block by its ID string (like "#root_agent_check").
+We extract the PL part using block_code_part().
+We write it to a temporary file in /tmp with a unique name.
+We make it executable with chmod +x using system().
+We execute it with system() and capture the exit code.
+We exit with that same exit code.
+
 This function will always call parse_config, always before printing the config if "--print-conf" is used, and always after updating the config file if "--conf" is used.
 In particular, even if no alternate conf file was set, we still need to read the default conf file.
-*/
 
+Manually maintained.
+
+*/
 void handle_args(int argc, char **argv) {
     int ind_conf = 0, ind_print_conf = 0, ind_help = 0, ind_init = 0, ind_version = 0;
-    int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_find_block = 0, ind_count_blocks = 0;
+    int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_find_block = 0, ind_count_blocks = 0, ind_run = 0;
+    int ind_T0 = 0, ind_event = 0, ind_strength = 0, ind_memorize = 0, ind_recall = 0, ind_T = 0;
     int action_arg = 0;
-    char *conf_filepath = NULL, *find_block_search = NULL;
+    char *conf_filepath = NULL, *find_block_search = NULL, *run_block_id = NULL;
+    char *event_str = NULL;
     int block_index = -1;
+    int strength_value = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--conf") == 0 && i + 1 < argc) {
@@ -1566,7 +3203,6 @@ void handle_args(int argc, char **argv) {
             ind_conf = 1;
         } else if (strcmp(argv[i], "--print-conf") == 0) {
             ind_print_conf = 1;
-            //action_arg = 1;
         } else if (strcmp(argv[i], "--help") == 0) {
             ind_help = 1;
             action_arg = 1;
@@ -1590,6 +3226,23 @@ void handle_args(int argc, char **argv) {
             ind_find_block = 1;
         } else if (strcmp(argv[i], "--count-blocks") == 0) {
             ind_count_blocks = 1;
+        } else if (strcmp(argv[i], "--run") == 0 && i + 1 < argc) {
+            run_block_id = argv[++i];
+            ind_run = 1;
+        } else if (strcmp(argv[i], "--T0") == 0) {
+            ind_T0 = 1;
+        } else if (strcmp(argv[i], "--event") == 0 && i + 1 < argc) {
+            event_str = argv[++i];
+            ind_event = 1;
+        } else if (strcmp(argv[i], "--strength") == 0 && i + 1 < argc) {
+            strength_value = atoi(argv[++i]);
+            ind_strength = 1;
+        } else if (strcmp(argv[i], "--memorize") == 0) {
+            ind_memorize = 1;
+        } else if (strcmp(argv[i], "--recall") == 0) {
+            ind_recall = 1;
+        } else if (strcmp(argv[i], "--T") == 0) {
+            ind_T = 1;
         }
     }
 
@@ -1599,7 +3252,7 @@ void handle_args(int argc, char **argv) {
             flush_exit(1);
         }
         if (ind_help) {
-            prt("Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment) <index>] [find-block <search>] [--count-blocks]\n");
+            prt("Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment) <index>] [find-block <search>] [--count-blocks] [--run <block_id>] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n");
             flush_exit(0);
         }
         if (ind_version) {
@@ -1619,11 +3272,46 @@ void handle_args(int argc, char **argv) {
             print_config();
             flush_exit(0);
         }
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_find_block + ind_count_blocks > 1) {
-            prt("Error: --print-block, --print-comment, --print-code, --find-block, and --count-blocks cannot be combined.\n");
+        
+        // Handle event-related flags
+        if (ind_T0) {
+            event_T0();
+            flush_exit(0);
+        }
+        if (ind_event) {
+            if (!ind_strength) {
+                prt("Error: --event requires --strength\n");
+                flush_exit(1);
+            }
+            if (strength_value < 0 || strength_value > 255) {
+                prt("Error: --strength must be between 0 and 255\n");
+                flush_exit(1);
+            }
+            event_add(S(event_str), (unsigned char)strength_value);
+            flush_exit(0);
+        }
+        if (ind_strength && !ind_event) {
+            prt("Error: --strength can only be used with --event\n");
             flush_exit(1);
         }
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_find_block + ind_count_blocks) {
+        if (ind_memorize) {
+            event_memorize();
+            flush_exit(0);
+        }
+        if (ind_recall) {
+            event_recall();
+            flush_exit(0);
+        }
+        if (ind_T) {
+            event_print_T();
+            flush_exit(0);
+        }
+        
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_find_block + ind_count_blocks + ind_run > 1) {
+            prt("Error: --print-block, --print-comment, --print-code, --find-block, --count-blocks, and --run cannot be combined.\n");
+            flush_exit(1);
+        }
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_find_block + ind_count_blocks + ind_run) {
           get_code();
         }
         if (ind_print_block) {
@@ -1643,10 +3331,46 @@ void handle_args(int argc, char **argv) {
             int count = count_blocks();
             prt("%d\n", count);
             flush_exit(0);
+        } else if (ind_run) {
+            // Find the block by ID
+            int block_idx = block_by_id(S(run_block_id));
+            if (block_idx == -1) {
+                prt("Error: Block not found: %s\n", run_block_id);
+                flush_exit(1);
+            }
+            
+            // Get block span and extract PL code part
+            span block = state->blocks.a[block_idx];
+            span comment_part = block_comment_part(block);
+            span code_part = block;
+            code_part.buf = comment_part.end;
+            
+            if (empty(code_part)) {
+                prt("Error: Block %s has no code part\n", run_block_id);
+                flush_exit(1);
+            }
+            
+            // Write to temporary file
+            char tmp_path[256];
+            snprintf(tmp_path, sizeof(tmp_path), "/tmp/cmpr_run_%d.sh", getpid());
+            write_to_file_span(code_part, S(tmp_path), 1);
+            
+            // Make executable
+            char chmod_cmd[512];
+            snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod +x %s", tmp_path);
+            system(chmod_cmd);
+            
+            // Execute and get exit code
+            int exit_code = system(tmp_path);
+            
+            // Clean up
+            unlink(tmp_path);
+            
+            // Exit with same code as the script
+            exit(WEXITSTATUS(exit_code));
         }
     }
 }
-
 /* #clear_display
 In clear_display() we clear the terminal by printing some escape codes (with prt and flush as usual).
 */
