@@ -3235,9 +3235,10 @@ void handle_args(int argc, char **argv) {
     int ind_conf = 0, ind_print_conf = 0, ind_help = 0, ind_init = 0, ind_version = 0;
     int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_find_block = 0, ind_count_blocks = 0, ind_run = 0;
     int ind_T0 = 0, ind_event = 0, ind_strength = 0, ind_memorize = 0, ind_recall = 0, ind_T = 0;
+    int ind_map_error = 0, ind_test_block_map = 0;
     int action_arg = 0;
     char *conf_filepath = NULL, *find_block_search = NULL, *run_block_id = NULL;
-    char *event_str = NULL;
+    char *event_str = NULL, *map_error_line = NULL;
     int block_index = -1;
     int strength_value = 0;
 
@@ -3287,6 +3288,11 @@ void handle_args(int argc, char **argv) {
             ind_recall = 1;
         } else if (strcmp(argv[i], "--T") == 0) {
             ind_T = 1;
+        } else if (strcmp(argv[i], "--map-error") == 0 && i + 1 < argc) {
+            map_error_line = argv[++i];
+            ind_map_error = 1;
+        } else if (strcmp(argv[i], "--test-block-map") == 0) {
+            ind_test_block_map = 1;
         }
     }
 
@@ -3320,6 +3326,39 @@ void handle_args(int argc, char **argv) {
         // Handle event-related flags
         if (ind_T0) {
             event_T0();
+            flush_exit(0);
+        }
+        if (ind_test_block_map) {
+            int failures = block_map_selftest();
+            flush_exit(failures ? 1 : 0);
+        }
+        if (ind_map_error) {
+            span diag_line = S(map_error_line);
+            span diag_path = nullspan();
+            int diag_line_no = 0;
+            if (!parse_compiler_error_line(diag_line, &diag_path, &diag_line_no)) {
+                prt("Could not parse compiler diagnostic line. Expected format like path:line:...\n");
+                flush_exit(1);
+            }
+
+            span block_map = read_whole_file(S(".cmpr/block-map"));
+            if (empty(block_map)) {
+                prt("No .cmpr/block-map found.\n");
+                flush_exit(1);
+            }
+
+            spans ids = block_ids_for_file_line(block_map, diag_path, diag_line_no);
+            if (ids.n == 0) {
+                prt("No block ids found for %.*s:%d\n", len(diag_path), diag_path.buf, diag_line_no);
+                flush_exit(1);
+            }
+
+            prt("Blocks for %.*s:%d:\n", len(diag_path), diag_path.buf, diag_line_no);
+            for (int i = 0; i < ids.n; i++) {
+                prt(" - ");
+                wrs(ids.a[i]);
+                terpri();
+            }
             flush_exit(0);
         }
         if (ind_event) {
@@ -10125,35 +10164,326 @@ void compile();
 
 In compile(), we take the state and execute buildcmd, which is a config parameter.
 
-First we call ensure_conf_var(state->buildcmd), since we are about to use that setting.
+We must ensure that the buildcmd is specified in the config file, with a good prompt message.
 
-Next we print the command that we are going to run and flush, so the user sees something before the compiler process, which may be slow to produce output.
+We copy the build command into a char buffer with s_buffer and run it via popen so we can capture
+output. We redirect stderr into stdout to catch compiler diagnostics.
 
-Then we use system(3) on a 2048-char buf which we allocate and statically zero.
-Our s_buffer() interface (s_buffer(char*,int,span)) lets us set buildcmd as a null-terminated string beginning at buf.
+While streaming the compiler output to the user, we parse any diagnostics of the form
+"file:line:...". Using an up-to-date .cmpr/block-map file, we look up the block IDs covering
+the reported file/line ranges and print them under the corresponding diagnostic line.
+We also collect a unique set of all referenced block IDs so we can summarize them when the
+build finishes.
 
-We wait for another keystroke before returning if the compiler process fails, so the user can read the compiler errors (later we'll handle them better).
-(Remember to call flush() before getch() so the user sees the prompt (which is "Build failed, press any key to continue...").)
-
-On the other hand, if the build succeeds, we don't need the extra keystroke and go back to the main loop after a 1s delay so the user has time to read the success message before the main loop refreshes the current block.
-In this case we prt "Build succeeded" on a line.
-
-(We aren't doing this yet, but later we'll put something on the state to provide more status info to the user.)
+If the build fails we show the related blocks (if any) and then prompt the user to press a key
+before returning. On success we print a brief success message and pause for a moment to make
+sure the user has time to read it.
 */
+
+/* #normalize_path_for_match
+
+span normalize_path_for_match(span);
+
+We want to compare two paths that might have trivial differences, such as a leading "./".
+
+We drop a leading "./" if present and return the shortened span, otherwise we return the
+original span unchanged.
+*/
+
+span normalize_path_for_match(span path) {
+    if (len(path) >= 2 && path.buf[0] == '.' && path.buf[1] == '/') {
+        return skip_n(path, 2);
+    }
+    return path;
+}
+
+/* #paths_match_for_block_map @normalize_path_for_match
+
+int paths_match_for_block_map(span, span);
+
+We compare two paths to see if they refer to the same file.
+
+After normalizing each path (currently by stripping leading "./"), we first try for an exact
+match. If that fails, we also allow a suffix match, so an absolute path like
+"/home/user/proj/file.c" matches a relative path "file.c" or "src/file.c".
+*/
+
+int paths_match_for_block_map(span a, span b) {
+    a = normalize_path_for_match(trim(a));
+    b = normalize_path_for_match(trim(b));
+
+    if (span_eq(a, b)) return 1;
+
+    if (len(a) >= len(b) && ends_with(a, b)) return 1;
+    if (len(b) >= len(a) && ends_with(b, a)) return 1;
+
+    return 0;
+}
+
+/* #parse_block_map_entry @paths_match_for_block_map
+
+int parse_block_map_entry(span, span*, int*, int*, span*);
+
+We parse a single line of the block-map file.
+
+Supported formats include:
+- "path start end #id" (whitespace-separated)
+- "path start-end #id"
+- "path:start-end #id" (range attached to the path with a colon)
+- "path:line #id" (single-line block)
+
+On success we write the path, start line, end line, and block id spans and return 1.
+If parsing fails, we return 0.
+*/
+
+int parse_block_map_entry(span line, span* path, int* start_line, int* end_line, span* block_id) {
+    line = trim(line);
+    if (empty(line)) return 0;
+
+    spans tokens = split_whitespace(line);
+    if (tokens.n < 2) return 0;
+
+    *block_id = tokens.a[tokens.n - 1];
+
+    span path_token = tokens.a[0];
+    span range_token = tokens.n >= 3 ? tokens.a[tokens.n - 2] : nullspan();
+
+    if (!empty(range_token)) {
+        int dash = find_char(range_token, '-');
+        if (dash != -1 && isdigit(*range_token.buf)) {
+            *start_line = parse_int(first_n(range_token, dash));
+            *end_line = parse_int(skip_n(range_token, dash + 1));
+            *path = path_token;
+            return 1;
+        }
+
+        if (tokens.n >= 4 && isdigit(*range_token.buf) && isdigit(*tokens.a[tokens.n - 3].buf)) {
+            *start_line = parse_int(tokens.a[tokens.n - 3]);
+            *end_line = parse_int(range_token);
+            *path = path_token;
+            return 1;
+        }
+    }
+
+    int colon = find_char(path_token, ':');
+    if (colon != -1) {
+        span before_colon = first_n(path_token, colon);
+        span after_colon = skip_n(path_token, colon + 1);
+        int range_dash = find_char(after_colon, '-');
+        if (range_dash != -1) {
+            *start_line = parse_int(first_n(after_colon, range_dash));
+            *end_line = parse_int(skip_n(after_colon, range_dash + 1));
+            *path = before_colon;
+            return 1;
+        }
+        if (!empty(after_colon) && isdigit(*after_colon.buf)) {
+            *start_line = parse_int(after_colon);
+            *end_line = *start_line;
+            *path = before_colon;
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+/* #block_ids_for_file_line @parse_block_map_entry
+
+spans block_ids_for_file_line(span, span, int);
+
+Given the contents of a block-map file, a file path, and a 1-based line number, we return a spans
+of block ids that cover that line. The returned spans point into the provided block-map content.
+
+If the block-map is empty or the line is not covered by any block, we return an empty spans.
+*/
+
+spans block_ids_for_file_line(span block_map, span file_path, int line_number) {
+    if (empty(block_map)) {
+        return spans_alloc(0);
+    }
+
+    int match_count = 0;
+    span map_copy = block_map;
+    while (!empty(map_copy)) {
+        span line = next_line(&map_copy);
+        span entry_path = nullspan();
+        int start_line = 0, end_line = 0;
+        span block_id = nullspan();
+
+        if (!parse_block_map_entry(line, &entry_path, &start_line, &end_line, &block_id)) continue;
+        if (!paths_match_for_block_map(entry_path, file_path)) continue;
+        if (line_number < start_line || line_number > end_line) continue;
+
+        match_count++;
+    }
+
+    spans result = spans_alloc(match_count);
+    map_copy = block_map;
+    while (!empty(map_copy)) {
+        span line = next_line(&map_copy);
+        span entry_path = nullspan();
+        int start_line = 0, end_line = 0;
+        span block_id = nullspan();
+
+        if (!parse_block_map_entry(line, &entry_path, &start_line, &end_line, &block_id)) continue;
+        if (!paths_match_for_block_map(entry_path, file_path)) continue;
+        if (line_number < start_line || line_number > end_line) continue;
+
+        spans_push(&result, block_id);
+    }
+
+    return result;
+}
+
+/* #parse_compiler_error_line @block_ids_for_file_line
+
+int parse_compiler_error_line(span, span*, int*);
+
+We try to parse a compiler diagnostic line for a path and line number, expecting a pattern like
+"path:line:" or "path:line:column:". On success we set the path span, the 1-based line number,
+and return 1. Otherwise we return 0.
+*/
+
+int parse_compiler_error_line(span line, span* path, int* line_number) {
+    int first_colon = find_char(line, ':');
+    if (first_colon == -1) return 0;
+
+    span path_span = first_n(line, first_colon);
+    span after_path = skip_n(line, first_colon + 1);
+
+    int second_colon = find_char(after_path, ':');
+    if (second_colon == -1) return 0;
+
+    span line_number_span = trim(first_n(after_path, second_colon));
+    if (empty(line_number_span) || !isdigit(*line_number_span.buf)) return 0;
+
+    *line_number = parse_int(line_number_span);
+    *path = trim(path_span);
+    return 1;
+}
+
+/* #block_map_selftest @block_ids_for_file_line
+
+int block_map_selftest();
+
+We provide a lightweight runtime self-test so we can quickly verify the
+block-map parsing and lookup helpers. The test exercises the supported
+formats (whitespace ranges, dash ranges, colon-attached ranges, and single
+line entries) plus the path matching rules (exact match, suffix match, and
+leading "./" stripping).
+
+We return 0 on success and a positive failure count on error so callers can
+exit non-zero when something regresses.
+*/
+
+int block_map_selftest() {
+    int failures = 0;
+
+    #define CHECK(msg, cond) do { \
+        if (!(cond)) { \
+            prt("[selftest] %s\n", msg); \
+            failures++; \
+        } \
+    } while (0)
+
+    span block_map = S(
+        "src/foo.c 1 5 #foo\n"
+        "src/foo.c 10-12 #bar\n"
+        "./src/baz.c:20-22 #baz\n"
+        "/abs/path/qux.c:30 #qux\n"
+    );
+
+    spans ids = block_ids_for_file_line(block_map, S("src/foo.c"), 3);
+    CHECK("expected src/foo.c:3 -> #foo", ids.n == 1 && span_eq(ids.a[0], S("#foo")));
+
+    ids = block_ids_for_file_line(block_map, S("./src/foo.c"), 11);
+    CHECK("expected ./src/foo.c:11 -> #bar", ids.n == 1 && span_eq(ids.a[0], S("#bar")));
+
+    ids = block_ids_for_file_line(block_map, S("/home/user/src/baz.c"), 21);
+    CHECK("expected suffix match for baz.c:21 -> #baz", ids.n == 1 && span_eq(ids.a[0], S("#baz")));
+
+    ids = block_ids_for_file_line(block_map, S("/abs/path/qux.c"), 30);
+    CHECK("expected absolute path + single line range -> #qux", ids.n == 1 && span_eq(ids.a[0], S("#qux")));
+
+    ids = block_ids_for_file_line(block_map, S("src/foo.c"), 7);
+    CHECK("expected no hit outside ranges", ids.n == 0);
+
+    #undef CHECK
+
+    if (failures == 0) {
+        prt("block-map selftest: ok\n");
+    }
+
+    return failures;
+}
 
 void compile() {
     ensure_conf_var(&state->buildcmd, S("The build command will be run every time you hit 'B' and should build the code you are editing (typically in projfile)"), nullspan());
-    
+
     char buf[2048] = {0};
     s_buffer(buf, sizeof(buf), state->buildcmd);
-    
+
     prt("Running command: %s\n", buf);
     flush();
-    
-    int status = system(buf);
-    
+
+    char command[2100] = {0};
+    snprintf(command, sizeof(command), "%s 2>&1", buf);
+
+    span block_map = read_whole_file(S(".cmpr/block-map"));
+    spans related_blocks = spans_alloc(0);
+
+    FILE *pipe = popen(command, "r");
+    if (!pipe) {
+        perror("Failed to run build command");
+        exit(EXIT_FAILURE);
+    }
+
+    char line_buf[4096];
+    while (fgets(line_buf, sizeof(line_buf), pipe)) {
+        prt("%s", line_buf);
+
+        size_t line_len = strlen(line_buf);
+        span line_span = {(u8*)line_buf, (u8*)line_buf + line_len};
+        if (line_len && line_buf[line_len - 1] == '\n') {
+            line_span.end--;
+        }
+
+        span diag_path = nullspan();
+        int diag_line = 0;
+        if (parse_compiler_error_line(line_span, &diag_path, &diag_line)) {
+            spans ids = block_ids_for_file_line(block_map, diag_path, diag_line);
+            if (ids.n > 0) {
+                prt("    Related blocks: ");
+                for (int i = 0; i < ids.n; i++) {
+                    if (index_of(ids.a[i], related_blocks) == -1) {
+                        spans_push(&related_blocks, ids.a[i]);
+                    }
+                    wrs(ids.a[i]);
+                    if (i + 1 < ids.n) {
+                        sp();
+                    }
+                }
+                terpri();
+            }
+        }
+    }
+
+    int status = pclose(pipe);
+
     if (status != 0) {
-        prt("Build failed, press any key to continue...\n");
+        if (related_blocks.n > 0) {
+            prt("Build failed; related blocks:\n");
+            for (int i = 0; i < related_blocks.n; i++) {
+                prt(" - ");
+                wrs(related_blocks.a[i]);
+                terpri();
+            }
+        } else if (empty(block_map)) {
+            prt("Build failed; no .cmpr/block-map found to map errors to blocks.\n");
+        } else {
+            prt("Build failed; no matching block IDs found for the reported errors.\n");
+        }
+        prt("Press any key to continue...\n");
         flush();
         getch();
     } else {
