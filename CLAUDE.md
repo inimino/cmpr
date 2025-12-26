@@ -41,8 +41,8 @@ When the user asks you to work on ANY task related to this codebase, you MUST:
 **Example of CORRECT workflow**:
 ```
 User: "I want to work on the agent system"
-Assistant: [Immediately runs] cmpr --print-comment '#cmpr_project'
-Assistant: [Sees reference to #cmpr_agents, runs] cmpr --print-comment '#cmpr_agents'
+Assistant: [Immediately runs] cmpr --print-comment '#root'  # Read the root block
+Assistant: [Sees reference to agent blocks, follows them] cmpr --print-comment '#root_agent'
 Assistant: [Now understands the structure and can navigate to specific agent blocks]
 ```
 
@@ -93,7 +93,7 @@ The #INBOX block serves as a staging area for new blocks during development:
 # Add a new block after INBOX
 <something> | cmpr --after '#INBOX'
 # Check the INBOX
-cmpr --list-blocks INBOX.c
+cmpr --files-blocks | grep -A 1000 'file: INBOX.c' | grep -B 1000 -m 1 '^file:' | head -n -1
 ```
 
 This pattern:
@@ -140,22 +140,22 @@ cat /tmp/events_types.txt | cmpr --after '#rev_info'
 
 All navigation MUST start from the root block and follow block references:
 
-1. **Start at the root**: `cmpr --print-comment '#cmpr_project'`
+1. **Start at the root block**: Read it with `cmpr --print-comment` to see the main navigation hubs
 2. **Use 3-5 hops**: You should be able to reach any area of the codebase in 3-5 `--print-comment` calls by following block references
 
 **Example Navigation Paths**:
 
 To add a CLI feature to cmpr.c (like --grep):
-- `#cmpr_project` → `#cmpr_c_overview` → `#argtable` → `#handle_args_4` (dispatching)
-- From there, look at similar implementations like `#find_block` to understand the pattern
+- Start at the root block → find references to argument handling → navigate to `#argtable` → then `#handle_args` (dispatching)
+- From there, look at similar implementations to understand the pattern
 
 To understand the agent/want/decision system:
-- `#root` → `#agent_framework` (comprehensive overview)
-- `#agent_framework` → `#agent_implementation_pattern` (practical how-to)
+- `#root` → `#root_agent` (example agent implementation)
+- See agent-related blocks for patterns
 
 To work on the event system:
 - `#root` → `#cmpr_events` (main description)
-- Check `#INBOX` for latest clarity documents like `#events_system_clarity_20251226`
+- Check `#INBOX` for latest experience reports and documentation
 
 **Rule**: If you cannot reach the blocks you need from the root block by following direct references, that is a PROBLEM. DO NOT work around it by using search commands. Instead:
 1. STOP and inform the user that navigation is broken
@@ -331,7 +331,7 @@ After exiting planning mode or when context-switching, it's easy to forget cmpr 
 - ❌ Using `Read` + manual parsing → ✅ Use `cmpr --print-comment '#block_id'`
 - ❌ Using `grep`/`find` to locate code → ✅ Use `cmpr --grep` or navigate from root
 - ❌ Manually reading .cmpr/revs files → ✅ Use existing rvs indices and helpers
-- ❌ Starting ANY task without reading root block first → ✅ Always `cmpr --print-comment '#cmpr_project'` first
+- ❌ Starting ANY task without reading root block first → ✅ Always start by reading the root block to see navigation hubs
 - ❌ Piping commands into `--replace-code` without testing → ✅ Test with `wc -l`, then `grep`, THEN replace
 - ❌ Grepping or filtering `make` output → ✅ Read it directly - it's a serious build system, not npm
 - ❌ Creating blocks without knowing final location → ✅ Use `cmpr --after '#INBOX'` and move later

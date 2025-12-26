@@ -29,7 +29,7 @@ If you start from #root, which is the next block, you can reach any block that h
 
 */
 
-...
+
 /* #claude_exploration_report
 
 Claude's First Encounter with cmpr
@@ -3114,9 +3114,11 @@ void print_config() {
 
 We present the supported arguments and flags in a tabular form (as with langtable previously).
 
+TODO: Change --help behavior to match cmpr2: by default, print only a short usage summary (one line), and allow --help to be combined with specific flags to get detailed help for those flags. This is better UX than the current all-or-nothing detailed help output.
+
 Command syntax summary:
 
-cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment) <index>] [--content-index <search>] [--grep <pattern>] [--count-blocks] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
+cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
 
 Command argument and flag table:
 
@@ -3130,9 +3132,17 @@ Command argument and flag table:
 --print-block <index>
 --print-comment <index>
 --print-code <index>
+--expand-block <id>
+--rewritepl <id>
+--after <id>
+--replace <id>
+--replace-comment <id>
+--replace-code <id>
 --content-index <search>
 --grep <pattern>
 --count-blocks
+--files-blocks
+--print-all
 --run <block_id>
 --agents
 --T0
@@ -3168,6 +3178,39 @@ version:
 print-{block,comment,code}:
   Print the revelant part (or whole) of the block given by the one-based index.
 
+expand-block:
+  Print the block with all block references (@blockid) transitively expanded inline.
+  Takes a block ID as argument.
+  Recursively expands any @blockid references found in the NL comment.
+  Useful for seeing the full context of a block with all its dependencies.
+
+rewritepl:
+  Regenerate the PL (code) part of a block from its NL (comment) part.
+  Takes a block ID as argument.
+  Sends the NL to the LLM to generate fresh PL code.
+  The new PL replaces the existing PL in the block.
+
+after:
+  Insert a new block after the specified block ID.
+  Reads the new block content (NL + PL) from stdin.
+  The new block is inserted into the same file, immediately after the target block.
+
+replace:
+  Replace the entire block (both NL and PL parts) with new content from stdin.
+  Takes a block ID as argument.
+  Completely overwrites the existing block.
+
+replace-comment:
+  Replace only the NL (comment) part of a block with new content from stdin.
+  Takes a block ID as argument.
+  The PL part remains unchanged.
+
+replace-code:
+  Replace only the PL (code) part of a block with new content from stdin.
+  Takes a block ID as argument.
+  The NL part remains unchanged.
+  Note: Prefer --rewritepl over --replace-code when regenerating from NL.
+
 content-index:
   Search all blocks for literal content string.
   Returns a space-separated list of one-based indices of all blocks containing the search string.
@@ -3183,6 +3226,17 @@ grep:
   For blocks where the NL matches (with or without PL match), outputs "#id".
   Output is a space-separated list of matching block IDs on a single line.
   Empty output (just newline) if no matches found.
+
+count-blocks:
+  Print number of blocks in project.
+
+files-blocks:
+  Print a list of project files, with block indexes and ids per file; each line is either "file: ..." or "Block N" (or "Block N: #id") describing the project source structure.
+
+print-all:
+  Print all blocks in the project sequentially.
+  Each block is printed with its full content (NL + PL).
+  Useful for exporting or reviewing the entire codebase.
 
 run:
   Execute the code part (PL) of the block given by <block_id> as a shell script.
@@ -3239,10 +3293,49 @@ version:
   these three flags all are "action args"; if one is provided, any other flags will have no effect
   if more than one is given, any one of them may take effect (we don't care which), but not more than one
 
-print-{code,comment,block}, count-blocks, content-index, grep:
+print-{code,comment,block}, count-blocks, files-blocks, content-index, grep:
   all of these require the code be loaded, which normally happens after we are called
   so if any of these flags are used we call get_code() first, then we call the appropriate function, then flush and exit successfully
   we always use one-based indexes for anything user-visible, so we must add or subtract one when calling our functions
+
+expand-block:
+  requires code be loaded, so call get_code() first
+  recursively expands @blockid references in the NL comment
+  prints the expanded block to stdout
+  exits successfully
+
+rewritepl:
+  requires code be loaded, so call get_code() first
+  extracts the NL part of the specified block
+  sends it to the LLM configured in the config file
+  replaces the PL part with the LLM's response
+  saves the updated block back to the file
+
+after:
+  requires code be loaded, so call get_code() first
+  reads new block content from stdin
+  finds the target block by ID
+  inserts the new block immediately after the target block in the same file
+  updates the in-memory code structure and writes back to file
+
+replace:
+  requires code be loaded, so call get_code() first
+  reads new block content (NL + PL) from stdin
+  replaces the entire block identified by ID
+  writes the updated file
+
+replace-comment:
+  requires code be loaded, so call get_code() first
+  reads new NL content from stdin
+  replaces only the NL part, keeping PL unchanged
+  writes the updated file
+
+replace-code:
+  requires code be loaded, so call get_code() first
+  reads new PL content from stdin
+  replaces only the PL part, keeping NL unchanged
+  writes the updated file
+  note: this is less preferred than --rewritepl which generates PL from NL
 
 content-index:
   calls content_index() with the search string
@@ -3256,6 +3349,18 @@ grep:
   compiles the regex, iterates all blocks, searches both comment and code parts
   outputs space-separated list of matches on single line
   handles regex compilation errors gracefully (print error message and exit with error code)
+
+files-blocks:
+  calls print_files_blocks() which prints a structured summary of files and blocks
+  for each file, prints "file: <filename>"
+  for each block in that file, prints "Block N: #id" or "Block N" for anonymous blocks
+  N is the one-based index of the block within the project
+
+print-all:
+  requires code be loaded, so call get_code() first
+  iterates through all blocks in order
+  prints each block's full content (NL + PL)
+  exits successfully
 
 run:
   requires code be loaded, so call get_code() first
@@ -3327,6 +3432,24 @@ version:
 print-block, -comment, -code:
   Print a complete block (or comment or code part) given by index.
 
+expand-block:
+  Print block with all @blockid references transitively expanded inline.
+
+rewritepl:
+  Regenerate PL (code) from NL (comment) using LLM.
+
+after:
+  Insert new block after <id>, reading content from stdin.
+
+replace:
+  Replace entire block <id> with content from stdin (NL + PL).
+
+replace-comment:
+  Replace only NL part of block <id> with content from stdin.
+
+replace-code:
+  Replace only PL part of block <id> with content from stdin.
+
 content-index:
   Print space-separated list of one-based indices of all blocks matching literal search string.
 
@@ -3335,6 +3458,12 @@ grep:
 
 count-blocks:
   Print number of blocks in project.
+
+files-blocks:
+  Print a list of project files with block indexes and IDs per file.
+
+print-all:
+  Print all blocks in the project sequentially.
 
 run:
   Execute the code part of block <block_id> as a shell script.
@@ -3416,7 +3545,7 @@ Manually maintained.
 */
 void handle_args(int argc, char **argv) {
     int ind_conf = 0, ind_print_conf = 0, ind_help = 0, ind_init = 0, ind_version = 0;
-    int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_content_index = 0, ind_grep = 0, ind_count_blocks = 0, ind_run = 0, ind_agents = 0;
+    int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_content_index = 0, ind_grep = 0, ind_count_blocks = 0, ind_files_blocks = 0, ind_print_all = 0, ind_run = 0, ind_agents = 0;
     int ind_T0 = 0, ind_event = 0, ind_strength = 0, ind_memorize = 0, ind_recall = 0, ind_T = 0;
     int ind_map_error = 0, ind_test_block_map = 0;
     int action_arg = 0;
@@ -3458,6 +3587,10 @@ void handle_args(int argc, char **argv) {
             ind_grep = 1;
         } else if (strcmp(argv[i], "--count-blocks") == 0) {
             ind_count_blocks = 1;
+        } else if (strcmp(argv[i], "--files-blocks") == 0) {
+            ind_files_blocks = 1;
+        } else if (strcmp(argv[i], "--print-all") == 0) {
+            ind_print_all = 1;
         } else if (strcmp(argv[i], "--run") == 0 && i + 1 < argc) {
             run_block_id = argv[++i];
             ind_run = 1;
@@ -3507,12 +3640,28 @@ void handle_args(int argc, char **argv) {
             prt("  --print-comment <index>\n");
             prt("  --print-code <index>\n");
             prt("      Print a complete block (or comment or code part) given by index.\n\n");
+            prt("  --expand-block <id>\n");
+            prt("      Print block with all @blockid references transitively expanded inline.\n\n");
+            prt("  --rewritepl <id>\n");
+            prt("      Regenerate PL (code) from NL (comment) using LLM.\n\n");
+            prt("  --after <id>\n");
+            prt("      Insert new block after <id>, reading content from stdin.\n\n");
+            prt("  --replace <id>\n");
+            prt("      Replace entire block <id> with content from stdin (NL + PL).\n\n");
+            prt("  --replace-comment <id>\n");
+            prt("      Replace only NL part of block <id> with content from stdin.\n\n");
+            prt("  --replace-code <id>\n");
+            prt("      Replace only PL part of block <id> with content from stdin.\n\n");
             prt("  --content-index <search>\n");
             prt("      Print space-separated list of one-based indices of all blocks matching literal search string.\n\n");
             prt("  --grep <pattern>\n");
             prt("      Search all blocks using POSIX ERE pattern. Outputs space-separated list of matching block IDs (\"#id\" for NL matches, \"#id:code\" for PL-only matches). Note: Uses POSIX Extended Regular Expressions, not JavaScript regex. Use [0-9] instead of \\d, [a-zA-Z0-9_] instead of \\w, [[:space:]] instead of \\s.\n\n");
             prt("  --count-blocks\n");
             prt("      Print number of blocks in project.\n\n");
+            prt("  --files-blocks\n");
+            prt("      Print a list of project files with block indexes and IDs per file.\n\n");
+            prt("  --print-all\n");
+            prt("      Print all blocks in the project sequentially.\n\n");
             prt("  --run <block_id>\n");
             prt("      Execute the code part of block <block_id> as a shell script.\n\n");
             prt("  --agents\n");
@@ -3611,11 +3760,11 @@ void handle_args(int argc, char **argv) {
             flush_exit(0);
         }
         
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_content_index + ind_grep + ind_count_blocks + ind_run + ind_agents > 1) {
-            prt("Error: --print-block, --print-comment, --print-code, --content-index, --grep, --count-blocks, --run, and --agents cannot be combined.\n");
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_run + ind_agents > 1) {
+            prt("Error: --print-block, --print-comment, --print-code, --content-index, --grep, --count-blocks, --print-all, --run, and --agents cannot be combined.\n");
             flush_exit(1);
         }
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_content_index + ind_grep + ind_count_blocks + ind_run + ind_agents) {
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_run + ind_agents) {
           get_code();
         }
         if (ind_print_block) {
@@ -3652,12 +3801,65 @@ void handle_args(int argc, char **argv) {
             int count = count_blocks();
             prt("%d\n", count);
             flush_exit(0);
+            } else if (ind_files_blocks) {
+                print_files_blocks();
+                flush_exit(0);
+        } else if (ind_print_all) {
+            for (int i = 0; i < state->blocks.n; i++) {
+                print_block(i);
+            }
+            flush_exit(0);
         } else if (ind_agents) {
             handle_agents();
         } else if (ind_run) {
             handle_run(run_block_id);
         }
     }
+}
+/* #print_files_blocks @gcb @ids_for_block
+
+void print_files_blocks();
+
+Print a structured summary of the current project's files and the blocks they contain, in order.
+This is the implementation of the --files-blocks flag.
+
+- The output is a sequence of lines. Each file in the project is listed on a line as:
+    file: <filename>
+- The blocks in each file follow immediately after, each on their own line:
+    - For blocks with an id: Block <n>: <id>
+    - For anonymous blocks: Block <n>
+  where <n> is the one-based index of the block within the project.
+- There is no additional spacing or headers.
+
+Example output:
+
+file: conf
+Block 1
+file: rewrite.c
+Block 2: #cmpr_prologue
+Block 3: #rewrite
+
+*/
+
+void print_files_blocks() {
+    for (int f = 0; f < state->files.n; f++) {
+        projfile *file = &state->files.a[f];
+        prt("file: %s", s(file->path));
+        terpri();
+	if (empty(file->contents)) continue;
+        int first = first_block_in_file(f);
+        int last  = last_block_in_file(f);
+        for (int i = first; i <= last; i++) {
+            span block = state->blocks.a[i];
+            spans ids = ids_for_block(block);
+            prt("Block %d", i + 1);
+            if (ids.n > 0) {
+                prt(": %s", s(ids.a[0]));
+            }
+            terpri();
+        }
+    }
+    flush();
 }
 /* #clear_display
 In clear_display() we clear the terminal by printing some escape codes (with prt and flush as usual).
