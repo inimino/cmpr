@@ -1269,6 +1269,7 @@ The agent confirms: we are definitionally committed (255) to a structure we don'
 Next step would be FIX mode - but that's deferred. First we needed to know HOW to be satisfied. Now we do.
 
 */
+
 /* #cmpr_checksum
 
 A --checksum would be useful, and it can simply take stdin and produce a hash in our standard format.

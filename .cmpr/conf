@@ -9,13 +9,13 @@ model: claude-3-5-sonnet-20240620
 debug: sa,inp
 
 language: C
+file: cmpr.c
 file: conf
 
 language: Markdown
 file: TODO
 
 language: C
-file: cmpr.c
 file: ops/nl2pl_rewrite.c
 file: ops/pl2nl_rewrite.c
 file: ops/nl2algo.c
@@ -34,12 +34,12 @@ file: prompts/summarize_block
 
 language: C
 file: spanio.c
+file: migration_tools.sh
 file: bootstrap.sh
 file: Makefile
 
 language: Markdown
 file: systemprompt
-file: DATALOSS.md
 file: README.md
 file: release-notes.md
 file: doc/FE.md
