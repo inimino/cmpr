@@ -17,6 +17,99 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 
 */
 
+/* #claude_experience_report_grep_feature_20251226
+
+Claude's Experience Copying --grep Feature from cmpr2 to cmpr1
+---
+
+The user requested copying the --grep feature from cmpr2 into cmpr1, starting with grep and then refining the argument handling system.
+
+**Task Overview**
+
+Copy cmpr2's --grep implementation into cmpr1:
+- Full POSIX Extended Regular Expression support
+- Block ID-based output (not indices)
+- Distinguish between NL and PL matches (#id vs #id:code)
+
+**What Was Accomplished**
+
+1. **Added --grep feature** (#grep_blocks block):
+   - POSIX ERE pattern matching using regex.h
+   - Iterates all blocks searching both NL and PL parts
+   - Outputs "#id" for NL matches, "#id:code" for PL-only matches
+   - Fixed critical null span handling bug (block 261 had no NL, caused segfault)
+   - Added sanity checks for negative lengths and null pointers
+
+2. **Replaced --find-block with --content-index**:
+   - Old: returned first match index (one result)
+   - New: returns all match indices (multiple results)
+   - Renamed to clarify it returns indices, not block IDs
+   - Uses literal string matching (not regex)
+   - Output: space-separated list of one-based indices
+
+3. **Added #block_from_arg helper**:
+   - Parses arguments flexibly: numeric index OR block ID (with/without '#')
+   - Example: "42", "#find_block", or "find_block" all work
+   - Used by --print-block, --print-comment, --print-code
+
+4. **Refactored #handle_args**:
+   - Extracted --run implementation to #handle_run block
+   - Extracted --agents implementation to #handle_agents block
+   - Updated NL documentation emphasizing delegation over inline code
+   - Kept main dispatcher simple and readable
+
+5. **Updated #argtable documentation**:
+   - Added grep behavior, implementation notes, help strings
+   - Added content-index documentation
+   - Removed find-block references
+   - Updated command syntax summary
+
+**Critical Debugging Session**
+
+The --grep feature segfaulted on block 261. Debug output revealed:
+```
+DEBUG: block 261 comment_len=0 code_len=1606753644
+```
+
+The problem: block_code_part() was returning a span with invalid .end when block_comment_part() returned nullspan. The fix required:
+- Check for empty() or NULL buf before using spans
+- Clamp negative lengths to 0
+- Only memcpy when length > 0 AND buf != NULL
+
+**Testing Results**
+
+All commands working correctly:
+- `dist/cmpr --grep 'void grep_blocks'` → `#grep_blocks`
+- `dist/cmpr --grep 'handle_args'` → `#handle_args #claude_experience_report_...`
+- `dist/cmpr --content-index 'agent'` → `2 3 7 11 13 14 15 17 18...`
+- `dist/cmpr --print-code '#grep_blocks'` → [shows implementation]
+- `dist/cmpr --print-comment '#find_block'` → [shows NL only]
+- `dist/cmpr --content-index 'xyzzy'` → [empty line, no matches]
+
+**Architecture Insights**
+
+The cmpr system maintains code through revisions (.cmpr/revs/) rather than direct file modification. When using --replace-code or --replace-comment, new revisions are written with timestamps. The build system (make) then regenerates the executable from current source state.
+
+Block structure matters: blocks without NL parts (pure code blocks) must be handled carefully. The block_comment_part() function can return nullspan(), and block_code_part() relies on it to set the starting position.
+
+**Process Notes**
+
+User corrected workflow inefficiencies:
+- "Don't use Task tool with Explore subagent" → Use cmpr navigation from root
+- "Don't use patch/sed/Edit" → Use cat + cmpr --replace-*
+- "Test thoroughly FIRST, THEN remove debug output" → Don't prematurely clean up
+
+The discipline of delegating complex logic to separate blocks (#handle_run, #handle_agents) keeps the main argument handler maintainable and follows the project's block-scoped architecture.
+
+**Conclusion**
+
+Successfully ported --grep feature with full POSIX ERE support. Renamed --find-block to --content-index with improved multi-match behavior. Refactored argument handling to follow project conventions. All tests passing.
+
+Block count modified: 5 new (#grep_blocks, #block_from_arg, #handle_run, #handle_agents, #content_index), 2 updated (#argtable, #handle_args)
+Status: Complete, ready for commit
+Experience: cmpr's revision-based architecture and block structure discipline create a reliable workflow once internalized
+
+*/
 /* #claude_experience_report_blocklist_20251226
 
 Experience Report: cmpr1 vs cmpr2 Blocklist Comparison
