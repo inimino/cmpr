@@ -2,6 +2,8 @@ rope rope_new(size_t);
 int rope_isnull(rope); // 1 if initialized, 0 otherwise
 void rope_release(rope*);
 span rope_alloc_atleast(rope*,size_t);
+void event_add_internal(span event_str, unsigned char strength);
+spans dir_listing(span dirname);
 Partial partial_sp_sp(span, void(*)(span,span));
 Partial partial_0_sp(void(*)(span));
 void apply_partial(Partial,span);
