@@ -3003,7 +3003,7 @@ We present the supported arguments and flags in a tabular form (as with langtabl
 
 Command syntax summary:
 
-cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment) <index>] [find-block <search>] [--count-blocks] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
+cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment) <index>] [--content-index <search>] [--grep <pattern>] [--count-blocks] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
 
 Command argument and flag table:
 
@@ -3017,7 +3017,8 @@ Command argument and flag table:
 --print-block <index>
 --print-comment <index>
 --print-code <index>
---find-block <search>
+--content-index <search>
+--grep <pattern>
 --count-blocks
 --run <block_id>
 --agents
@@ -3037,7 +3038,13 @@ print-conf:
   Print configuration settings and exit.
 
 help:
-  Print usage summary, help on command-line flags and exit.
+  Print usage summary with detailed help for each flag and exit.
+  First print the usage line with argv[0].
+  Then print a blank line.
+  Then print "Options:" followed by a blank line.
+  Then for each flag, print the flag name (left-aligned with 2 space indent) followed by the help string from section 4.
+  Use consistent formatting: "  --flag-name [<arg>]" on one line, then help text indented by 4 spaces on next line(s).
+  After printing all help text, flush() and exit(0).
 
 init:
   Initialize .cmpr/ in the current directory.
@@ -3047,6 +3054,22 @@ version:
 
 print-{block,comment,code}:
   Print the revelant part (or whole) of the block given by the one-based index.
+
+content-index:
+  Search all blocks for literal content string.
+  Returns a space-separated list of one-based indices of all blocks containing the search string.
+  Uses literal string matching (not regex).
+  Searches both NL (comment) and PL (code) parts of each block.
+  Output is space-separated indices on a single line.
+  Empty output (just newline) if no matches found.
+
+grep:
+  Search all blocks using POSIX Extended Regular Expression pattern.
+  Searches both NL (comment) and PL (code) parts of each block.
+  For blocks where only the PL matches, outputs "#id:code".
+  For blocks where the NL matches (with or without PL match), outputs "#id".
+  Output is a space-separated list of matching block IDs on a single line.
+  Empty output (just newline) if no matches found.
 
 run:
   Execute the code part (PL) of the block given by <block_id> as a shell script.
@@ -3088,8 +3111,10 @@ print-conf:
   we print the configuration (print_config()) and exit; we must have called parse_config (and set an alt conf file if any) prior
 
 help:
-  we just prt a short usage summary, flush(), and exit(0)
-  we include argv[0] as usual and summarize everything we support.
+  Print usage line with argv[0], then print detailed help for each flag as specified in section 2.
+  Format the output clearly with proper indentation.
+  Include all flags from section 1 in the help output.
+  After printing, call flush() and exit(0).
 
 init:
   we just call cmpr_init; we can't combine this with --conf, because --init creates the configuration file and we don't want to create configuration files in random places (the user can still move the file themselves and use --conf later if they are doing something exotic)
@@ -3101,10 +3126,23 @@ version:
   these three flags all are "action args"; if one is provided, any other flags will have no effect
   if more than one is given, any one of them may take effect (we don't care which), but not more than one
 
-print-{code,comment,block}, count-blocks, find-block:
+print-{code,comment,block}, count-blocks, content-index, grep:
   all of these require the code be loaded, which normally happens after we are called
   so if any of these flags are used we call get_code() first, then we call the appropriate function, then flush and exit successfully
-  we always use one-based indexes for anything user-visible, so we must add or subtract one when calling our functions (find_block, print_block, print_comment, print_code)
+  we always use one-based indexes for anything user-visible, so we must add or subtract one when calling our functions
+
+content-index:
+  calls content_index() with the search string
+  iterates all blocks using contains() for literal string matching
+  outputs space-separated list of one-based indices for all matching blocks
+  prints empty line if no matches
+
+grep:
+  calls grep_blocks() with the pattern
+  uses POSIX Extended Regular Expressions (regcomp with REG_EXTENDED)
+  compiles the regex, iterates all blocks, searches both comment and code parts
+  outputs space-separated list of matches on single line
+  handles regex compilation errors gracefully (print error message and exit with error code)
 
 run:
   requires code be loaded, so call get_code() first
@@ -3176,8 +3214,11 @@ version:
 print-block, -comment, -code:
   Print a complete block (or comment or code part) given by index.
 
-find-block:
-  Print index of first block matching search string by full-text search, or -1.
+content-index:
+  Print space-separated list of one-based indices of all blocks matching literal search string.
+
+grep:
+  Search all blocks using POSIX ERE pattern. Outputs space-separated list of matching block IDs ("#id" for NL matches, "#id:code" for PL-only matches). Note: Uses POSIX Extended Regular Expressions, not JavaScript regex. Use [0-9] instead of \d, [a-zA-Z0-9_] instead of \w, [[:space:]] instead of \s.
 
 count-blocks:
   Print number of blocks in project.
@@ -3222,9 +3263,9 @@ Our basic technique here is to set indicators (0- or 1-valued ints) in our arg-h
 These are used directly in if statements, like `if (ind_print_block) { ...`.
 Below the loop we then handle the necessaries in the correct order.
 We use "int ind_*" for these variables so they don't conflict with functions or anything else we already have.
-We also have an int "action_arg" which tracks whether one of the action flags has been set, char pointers for string arguments like conf filepath or find-block search or run block ID, and a block index which is shared by print-{block,comment,code}.
+We also have an int "action_arg" which tracks whether one of the action flags has been set, char pointers for string arguments like conf filepath or content-index search or run block ID.
 
-None of these flags can be combined: print-block, print-comment, print-code, find-block, count-blocks, run.
+None of these flags can be combined: print-block, print-comment, print-code, content-index, grep, count-blocks, run, agents.
 If more than one is set, we print an error message and exit.
 If any of these are set then we exit successfully, but if none of them is, then we will return from this function and enter our main loop.
 
@@ -3237,14 +3278,22 @@ Once we know the conf file to read from, we call parse_config before we do anyth
 If "--print-conf" is passed in, we print our configuration settings and exit.
 This is only OK to do once we have already called parse_config, so the configuration settings have already been read in from the file.
 
-If "--run <block_id>" is passed in, we extract the PL code from that block and execute it as a shell script.
-We call get_code() first to load all blocks.
-We use block_by_id() to find the block by its ID string (like "#root_agent_check").
-We extract the PL part using block_code_part().
-We write it to a temporary file in /tmp with a unique name.
-We make it executable with chmod +x using system().
-We execute it with system() and capture the exit code.
-We exit with that same exit code.
+For --print-block, --print-comment, --print-code: Use block_from_arg() to parse the argument which can be either a numeric index or a block ID (with or without '#' prefix).
+
+If "--content-index <search>" is passed in, we call content_index() which searches all blocks for the literal string and outputs a space-separated list of one-based indices of all matching blocks.
+
+If "--run <block_id>" is passed in, we delegate to handle_run() which extracts and executes the PL code from that block.
+
+If "--agents" is passed in, we delegate to handle_agents() which lists all registered agents.
+
+IMPORTANT: This block's PL implementation should be SIMPLE and delegate complex logic to separate blocks.
+Do NOT inline the full implementation of complex commands like --run or --agents here.
+Extract that logic into separate helper blocks (e.g., #handle_run, #handle_agents).
+This block should mainly:
+1. Parse arguments and set indicators
+2. Call get_code() if needed
+3. Dispatch to helper functions or separate implementation blocks
+4. Keep the main flow readable
 
 This function will always call parse_config, always before printing the config if "--print-conf" is used, and always after updating the config file if "--conf" is used.
 In particular, even if no alternate conf file was set, we still need to read the default conf file.
@@ -3254,11 +3303,12 @@ Manually maintained.
 */
 void handle_args(int argc, char **argv) {
     int ind_conf = 0, ind_print_conf = 0, ind_help = 0, ind_init = 0, ind_version = 0;
-    int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_find_block = 0, ind_count_blocks = 0, ind_run = 0, ind_agents = 0;
+    int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_content_index = 0, ind_grep = 0, ind_count_blocks = 0, ind_run = 0, ind_agents = 0;
     int ind_T0 = 0, ind_event = 0, ind_strength = 0, ind_memorize = 0, ind_recall = 0, ind_T = 0;
     int ind_map_error = 0, ind_test_block_map = 0;
     int action_arg = 0;
-    char *conf_filepath = NULL, *find_block_search = NULL, *run_block_id = NULL;
+    char *conf_filepath = NULL, *content_index_search = NULL, *grep_pattern = NULL, *run_block_id = NULL;
+    char *arg_print_block = NULL, *arg_print_comment = NULL, *arg_print_code = NULL;
     char *event_str = NULL, *map_error_line = NULL;
     int block_index = -1;
     int strength_value = 0;
@@ -3279,17 +3329,20 @@ void handle_args(int argc, char **argv) {
             ind_version = 1;
             action_arg = 1;
         } else if (strcmp(argv[i], "--print-block") == 0 && i + 1 < argc) {
-            block_index = atoi(argv[++i]) - 1;
+            arg_print_block = argv[++i];
             ind_print_block = 1;
         } else if (strcmp(argv[i], "--print-comment") == 0 && i + 1 < argc) {
-            block_index = atoi(argv[++i]) - 1;
+            arg_print_comment = argv[++i];
             ind_print_comment = 1;
         } else if (strcmp(argv[i], "--print-code") == 0 && i + 1 < argc) {
-            block_index = atoi(argv[++i]) - 1;
+            arg_print_code = argv[++i];
             ind_print_code = 1;
-        } else if (strcmp(argv[i], "--find-block") == 0 && i + 1 < argc) {
-            find_block_search = argv[++i];
-            ind_find_block = 1;
+        } else if (strcmp(argv[i], "--content-index") == 0 && i + 1 < argc) {
+            content_index_search = argv[++i];
+            ind_content_index = 1;
+        } else if (strcmp(argv[i], "--grep") == 0 && i + 1 < argc) {
+            grep_pattern = argv[++i];
+            ind_grep = 1;
         } else if (strcmp(argv[i], "--count-blocks") == 0) {
             ind_count_blocks = 1;
         } else if (strcmp(argv[i], "--run") == 0 && i + 1 < argc) {
@@ -3325,7 +3378,44 @@ void handle_args(int argc, char **argv) {
             flush_exit(1);
         }
         if (ind_help) {
-            prt("Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment) <index>] [find-block <search>] [--count-blocks] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n");
+            prt("Usage: %s [OPTIONS]\n\n", argv[0]);
+            prt("Options:\n\n");
+            prt("  --conf <filepath>\n");
+            prt("      Use alternate configuration file <filepath>.\n\n");
+            prt("  --print-conf\n");
+            prt("      Print the current configuration settings.\n\n");
+            prt("  --help\n");
+            prt("      Display this help message.\n\n");
+            prt("  --init\n");
+            prt("      Initialize a new directory for use with cmpr.\n\n");
+            prt("  --version\n");
+            prt("      Display the version number / build string.\n\n");
+            prt("  --print-block <index>\n");
+            prt("  --print-comment <index>\n");
+            prt("  --print-code <index>\n");
+            prt("      Print a complete block (or comment or code part) given by index.\n\n");
+            prt("  --content-index <search>\n");
+            prt("      Print space-separated list of one-based indices of all blocks matching literal search string.\n\n");
+            prt("  --grep <pattern>\n");
+            prt("      Search all blocks using POSIX ERE pattern. Outputs space-separated list of matching block IDs (\"#id\" for NL matches, \"#id:code\" for PL-only matches). Note: Uses POSIX Extended Regular Expressions, not JavaScript regex. Use [0-9] instead of \\d, [a-zA-Z0-9_] instead of \\w, [[:space:]] instead of \\s.\n\n");
+            prt("  --count-blocks\n");
+            prt("      Print number of blocks in project.\n\n");
+            prt("  --run <block_id>\n");
+            prt("      Execute the code part of block <block_id> as a shell script.\n\n");
+            prt("  --agents\n");
+            prt("      List all registered agents (blocks matching #agent_* pattern).\n\n");
+            prt("  --T0\n");
+            prt("      Initialize or reset the event state T to empty.\n\n");
+            prt("  --event <string>\n");
+            prt("      Add an event string to T (use with --strength).\n\n");
+            prt("  --strength <value>\n");
+            prt("      Specify strength value 0-255 for an event (use with --event).\n\n");
+            prt("  --memorize\n");
+            prt("      Save current event state T to persistent storage.\n\n");
+            prt("  --recall\n");
+            prt("      Load previously memorized event state T.\n\n");
+            prt("  --T\n");
+            prt("      Output current event state T as SN lines.\n\n");
             flush_exit(0);
         }
         if (ind_version) {
@@ -3346,7 +3436,6 @@ void handle_args(int argc, char **argv) {
             flush_exit(0);
         }
         
-        // Handle event-related flags
         if (ind_T0) {
             event_T0();
             flush_exit(0);
@@ -3409,116 +3498,51 @@ void handle_args(int argc, char **argv) {
             flush_exit(0);
         }
         
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_find_block + ind_count_blocks + ind_run + ind_agents > 1) {
-            prt("Error: --print-block, --print-comment, --print-code, --find-block, --count-blocks, --run, and --agents cannot be combined.\n");
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_content_index + ind_grep + ind_count_blocks + ind_run + ind_agents > 1) {
+            prt("Error: --print-block, --print-comment, --print-code, --content-index, --grep, --count-blocks, --run, and --agents cannot be combined.\n");
             flush_exit(1);
         }
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_find_block + ind_count_blocks + ind_run + ind_agents) {
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_content_index + ind_grep + ind_count_blocks + ind_run + ind_agents) {
           get_code();
         }
         if (ind_print_block) {
-            print_block(block_index);
+            int idx = block_from_arg(arg_print_block);
+            if (idx < 0 || idx >= state->blocks.n) {
+                prt("Block id or index not found: %s\n", arg_print_block);
+                flush_exit(1);
+            }
+            print_block(idx);
             flush_exit(0);
         } else if (ind_print_comment) {
-            print_comment(block_index);
+            int idx = block_from_arg(arg_print_comment);
+            if (idx < 0 || idx >= state->blocks.n) {
+                prt("Block id or index not found: %s\n", arg_print_comment);
+                flush_exit(1);
+            }
+            print_comment(idx);
             flush_exit(0);
         } else if (ind_print_code) {
-            print_code(block_index);
+            int idx = block_from_arg(arg_print_code);
+            if (idx < 0 || idx >= state->blocks.n) {
+                prt("Block id or index not found: %s\n", arg_print_code);
+                flush_exit(1);
+            }
+            print_code(idx);
             flush_exit(0);
-        } else if (ind_find_block) {
-            int index = find_block(S(find_block_search));
-            prt("%d\n", index + 1);
+        } else if (ind_content_index) {
+            content_index(S(content_index_search));
+            flush_exit(0);
+        } else if (ind_grep) {
+            grep_blocks(S(grep_pattern));
             flush_exit(0);
         } else if (ind_count_blocks) {
             int count = count_blocks();
             prt("%d\n", count);
             flush_exit(0);
         } else if (ind_agents) {
-            // List all registered agents (blocks ending with "_agent")
-            int agent_count = 0;
-            for (int i = 0; i < state->block_idx.n; i++) {
-                span id = state->block_idx.a[i];
-                
-                // Check if block ID ends with "_agent" (but not "_agent_*")
-                if (len(id) > 7) {
-                    // Must end with exactly "_agent"
-                    span suffix = {id.end - 6, id.end};
-                    if (span_eq(suffix, S("_agent"))) {
-                        // Print block ID
-                        wrs(id);
-                        
-                        // Get the block for this ID
-                        int block_index = block_for_span(id);
-                        if (block_index >= 0 && block_index < state->blocks.n) {
-                            span block = state->blocks.a[block_index];
-                            span comment = block_comment_part(block);
-                            
-                            if (!empty(comment)) {
-                                // Skip past the first line (which contains the block ID)
-                                span rest = comment;
-                                while (rest.buf < rest.end && *rest.buf != '\n') rest.buf++;
-                                if (rest.buf < rest.end) rest.buf++; // skip the newline
-                                
-                                // Skip empty lines
-                                while (rest.buf < rest.end && *rest.buf == '\n') rest.buf++;
-                                
-                                // Find the first non-empty line
-                                if (rest.buf < rest.end) {
-                                    u8 *line_end = rest.buf;
-                                    while (line_end < rest.end && *line_end != '\n') line_end++;
-                                    prt(" - ");
-                                    wrs(first_n(rest, line_end - rest.buf));
-                                }
-                            }
-                        }
-                        prt("\n");
-                        agent_count++;
-                    }
-                }
-            }
-            prt("\nTotal agents: %d\n", agent_count);
-            flush_exit(0);
+            handle_agents();
         } else if (ind_run) {
-            // Find the block by ID
-            int block_idx = block_by_id(S(run_block_id));
-            if (block_idx == -1) {
-                prt("Error: Block not found: %s\n", run_block_id);
-                flush_exit(1);
-            }
-            
-            // Get block span and extract PL code part
-            span block = state->blocks.a[block_idx];
-            span comment_part = block_comment_part(block);
-            span code_part = block;
-            code_part.buf = comment_part.end;
-            
-            if (empty(code_part)) {
-                prt("Error: Block %s has no code part\n", run_block_id);
-                flush_exit(1);
-            }
-            
-            // Write to temporary file
-            char tmp_path[256];
-            snprintf(tmp_path, sizeof(tmp_path), "/tmp/cmpr_run_%d.sh", getpid());
-            write_to_file_span(code_part, S(tmp_path), 1);
-            
-            // Make executable
-            char chmod_cmd[512];
-            snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod +x %s", tmp_path);
-            int chmod_result = system(chmod_cmd);
-            if (chmod_result != 0) {
-                prt("Error: failed to chmod %s\n", tmp_path);
-                flush_exit(WEXITSTATUS(chmod_result));
-            }
-            
-            // Execute and get exit code
-            int exit_code = system(tmp_path);
-            
-            // Clean up
-            unlink(tmp_path);
-            
-            // Exit with same code as the script
-            exit(WEXITSTATUS(exit_code));
+            handle_run(run_block_id);
         }
     }
 }
@@ -9163,20 +9187,267 @@ int count_blocks() {
     return state->blocks.n;
 }
 
-/* #find_block
+/* #content_index
 
-This is similar to the search implementation: we iterate over all the blocks, find the first block which contains the literal search text provided, and return the index of that block (or -1 if none matches).
+Search all blocks for literal content string and return indices of all matches.
+
+void content_index(span search_text);
+
+This function implements the --content-index CLI feature.
+Iterates over all blocks, finds ALL blocks which contain the literal search text provided, and prints their one-based indices as a space-separated list.
+
+Implementation:
+- Iterate through all blocks
+- Use contains() to check for literal string match
+- Print matching indices separated by spaces
+- Print newline at end (even if no matches)
 */
 
-int find_block(span search_text) {
+void content_index(span search_text) {
+    int first_match = 1;
     for (int i = 0; i < state->blocks.n; i++) {
         if (contains(state->blocks.a[i], search_text)) {
-            return i;
+            if (!first_match) {
+                prt(" ");
+            }
+            first_match = 0;
+            prt("%d", i + 1);  // one-based index
         }
     }
-    return -1;
+    prt("\n");
 }
+/* #block_from_arg
 
+int block_from_arg(char* arg);
+
+Parse a block argument which can be either:
+- A one-based numeric index (like "42")
+- A block ID with or without the '#' prefix (like "#find_block" or "find_block")
+
+Returns the zero-based block index, or -1 if not found.
+
+This function is used by command-line argument handlers to allow users to specify blocks flexibly.
+*/
+
+int block_from_arg(char* arg) {
+    span sarg = S(arg);
+    if (!empty(sarg) && isdigit(*sarg.buf)) {
+        int idx = parse_int(sarg);
+        return idx > 0 ? idx - 1 : -1;
+    }
+    if (!empty(sarg) && *sarg.buf == '#')
+        advance1(&sarg);
+    return block_by_id(sarg);
+}
+/* #handle_run
+
+void handle_run(char* run_block_id);
+
+Handle the --run command: execute the PL code from a block as a shell script.
+
+Implementation:
+- Find the block by ID using block_by_id()
+- Extract the PL part using block_code_part()
+- Write it to a temporary file /tmp/cmpr_run_<pid>.sh
+- Make it executable with chmod +x
+- Execute it with system() and capture exit code
+- Clean up the temp file
+- Exit with the script's exit code
+*/
+
+void handle_run(char* run_block_id) {
+    int block_idx = block_by_id(S(run_block_id));
+    if (block_idx == -1) {
+        prt("Error: Block not found: %s\n", run_block_id);
+        flush_exit(1);
+    }
+    span block = state->blocks.a[block_idx];
+    span comment_part = block_comment_part(block);
+    span code_part = block;
+    code_part.buf = comment_part.end;
+    if (empty(code_part)) {
+        prt("Error: Block %s has no code part\n", run_block_id);
+        flush_exit(1);
+    }
+    char tmp_path[256];
+    snprintf(tmp_path, sizeof(tmp_path), "/tmp/cmpr_run_%d.sh", getpid());
+    write_to_file_span(code_part, S(tmp_path), 1);
+    char chmod_cmd[512];
+    snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod +x %s", tmp_path);
+    int chmod_result = system(chmod_cmd);
+    if (chmod_result != 0) {
+        prt("Error: failed to chmod %s\n", tmp_path);
+        flush_exit(WEXITSTATUS(chmod_result));
+    }
+    int exit_code = system(tmp_path);
+    unlink(tmp_path);
+    exit(WEXITSTATUS(exit_code));
+}
+/* #handle_agents
+
+void handle_agents();
+
+Handle the --agents command: list all registered agents in the project.
+
+An agent is any block with ID ending with "_agent" (but not "_agent_*").
+For each agent found:
+- Print the block ID
+- Extract and print the first line of the NL comment as description
+
+Implementation:
+- Iterate through state->block_idx
+- Check if ID ends with exactly "_agent"
+- Print block ID and first description line
+- Print total count of agents found
+*/
+
+void handle_agents() {
+    int agent_count = 0;
+    for (int i = 0; i < state->block_idx.n; i++) {
+        span id = state->block_idx.a[i];
+        if (len(id) > 7) {
+            span suffix = {id.end - 6, id.end};
+            if (span_eq(suffix, S("_agent"))) {
+                wrs(id);
+                int block_index = block_for_span(id);
+                if (block_index >= 0 && block_index < state->blocks.n) {
+                    span block = state->blocks.a[block_index];
+                    span comment = block_comment_part(block);
+                    if (!empty(comment)) {
+                        span rest = comment;
+                        while (rest.buf < rest.end && *rest.buf != '\n') rest.buf++;
+                        if (rest.buf < rest.end) rest.buf++;
+                        while (rest.buf < rest.end && *rest.buf == '\n') rest.buf++;
+                        if (rest.buf < rest.end) {
+                            u8 *line_end = rest.buf;
+                            while (line_end < rest.end && *line_end != '\n') line_end++;
+                            prt(" - ");
+                            wrs(first_n(rest, line_end - rest.buf));
+                        }
+                    }
+                }
+                prt("\n");
+                agent_count++;
+            }
+        }
+    }
+    prt("\nTotal agents: %d\n", agent_count);
+    flush_exit(0);
+}
+/* #grep_blocks
+
+Search all blocks using POSIX Extended Regular Expression pattern.
+
+void grep_blocks(span pattern);
+
+This function implements the --grep CLI feature, matching the behavior of the frontend grep shortcommand but using POSIX ERE instead of JavaScript regex.
+
+For each block in the project:
+- Extract both the NL (comment) and PL (code) parts
+- Test the regex pattern against both parts
+- If the NL matches (regardless of whether PL matches), output "#id"
+- If only the PL matches (NL doesn't match), output "#id:code"
+- Output all matches as a space-separated list on a single line
+
+Uses regex.h with REG_EXTENDED flag for POSIX Extended Regular Expression support.
+If regex compilation fails, print an error message to stderr and exit with code 1.
+
+Implementation:
+- Compile the regex pattern with regcomp(regex, pattern, REG_EXTENDED)
+- For each block, use split_block_comment_code() to separate NL and PL
+- Use regexec() to test pattern against both parts
+- Track whether we've printed any matches (for space separation)
+- Print newline at the end (even if no matches)
+- Clean up with regfree()
+*/
+
+void grep_blocks(span pattern) {
+    regex_t regex;
+    char pattern_buf[4096];
+    
+    if (len(pattern) >= (int)sizeof(pattern_buf)) {
+        prt("Error: pattern too long\n");
+        exit(1);
+    }
+    memcpy(pattern_buf, pattern.buf, len(pattern));
+    pattern_buf[len(pattern)] = '\0';
+    
+    int ret = regcomp(&regex, pattern_buf, REG_EXTENDED);
+    if (ret != 0) {
+        char errbuf[256];
+        regerror(ret, &regex, errbuf, sizeof(errbuf));
+        prt("Error: invalid regex: %s\n", errbuf);
+        exit(1);
+    }
+    
+    int first_match = 1;
+    
+    for (int i = 0; i < state->blocks.n; i++) {
+        span block = state->blocks.a[i];
+        span comment = block_comment_part(block);
+        span code = block_code_part(block);
+        
+        // Handle nullspan returns
+        if (empty(comment) || comment.buf == NULL) {
+            comment = nullspan();
+        }
+        if (empty(code) || code.buf == NULL) {
+            code = nullspan();
+        }
+        
+        int comment_len = len(comment);
+        int code_len = len(code);
+        
+        // Sanity check lengths
+        if (comment_len < 0) comment_len = 0;
+        if (code_len < 0) code_len = 0;
+        
+        char *comment_str = (char *)malloc(comment_len + 1);
+        char *code_str = (char *)malloc(code_len + 1);
+        
+        if (comment_str == NULL || code_str == NULL) {
+            prt("Error: out of memory\n");
+            regfree(&regex);
+            exit(1);
+        }
+        
+        if (comment_len > 0 && comment.buf != NULL) {
+            memcpy(comment_str, comment.buf, comment_len);
+        }
+        comment_str[comment_len] = '\0';
+        
+        if (code_len > 0 && code.buf != NULL) {
+            memcpy(code_str, code.buf, code_len);
+        }
+        code_str[code_len] = '\0';
+        
+        int comment_matches = (regexec(&regex, comment_str, 0, NULL, 0) == 0);
+        int code_matches = (regexec(&regex, code_str, 0, NULL, 0) == 0);
+        
+        free(comment_str);
+        free(code_str);
+        
+        if (comment_matches || code_matches) {
+            if (!first_match) {
+                prt(" ");
+            }
+            first_match = 0;
+            
+            span id = id_for_block(block);
+            if (len(id) > 0) {
+                if (comment_matches) {
+                    wrs(id);
+                } else {
+                    wrs(id);
+                    prt(":code");
+                }
+            }
+        }
+    }
+    
+    prt("\n");
+    regfree(&regex);
+}
 /* #block_by_id
 
 int block_by_id(span id_no_hash);

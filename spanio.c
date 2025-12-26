@@ -230,6 +230,7 @@ If you want the actual string value, you can use json_un_s, which returns a new 
 #include <time.h>
 #include <math.h>
 #include <stddef.h>
+#include <regex.h>
 /* convenient debugging macros */
 #define dbgd(x) prt(#x ": %d\n", x),flush()
 #define dbgx(x) prt(#x ": %x\n", x),flush()
