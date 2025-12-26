@@ -1789,24 +1789,42 @@ void event_print_T()
 Manually maintained.
 
 */
-void event_load_T() {
-    span t_file = S(".cmpr/T");
-    span content = read_whole_file(t_file);
-    if (empty(content)) return; // File doesn't exist or is empty
-    
-    // Parse line by line
+span read_whole_file(span filename) {
+    if (!readable_file(filename)) return (span){0};
+    return read_file_into_cmp(filename);
+}
+
+span head_line(span* content) {
+    if (empty(*content)) return (span){0};
+
+    span line = *content;
+    u8 *ptr = line.buf;
+    while (ptr < line.end && *ptr != '\n') ptr++;
+    line.end = ptr;
+
+    if (ptr < content->end) ptr++;
+    content->buf = ptr;
+    return line;
+}
+
+void event_add_internal(span event_str, unsigned char strength);
+spans dir_listing(span dirname);
+
+void event_parse_content(span content) {
+    state->events.n = 0;
+
     while (!empty(content)) {
         span line = head_line(&content);
         if (empty(line)) continue;
-        
+
         // Skip leading whitespace
         while (!empty(line) && (*line.buf == ' ' || *line.buf == '\t')) line.buf++;
         if (empty(line)) continue;
-        
+
         // Expect format: "event_string" strength.
         if (*line.buf != '"') continue;
         line.buf++; // Skip opening quote
-        
+
         // Find closing quote
         u8 *end = line.buf;
         while (end < line.end && *end != '"') {
@@ -1814,36 +1832,45 @@ void event_load_T() {
             end++;
         }
         if (end >= line.end) continue; // No closing quote found
-        
+
         span event_str = (span){line.buf, end};
         line.buf = end + 1; // Skip closing quote
-        
+
         // Skip whitespace
         while (!empty(line) && (*line.buf == ' ' || *line.buf == '\t')) line.buf++;
-        
+
         // Parse strength
         int strength = 0;
         while (!empty(line) && *line.buf >= '0' && *line.buf <= '9') {
             strength = strength * 10 + (*line.buf - '0');
             line.buf++;
         }
-        
+
         event_add_internal(event_str, (unsigned char)strength);
     }
 }
 
+void event_load_T() {
+    span t_file = prs("%.*s/T", len(state->cmprdir), state->cmprdir.buf);
+    span content = read_whole_file(t_file);
+    if (empty(content)) return; // File doesn't exist or is empty
+
+    event_parse_content(content);
+}
+
 void event_save_T() {
+    span t_file = prs("%.*s/T", len(state->cmprdir), state->cmprdir.buf);
     span saved_cmp = cmp;
     cmp.buf = cmp.end; // Start fresh in cmp space
-    
+
     for (size_t i = 0; i < state->events.n; i++) {
         prt("\"");
         wrs_esc(state->events.a[i].event_str);
         prt("\" %d.\n", state->events.a[i].strength);
     }
-    
+
     span content = (span){saved_cmp.end, cmp.end};
-    write_to_file(S(".cmpr/T"), content);
+    write_to_file_span(content, t_file, 1);
     cmp = saved_cmp;
 }
 
@@ -1874,6 +1901,9 @@ void event_add(span event_str, unsigned char strength) {
 }
 
 void event_memorize() {
+    span events_dir = prs("%.*s/events", len(state->cmprdir), state->cmprdir.buf);
+    mkdir(s(events_dir), 0777);
+
     // Get current timestamp
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
@@ -1883,7 +1913,8 @@ void event_memorize() {
     span saved_cmp = cmp;
     cmp.buf = cmp.end;
     
-    prt(".cmpr/events/%04d%02d%02d-%02d%02d%02d",
+    prt("%.*s/%04d%02d%02d-%02d%02d%02d",
+        len(events_dir), events_dir.buf,
         tm_info->tm_year + 1900,
         tm_info->tm_mon + 1,
         tm_info->tm_mday,
@@ -1902,7 +1933,7 @@ void event_memorize() {
     }
     
     span content = (span){filename.end, cmp.end};
-    write_to_file(filename, content);
+    write_to_file_span(content, filename, 0);
     cmp = saved_cmp;
 }
 
@@ -1913,6 +1944,28 @@ void event_print_T() {
         prt("\" %d.\n", state->events.a[i].strength);
     }
     flush();
+}
+
+void event_recall() {
+    span events_dir = prs("%.*s/events", len(state->cmprdir), state->cmprdir.buf);
+    spans files = dir_listing(events_dir);
+
+    if (files.n == 0) {
+        prt("No memorized events found.\n");
+        flush_exit(1);
+    }
+
+    span latest = files.a[files.n - 1];
+    span path = prs("%.*s/%.*s", len(events_dir), events_dir.buf, len(latest), latest.buf);
+    span content = read_whole_file(path);
+
+    if (empty(content)) {
+        prt("Failed to read memorized events.\n");
+        flush_exit(1);
+    }
+
+    event_parse_content(content);
+    event_save_T();
 }
 /* #network_ret network return type, used by LLM API functions
 
@@ -3358,7 +3411,11 @@ void handle_args(int argc, char **argv) {
             // Make executable
             char chmod_cmd[512];
             snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod +x %s", tmp_path);
-            system(chmod_cmd);
+            int chmod_result = system(chmod_cmd);
+            if (chmod_result != 0) {
+                prt("Error: failed to chmod %s\n", tmp_path);
+                flush_exit(WEXITSTATUS(chmod_result));
+            }
             
             // Execute and get exit code
             int exit_code = system(tmp_path);
@@ -7381,13 +7438,14 @@ outputs/
 
 void check_dirs() {
     span dirs[] = {
-        S("revs/"), 
-        S("tmp/"), 
-        S("api_calls/"), 
-        S("cache/"), 
-        S("cache/v8/"), 
+        S("revs/"),
+        S("tmp/"),
+        S("api_calls/"),
+        S("cache/"),
+        S("cache/v8/"),
         S("cache/v8/revs/"),
-        S("outputs/")
+        S("outputs/"),
+        S("events/")
     };
     
     char buffer[1024];
