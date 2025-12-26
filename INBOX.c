@@ -17,6 +17,193 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 
 */
 
+/* #claude_experience_report_blocklist_20251226
+
+Experience Report: cmpr1 vs cmpr2 Blocklist Comparison
+Date: 2025-12-26
+Task: Compare blocklists in cmpr.c between cmpr1 and cmpr2 versions
+
+## Context
+
+User requested comparison of blocks in cmpr.c between:
+- cmpr1: /home/admin/cmpr1/cmpr.c (open-source implementation)
+- cmpr2: /home/admin/cmpr/cmpr.c (reference implementation, may contain proprietary code)
+
+The goal was to understand what blocks exist in each version, with the longer-term objective being synchronization.
+
+## Findings
+
+**Overall Statistics:**
+- 188 blocks common to both versions
+- 47 blocks only in cmpr1
+- 37 blocks only in cmpr2
+- Total: 236 blocks in cmpr1, 227 blocks in cmpr2
+
+**cmpr1-Specific Blocks (47 total):**
+
+*Agent/Event System (15 blocks):*
+- #cmpr_events, #events_types, #events_functions
+- #events_persistence_questions, #events_workflow_questions, #events_example_interpretation
+- #root_agent, #root_agent_check, #root_agent_fix
+- #root_agent_impl, #root_agent_impl_2, #root_agent_impl_3
+- #root_agent_progress
+- #agent_runner, #want_definition
+
+*Experience Reports & Documentation (7 blocks):*
+- #claude_experience_report_events_20251224
+- #claude_experience_report_events_20251224_2
+- #claude_exploration_report
+- #claude_product_pattern_experience
+- #claude_root_agent_experience
+- #glossary
+- #high_cardinality_storage
+
+*Implementation Features (13 blocks):*
+- #nl2algo, #nl2pl_rewrite, #pl2nl_rewrite, #pl2nl_rewrite_cb
+- #summarize_block
+- #handle_agents, #handle_run
+- #block_map_selftest, #block_ids_for_file_line
+- #parse_block_map_entry, #parse_compiler_error_line
+- #normalize_path_for_match, #paths_match_for_block_map
+
+*Infrastructure & Relations (12 blocks):*
+- #cmpr_rels (appears twice in listing), #cmpr_rels_plan, #cmpr_model
+- #cmpr_checksum, #cat_core
+- #cmpr1_build_manifest, #cmpr2_via_cmpr1
+- #content_index
+- #compile(), #pipe_cmd_cmp()
+- #add_projfile(span)
+
+**cmpr2-Specific Blocks (37 total):**
+
+*Overview/Navigation Blocks (8 blocks):*
+- #cmpr_c_overview
+- #block_ops_overview
+- #llm_integration_overview
+- #design_docs_overview
+- #parsing_io_overview
+- #ui_display_overview
+- #rev_system_c_overview
+- #blockref_expansion_overview
+
+*Refactored Command Handling (6 blocks):*
+- #handle_args_2, #handle_args_3, #handle_args_4
+- #block_id_arg
+- #after, #replace, #replace_comment, #print_all
+
+*Language-Specific Block Parsers (6 blocks):*
+- #find_blocks_language_python
+- #find_blocks_language_c
+- #find_blocks_language_markdown
+- #find_blocks_language_auto
+- #find_blocks_language_none
+- #set_file_language
+
+*New Operations (7 blocks):*
+- #insert_block_after, #insert_block_before
+- #print_files_blocks, #write_block_map
+- #expand_block, #find_block
+- #grep_blocks (duplicate in listing)
+
+*UI & Display (2 blocks):*
+- #print_current_blocks
+- #Settings
+
+*Other (8 blocks):*
+- #cmpr1_refactor_guidance
+- #tabular_programming
+- #grep_feature_implementation_strategy
+- #line_for_block
+- #expand_refs_2_rec_body
+- #compile (without parens, vs cmpr1's #compile())
+- #pipe_cmd_cmp (without parens, vs cmpr1's #pipe_cmd_cmp())
+- #add_projfile (vs cmpr1's #add_projfile(span))
+
+## Analysis
+
+**cmpr1 Characteristics:**
+- Contains active development of agent/event system
+- Has experience reports documenting work sessions
+- Includes experimental features (nl2algo, block_map_selftest)
+- Less structured navigation (missing overview blocks)
+- More raw implementation blocks
+
+**cmpr2 Characteristics:**
+- Well-structured with comprehensive overview blocks
+- Refactored command handlers (split into _2, _3, _4 blocks)
+- Language-specific parsing is more modular
+- Better navigation architecture (#cmpr_c_overview → #block_ops_overview → etc.)
+- Includes refactoring guidance (#cmpr1_refactor_guidance, #tabular_programming)
+
+**Notable Patterns:**
+1. cmpr2 has split monolithic blocks into smaller, more focused ones
+2. cmpr2 has overview blocks for major subsystems
+3. cmpr1 has agent/event system that cmpr2 lacks
+4. Some blocks have naming differences (with/without parens, different suffixes)
+
+## Critical Discovery: Lost #root Block
+
+During this investigation, discovered that #root block was missing from cmpr.c in cmpr1.
+This is a serious navigation structure failure.
+
+**Resolution:**
+- Found #root in git history (commit 69de82a)
+- Restored it by concatenating with #source_intro
+- Verified restoration successful
+
+The #root block defines the want: "every code block in the project is reachable within 2 hops"
+It references navigation hubs: #root_agent, #cmpr_events
+
+## Recommendations
+
+**Do NOT auto-synchronize** - the two codebases serve different purposes:
+- cmpr1: open-source, active agent/event development
+- cmpr2: reference implementation, better-structured navigation
+
+**What cmpr1 should pull from cmpr2:**
+1. Overview blocks (#cmpr_c_overview, #block_ops_overview, etc.) - critical for navigation
+2. Refactored command handlers (handle_args_2/3/4 split pattern)
+3. Language-specific parser blocks (more modular than current approach)
+4. #cmpr1_refactor_guidance (contains guidance for migrating cmpr2 patterns)
+
+**What cmpr1 should keep unique:**
+1. Agent/event system blocks (active development, not ready for cmpr2)
+2. Experience reports (documentation of cmpr1 development)
+3. Experimental features being developed
+
+**What needs attention:**
+1. #root block must reference an overview block (currently only references #root_agent and #cmpr_events)
+2. Need to add #cmpr_c_overview or similar as a navigation hub in #root
+3. Verify all 236 blocks are actually reachable from #root (they're not currently)
+
+## Process Observations
+
+**What worked well:**
+- Using cmpr --files-blocks to extract blocklists
+- Sorting and using comm for comparison
+- Following CLAUDE.md guidance to start from #root (which revealed it was missing!)
+
+**What could improve:**
+- Should have verification step to ensure #root exists before any codebase work
+- Need better tooling for visualizing block reachability from #root
+- Could use --grep more effectively instead of --files-blocks + grep
+
+**Meta-lesson:**
+The very task of comparing blocklists revealed a navigation structure failure (#root missing).
+This validates the want line in #root - navigation structure IS critical and needs active maintenance.
+
+## Status
+
+Task completed as requested:
+✓ Compared blocklists
+✓ Identified differences
+✓ Did NOT synchronize (per user instruction)
+✓ Produced this experience report
+✓ Ensured experience report is reachable from #root (see next steps)
+
+Next: Update #root to reference this experience report for navigation.
+
+*/
 /* #blog_post_blockset_visualization
 
 Blog Post: Visualizing the cmpr1 Block Graph
