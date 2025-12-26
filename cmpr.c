@@ -2087,16 +2087,6 @@ Below these we have a list that we used to manually maintain; these should gradu
 
 #include "fdecls.h"
 
- /* #op_includes @optable
-We will generate these includes from optable later.
-Currently, this wouldn't work, since not all our ops actually have corresponding ops/ files.
-*/
-#include "ops/nl2pl_rewrite.c"
-#include "ops/pl2nl_rewrite.c"
-#include "ops/nl2algo.c"
-#include "ops/summarize_block.c"
-#include "ops/agreement_to_pl_diff.c"
-
  /*
 // search
 void start_search();
@@ -10766,5 +10756,178 @@ llm_message_handler simple_message_handler(void(*f)(span));
 
 llm_message_handler simple_message_handler(void(*f)(span)) {
     return partial_0_sp(f);
+}
+
+/* #nl2pl_rewrite @prompt_palette_design @optable @simple_message_handler
+
+void nl2pl_rewrite();
+
+Implementation:
+We make a span called op with the value "nl2pl_rewrite" (the shortname of this op).
+
+We call a function to get the prompt template matching op.
+
+We call another function to get the template variables related to the current block.
+
+We expand the template with the variables.
+
+We send the expanded prompt to the LLM with replace_block_code_part as the handler.
+*/
+
+void nl2pl_rewrite() {
+    span op = S("nl2pl_rewrite");
+    span template = get_prompt_template(op);
+    spans vars = current_block_template_vars();
+    span expanded_prompt = expand_template(template, vars);
+    send_to_llm(expanded_prompt, simple_message_handler(replace_block_code_part));
+}
+
+/* #pl2nl_rewrite @prompt_palette_design @optable @simple_message_handler
+
+Function:
+void pl2nl_rewrite();
+
+Purpose:
+The dual of nl2pl_rewrite, takes an existing PL part and context, and generates an NL part intended to effectively recreate it in its essential aspects.
+
+This may be used when adapting an existing codebase.
+
+@- First, we will typically take a chunk off the front of a file, making a new block.
+@- TODO: add a palette op for this also (modify a block that's too big, e.g. is all or most of a C file that doesn't have block comments, by adding a block comment after some prefix of it.)
+@- We will give the block an id derived from the code (such as a function name or struct name).
+
+However, we will often have to manually add some context to the block so that we get good code.
+
+Implementation:
+We call a function to get the prompt template matching the shortname of this op.
+
+We call another function to get the template variables related to the current block.
+
+We expand the template with the variables.
+
+Finally we call send_to_llm with pl2nl_rewrite_cb as the #simple_message_handler.
+*/
+
+void pl2nl_rewrite() {
+    span template = get_prompt_template(S("pl2nl_rewrite"));
+    spans vars = current_block_template_vars();
+    span expanded = expand_template(template, vars);
+    send_to_llm(expanded, simple_message_handler(pl2nl_rewrite_cb));
+}
+
+/* #pl2nl_rewrite_cb @prt_usage @blocks
+
+void pl2nl_rewrite_cb(span message);
+
+Here we handle the message returned from the LLM.
+
+This is just the text of the message (the next message in the conversation), not the full JSON object that the LLM API returns.
+
+Another name for this function could be replace_nl_part_maintaining_context.
+
+We call a function to strip the markdown codeblock, getting the block comment that the LLM returned.
+
+We put the current block contents in a variable for convenience.
+We get the code part into a span for later use.
+
+Then we get the first line of the current contents of the block (using next_line).
+We want to keep this line the same, as it contains the block id and context reference which are expanded before the LLM sees them, so the LLM will not have preserved them.
+
+We throw away the first line of the comment block returned by the LLM (also using next_line, this time for its side effect, not its return value).
+We put the first line of the current block above the second and following lines of the comment block returned by the llm together using prs.
+(They will need a newline between them, as next_line does not return the newline.)
+
+We also get the code part of the current block.
+This will not include any leading whitespace.
+We test whether the assembled comment part so far ends with "\n\n" or with "\n" or with no newline.
+We want two newlines before the code part, so we assemble the comment part, with one or two newlines if necessary, then the code part, again using prs.
+
+Finally we call replace_block with this complete output, which will replace the contents of the current block, and save a rev, etc.
+*/
+
+void pl2nl_rewrite_cb(span message) {
+    span received_comment = strip_markdown_codeblock(message);
+    span current_block = state->blocks.a[state->curr_block_idx];
+    span current_code = block_code_part(current_block);
+
+    span first_line = next_line(&current_block);
+    next_line(&received_comment); // Discard the first line of received comment
+
+    span new_comment_part = prs("%.*s\n%.*s", len(first_line), first_line.buf, len(received_comment), received_comment.buf);
+    span complete_comment;
+
+    if (ends_with(new_comment_part, S("\n\n"))) {
+        complete_comment = new_comment_part;
+    } else if (ends_with(new_comment_part, S("\n"))) {
+        complete_comment = prs("%.*s\n", len(new_comment_part), new_comment_part.buf);
+    } else {
+        complete_comment = prs("%.*s\n\n", len(new_comment_part), new_comment_part.buf);
+    }
+
+    span final_content = prs("%.*s%.*s", len(complete_comment), complete_comment.buf, len(current_code), current_code.buf);
+
+    replace_block(final_content);
+}
+
+/* #nl2algo @pl2nl_rewrite:code
+
+void nl2algo();
+
+Here we copy the #pl2nl_rewrite, except that, of course, the name of the op here is "nl2algo".
+
+@- Actually, we want this to create a block, after the current block, or something like that.
+@- We'll come back to that part.
+
+@- An interesting update here is that we later changed pl2nl_rewrite to have its own callback that does something different.
+@- So, this comment is now quite inaccurate. It would be better to copy paste the NL code in a case like this rather than refer to it.
+*/
+void nl2algo() {
+    span op = S("nl2algo");
+    span template = get_prompt_template(op);
+    spans vars = current_block_template_vars();
+    span expanded_template = expand_template(template, vars);
+    llm_message_handler handler = make_output_saver(op);
+    send_to_llm(expanded_template, handler);
+}
+
+/* #agreement_to_pl_diff @agreement_to_nl_diff:code
+
+void agreement_to_pl_diff();
+
+The implementation is identical to agreement_to_nl_diff(), above, but with the obvious substitution s/agreement_to_nl_diff/agreement_to_pl_diff/ everywhere.
+*/
+
+void agreement_to_pl_diff() {
+    span prompt_template = get_prompt_template(S("agreement_to_pl_diff"));
+    spans template_vars = current_block_template_vars();
+
+    output_template_var(&template_vars, S("agreement"));
+
+    span expanded_template = expand_template(prompt_template, template_vars);
+    wrs(expanded_template);
+    flush();
+    getch();
+
+    llm_message_handler cb = make_output_saver(S("agreement_to_pl_diff"));
+    send_to_llm(expanded_template, cb);
+}
+
+/* #summarize_block @nl2algo:code
+
+void summarize_block();
+
+This implements the op summarize_block.
+
+Apart from the op name, we follow nl2algo(), above.
+
+@- This is becoming a kind of standard op shape; maybe we can abstract it.
+*/
+void summarize_block() {
+    span op = S("summarize_block");
+    span template = get_prompt_template(op);
+    spans vars = current_block_template_vars();
+    span expanded_template = expand_template(template, vars);
+    llm_message_handler handler = make_output_saver(op);
+    send_to_llm(expanded_template, handler);
 }
 
