@@ -13,11 +13,22 @@ If you start from #root, which is the next block, you can reach any block that h
 
 */
 
-/* #glossary
+/* #root
 
-cmpr agent: an agent consists of a single function which combines test and any possible fix functionality.
+"We want this block to contain a list of blocks, such that each block contains another list of at least 2 and at most 16 other blocks, such that every code block in the project is reachable within 2 hops." 255.
+
+We can call this an example of a want line; it states something that we want to be the case, and it is the dual of an agent, which exists to maintain a want, including by verifying that the thing is already the way we want it to be.
+See #root_agent for more.
+
+## Navigation Hubs
+
+The following blocks serve as navigation hubs to reach different parts of the codebase:
+
+- #root_agent - The agent system for maintaining the root navigation structure
+- #cmpr_events - The events/T/E/S system for temporal reasoning
 
 */
+
 /* #claude_exploration_report
 
 Claude's First Encounter with cmpr
@@ -551,21 +562,12 @@ The event spaces live in .cmpr/ES/ with sub-structure TBD.
 The events live in .cmpr/event_names which is a file of newline-separated events.
 
 */
-/* #root
+/* #glossary
 
-"We want this block to contain a list of blocks, such that each block contains another list of at least 2 and at most 16 other blocks, such that every code block in the project is reachable within 2 hops." 255.
-
-We can call this an example of a want line; it states something that we want to be the case, and it is the dual of an agent, which exists to maintain a want, including by verifying that the thing is already the way we want it to be.
-See #root_agent for more.
-
-## Navigation Hubs
-
-The following blocks serve as navigation hubs to reach different parts of the codebase:
-
-- #root_agent - The agent system for maintaining the root navigation structure
-- #cmpr_events - The events/T/E/S system for temporal reasoning
+cmpr agent: an agent consists of a single function which combines test and any possible fix functionality.
 
 */
+
 /* #high_cardinality_storage
 
 We have some set $X$ of event spaces $S_i$ where $i \in \{ 1, \ldots, N \}$.
@@ -3001,7 +3003,7 @@ We present the supported arguments and flags in a tabular form (as with langtabl
 
 Command syntax summary:
 
-cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment) <index>] [find-block <search>] [--count-blocks] [--run <block_id>] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
+cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment) <index>] [find-block <search>] [--count-blocks] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
 
 Command argument and flag table:
 
@@ -3018,6 +3020,7 @@ Command argument and flag table:
 --find-block <search>
 --count-blocks
 --run <block_id>
+--agents
 --T0
 --event <string>
 --strength <value>
@@ -3049,6 +3052,12 @@ run:
   Execute the code part (PL) of the block given by <block_id> as a shell script.
   The block's PL must contain executable shell code.
   The script runs with the project directory as working directory.
+
+agents:
+  List all registered agents in the project.
+  An agent is any block with ID matching the pattern #agent_*.
+  For each agent found, print the block ID and extract the first line of the NL comment as a description.
+  Requires code to be loaded.
 
 T0:
   Initialize or reset the event state T to empty.
@@ -3104,6 +3113,15 @@ run:
   make the file executable (chmod +x)
   execute it using system() or similar
   exit with the script's exit code
+
+agents:
+  requires code be loaded, so call get_code() first
+  iterate through all blocks looking for IDs matching "#agent_*" pattern
+  for each matching block:
+    - print the block ID
+    - extract and print the first line of the NL comment as description
+  print count of agents found
+  exit successfully
 
 T0:
   initialize the event state T to empty
@@ -3166,6 +3184,9 @@ count-blocks:
 
 run:
   Execute the code part of block <block_id> as a shell script.
+
+agents:
+  List all registered agents (blocks matching #agent_* pattern).
 
 T0:
   Initialize or reset the event state T to empty.
@@ -3233,7 +3254,7 @@ Manually maintained.
 */
 void handle_args(int argc, char **argv) {
     int ind_conf = 0, ind_print_conf = 0, ind_help = 0, ind_init = 0, ind_version = 0;
-    int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_find_block = 0, ind_count_blocks = 0, ind_run = 0;
+    int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_find_block = 0, ind_count_blocks = 0, ind_run = 0, ind_agents = 0;
     int ind_T0 = 0, ind_event = 0, ind_strength = 0, ind_memorize = 0, ind_recall = 0, ind_T = 0;
     int action_arg = 0;
     char *conf_filepath = NULL, *find_block_search = NULL, *run_block_id = NULL;
@@ -3273,6 +3294,8 @@ void handle_args(int argc, char **argv) {
         } else if (strcmp(argv[i], "--run") == 0 && i + 1 < argc) {
             run_block_id = argv[++i];
             ind_run = 1;
+        } else if (strcmp(argv[i], "--agents") == 0) {
+            ind_agents = 1;
         } else if (strcmp(argv[i], "--T0") == 0) {
             ind_T0 = 1;
         } else if (strcmp(argv[i], "--event") == 0 && i + 1 < argc) {
@@ -3296,7 +3319,7 @@ void handle_args(int argc, char **argv) {
             flush_exit(1);
         }
         if (ind_help) {
-            prt("Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment) <index>] [find-block <search>] [--count-blocks] [--run <block_id>] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n");
+            prt("Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment) <index>] [find-block <search>] [--count-blocks] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n");
             flush_exit(0);
         }
         if (ind_version) {
@@ -3331,12 +3354,8 @@ void handle_args(int argc, char **argv) {
                 prt("Error: --strength must be between 0 and 255\n");
                 flush_exit(1);
             }
-            event_add(S(event_str), (unsigned char)strength_value);
+            event_add(S(event_str), strength_value);
             flush_exit(0);
-        }
-        if (ind_strength && !ind_event) {
-            prt("Error: --strength can only be used with --event\n");
-            flush_exit(1);
         }
         if (ind_memorize) {
             event_memorize();
@@ -3351,11 +3370,11 @@ void handle_args(int argc, char **argv) {
             flush_exit(0);
         }
         
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_find_block + ind_count_blocks + ind_run > 1) {
-            prt("Error: --print-block, --print-comment, --print-code, --find-block, --count-blocks, and --run cannot be combined.\n");
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_find_block + ind_count_blocks + ind_run + ind_agents > 1) {
+            prt("Error: --print-block, --print-comment, --print-code, --find-block, --count-blocks, --run, and --agents cannot be combined.\n");
             flush_exit(1);
         }
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_find_block + ind_count_blocks + ind_run) {
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_find_block + ind_count_blocks + ind_run + ind_agents) {
           get_code();
         }
         if (ind_print_block) {
@@ -3374,6 +3393,51 @@ void handle_args(int argc, char **argv) {
         } else if (ind_count_blocks) {
             int count = count_blocks();
             prt("%d\n", count);
+            flush_exit(0);
+        } else if (ind_agents) {
+            // List all registered agents (blocks ending with "_agent")
+            int agent_count = 0;
+            for (int i = 0; i < state->block_idx.n; i++) {
+                span id = state->block_idx.a[i];
+                
+                // Check if block ID ends with "_agent" (but not "_agent_*")
+                if (len(id) > 7) {
+                    // Must end with exactly "_agent"
+                    span suffix = {id.end - 6, id.end};
+                    if (span_eq(suffix, S("_agent"))) {
+                        // Print block ID
+                        wrs(id);
+                        
+                        // Get the block for this ID
+                        int block_index = block_for_span(id);
+                        if (block_index >= 0 && block_index < state->blocks.n) {
+                            span block = state->blocks.a[block_index];
+                            span comment = block_comment_part(block);
+                            
+                            if (!empty(comment)) {
+                                // Skip past the first line (which contains the block ID)
+                                span rest = comment;
+                                while (rest.buf < rest.end && *rest.buf != '\n') rest.buf++;
+                                if (rest.buf < rest.end) rest.buf++; // skip the newline
+                                
+                                // Skip empty lines
+                                while (rest.buf < rest.end && *rest.buf == '\n') rest.buf++;
+                                
+                                // Find the first non-empty line
+                                if (rest.buf < rest.end) {
+                                    u8 *line_end = rest.buf;
+                                    while (line_end < rest.end && *line_end != '\n') line_end++;
+                                    prt(" - ");
+                                    wrs(first_n(rest, line_end - rest.buf));
+                                }
+                            }
+                        }
+                        prt("\n");
+                        agent_count++;
+                    }
+                }
+            }
+            prt("\nTotal agents: %d\n", agent_count);
             flush_exit(0);
         } else if (ind_run) {
             // Find the block by ID

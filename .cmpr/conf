@@ -1,5 +1,5 @@
 cmprdir: .cmpr/
-buildcmd: ctags spanio.c cmpr.c ops/*.c && make dev
+buildcmd: ctags spanio.c cmpr.c && make dev
 bootstrap: ./bootstrap.sh
 cbcopy: xclip -i -selection clipboard
 cbpaste: xclip -o -selection clipboard
@@ -10,17 +10,13 @@ debug: sa,inp
 
 language: C
 file: cmpr.c
-file: conf
+file: .cmpr/conf
+file: INBOX.c
 
 language: Markdown
 file: TODO
 
 language: C
-file: ops/nl2pl_rewrite.c
-file: ops/pl2nl_rewrite.c
-file: ops/nl2algo.c
-file: ops/agreement_to_pl_diff.c
-file: ops/summarize_block.c
 file: prompt_templates.c
 
 language: Markdown
