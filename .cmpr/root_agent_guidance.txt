@@ -1,0 +1,8 @@
+DECISION: Multi-option prioritized approach
+PRIORITY: D > C > B
+
+Option D (Manual): Start by creating hubs manually with programmer guidance
+Option C (Subsystem): Fallback - group by subsystem if automation needed
+Option B (Functionality): Fallback - group by functionality if subsystem unclear
+
+INITIAL APPROACH: Begin with manual hub creation for key subsystems

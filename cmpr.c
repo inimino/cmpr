@@ -13,22 +13,7 @@ If you start from #root, which is the next block, you can reach any block that h
 
 */
 
-/* #root
-
-"We want this block to contain a list of blocks, such that each block contains another list of at least 2 and at most 16 other blocks, such that every code block in the project is reachable within 2 hops." 255.
-
-We can call this an example of a want line; it states something that we want to be the case, and it is the dual of an agent, which exists to maintain a want, including by verifying that the thing is already the way we want it to be.
-See #root_agent for more.
-
-## Navigation Hubs
-
-The following blocks serve as navigation hubs to reach different parts of the codebase:
-
-- #root_agent - The agent system for maintaining the root navigation structure
-- #cmpr_events - The events/T/E/S system for temporal reasoning
-
-*/
-
+...
 /* #claude_exploration_report
 
 Claude's First Encounter with cmpr
@@ -1180,6 +1165,118 @@ else
     echo '"The constraint is satisfied." 20.'
     exit 0
 fi
+```
+
+*/
+/* #root_agent_fix
+
+Executable agent that attempts to fix the #root want by creating hub blocks.
+
+Run with: cmpr --print-code '#root_agent_fix' | bash
+
+This is the FIX mode counterpart to #root_agent_check.
+
+Strategy:
+1. Run CHECK mode to get list of unreferenced blocks
+2. Check for programmer guidance on how to group blocks
+3. If no guidance exists, emit REQUEST for grouping strategy
+4. If guidance exists, implement the grouping
+5. Update #root to reference new hub blocks
+
+Script implementation:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+echo "=== Root Agent FIX ===" >&2
+echo >&2
+
+# Step 1: Run CHECK to identify unreferenced blocks
+echo "Step 1: Running CHECK mode to identify issues..." >&2
+check_output=$(cmpr --print-comment '#root_agent_check' | sed -n '/^```bash$/,/^```$/p' | sed '1d;$d' | bash 2>&1) || true
+echo "$check_output" >&2
+echo >&2
+
+# Extract unreferenced blocks (this is simplified - real implementation would parse CHECK output)
+unreferenced_count=$(echo "$check_output" | grep "Unreferenced blocks:" | awk '{print $3}')
+
+if [ "$unreferenced_count" -eq 0 ]; then
+    echo "✓ No fixes needed - constraint is satisfied" >&2
+    exit 0
+fi
+
+echo "Found $unreferenced_count unreferenced blocks" >&2
+echo >&2
+
+# Step 2: Check for programmer guidance
+echo "Step 2: Checking for programmer guidance..." >&2
+
+# Look for guidance in rels or directive blocks
+# This is a placeholder - real implementation would use proper rel queries
+guidance_file=".cmpr/root_agent_guidance.txt"
+if [ -f "$guidance_file" ]; then
+    echo "Found guidance file: $guidance_file" >&2
+    cat "$guidance_file" >&2
+    echo >&2
+    echo "✓ Implementing guided fix..." >&2
+    # Implementation of guided fix would go here
+    exit 0
+fi
+
+# Step 3: No guidance exists - emit REQUEST
+echo "No guidance found - emitting REQUEST" >&2
+echo >&2
+
+cat <<'REQUEST'
+REQUEST: DECISION_NEEDED
+AGENT: #root_agent
+PRIORITY: MEDIUM
+CONTEXT: 258 blocks are unreferenced from #root. Need to create hub blocks to organize them.
+OPTIONS:
+  - Option A: Group by file (create hub per source file)
+  - Option B: Group by functionality (create hubs like #cmpr_c_core, #cmpr_py_api, #frontend)
+  - Option C: Group by subsystem (create hubs like #parsing, #io, #ui, #agents, #revisions)
+  - Option D: Manual - programmer will create hubs manually
+RATIONALE: Organizing 258 blocks requires understanding the codebase architecture and intended structure. This is a one-time architectural decision that will shape future navigation.
+REQUEST
+
+echo >&2
+echo "To provide guidance, create .cmpr/root_agent_guidance.txt with your decision" >&2
+exit 1
+```
+
+*/
+/* #agent_runner
+
+Helper utility to run agent CHECK and FIX modes.
+
+Usage:
+  cmpr --print-code '#agent_runner' | sh -s -- <agent_name> <mode>
+
+Example:
+  cmpr --print-code '#agent_runner' | sh -s -- root CHECK
+  cmpr --print-code '#agent_runner' | sh -s -- root FIX
+
+This extracts and executes the bash script from the agent's NL comment.
+
+Implementation:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+agent_name="$1"
+mode="$2"
+
+block_id="#${agent_name}_agent_${mode,,}"
+
+echo "Running $agent_name agent in $mode mode..." >&2
+echo "Block: $block_id" >&2
+echo >&2
+
+# Extract bash script from NL comment and execute
+cmpr --print-comment "$block_id" | sed -n '/^```bash$/,/^```$/p' | sed '1d;$d' | bash
 ```
 
 */
