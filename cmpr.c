@@ -3525,60 +3525,60 @@ void handle_args(int argc, char **argv) {
     }
 
     if (ind_help) {
-            prt("Usage: cmpr [--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block|--rewritepl) <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n\n");
-            prt("Options:\n\n");
-            prt("  --conf <filepath>\n");
-            prt("      Use alternate configuration file <filepath>.\n\n");
-            prt("  --print-conf\n");
-            prt("      Print the current configuration settings.\n\n");
-            prt("  --init\n");
-            prt("      Initialize a new directory for use with cmpr.\n\n");
-            prt("  --help\n");
-            prt("      Display this help message.\n\n");
-            prt("  --version\n");
-            prt("      Display the version number / build string.\n\n");
-            prt("  --print-block <id>\n");
-            prt("  --print-comment <id>\n");
-            prt("  --print-code <id>\n");
-            prt("      Print a complete block (or comment or code part) given by index.\n\n");
-            prt("  --expand-block <id>\n");
-            prt("      Print block with all @blockid references transitively expanded inline.\n\n");
-            prt("  --rewritepl <id>\n");
-            prt("      Regenerate PL (code) from NL (comment) using LLM.\n\n");
-            prt("  --after <id>\n");
-            prt("      Insert new block after <id>, reading content from stdin.\n\n");
-            prt("  --replace <id>\n");
-            prt("      Replace entire block <id> with content from stdin (NL + PL).\n\n");
-            prt("  --replace-comment <id>\n");
-            prt("      Replace only NL part of block <id> with content from stdin.\n\n");
-            prt("  --replace-code <id>\n");
-            prt("      Replace only PL part of block <id> with content from stdin.\n\n");
-            prt("  --content-index <search>\n");
-            prt("      Print space-separated list of one-based indices of all blocks matching literal search string.\n\n");
-            prt("  --grep <pattern>\n");
-            prt("      Search all blocks using POSIX ERE pattern. Outputs space-separated list of matching block IDs (\"#id\" for NL matches, \"#id:code\" for PL-only matches). Note: Uses POSIX Extended Regular Expressions, not JavaScript regex. Use [0-9] instead of \\d, [a-zA-Z0-9_] instead of \\w, [[:space:]] instead of \\s.\n\n");
-            prt("  --count-blocks\n");
-            prt("      Print number of blocks in project.\n\n");
-            prt("  --files-blocks\n");
-            prt("      Print a list of project files with block indexes and IDs per file.\n\n");
-            prt("  --print-all\n");
-            prt("      Print all blocks in the project sequentially.\n\n");
-            prt("  --run <block_id>\n");
-            prt("      Execute the code part of block <block_id> as a shell script.\n\n");
-            prt("  --agents\n");
-            prt("      List all registered agents (blocks matching #agent_* pattern).\n\n");
-            prt("  --T0\n");
-            prt("      Initialize or reset the event state T to empty.\n\n");
-            prt("  --event <string>\n");
-            prt("      Add an event string to T (use with --strength).\n\n");
-            prt("  --strength <value>\n");
-            prt("      Specify strength value 0-255 for an event (use with --event).\n\n");
-            prt("  --memorize\n");
-            prt("      Save current event state T to persistent storage.\n\n");
-            prt("  --recall\n");
-            prt("      Load previously memorized event state T.\n\n");
-            prt("  --T\n");
-            prt("      Output current event state T as SN lines.\n\n");
+        prt("Usage: cmpr [--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block|--rewritepl) <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n\n");
+        prt("Options:\n\n");
+        prt("  --conf <filepath>\n");
+        prt("      Use alternate configuration file <filepath>.\n\n");
+        prt("  --print-conf\n");
+        prt("      Print the current configuration settings.\n\n");
+        prt("  --init\n");
+        prt("      Initialize a new directory for use with cmpr.\n\n");
+        prt("  --help\n");
+        prt("      Display this help message.\n\n");
+        prt("  --version\n");
+        prt("      Display the version number / build string.\n\n");
+        prt("  --print-block <id>\n");
+        prt("  --print-comment <id>\n");
+        prt("  --print-code <id>\n");
+        prt("      Print a complete block (or comment or code part) given by index.\n\n");
+        prt("  --expand-block <id>\n");
+        prt("      Print block with all @blockid references transitively expanded inline.\n\n");
+        prt("  --rewritepl <id>\n");
+        prt("      Regenerate PL (code) from NL (comment) using LLM.\n\n");
+        prt("  --after <id>\n");
+        prt("      Insert new block after <id>, reading content from stdin.\n\n");
+        prt("  --replace <id>\n");
+        prt("      Replace entire block <id> with content from stdin (NL + PL).\n\n");
+        prt("  --replace-comment <id>\n");
+        prt("      Replace only NL part of block <id> with content from stdin.\n\n");
+        prt("  --replace-code <id>\n");
+        prt("      Replace only PL part of block <id> with content from stdin.\n\n");
+        prt("  --content-index <search>\n");
+        prt("      Print space-separated list of one-based indices of all blocks matching literal search string.\n\n");
+        prt("  --grep <pattern>\n");
+        prt("      Search all blocks using POSIX ERE pattern. Outputs space-separated list of matching block IDs (\"#id\" for NL matches, \"#id:code\" for PL-only matches). Note: Uses POSIX Extended Regular Expressions, not JavaScript regex. Use [0-9] instead of \\d, [a-zA-Z0-9_] instead of \\w, [[:space:]] instead of \\s.\n\n");
+        prt("  --count-blocks\n");
+        prt("      Print number of blocks in project.\n\n");
+        prt("  --files-blocks\n");
+        prt("      Print a list of project files with block indexes and IDs per file.\n\n");
+        prt("  --print-all\n");
+        prt("      Print all blocks in the project sequentially.\n\n");
+        prt("  --run <block_id>\n");
+        prt("      Execute the code part of block <block_id> as a shell script.\n\n");
+        prt("  --agents\n");
+        prt("      List all registered agents (blocks matching #agent_* pattern).\n\n");
+        prt("  --T0\n");
+        prt("      Initialize or reset the event state T to empty.\n\n");
+        prt("  --event <string>\n");
+        prt("      Add an event string to T (use with --strength).\n\n");
+        prt("  --strength <value>\n");
+        prt("      Specify strength value 0-255 for an event (use with --event).\n\n");
+        prt("  --memorize\n");
+        prt("      Save current event state T to persistent storage.\n\n");
+        prt("  --recall\n");
+        prt("      Load previously memorized event state T.\n\n");
+        prt("  --T\n");
+        prt("      Output current event state T as SN lines.\n\n");
         flush_exit(0);
     }
 
@@ -3695,12 +3695,23 @@ void handle_args(int argc, char **argv) {
         }
 
     if (ind_T0 || ind_event || ind_strength || ind_memorize || ind_recall || ind_T) {
-        prt("Error: Event system commands (--T0, --event, --strength, --memorize, --recall, --T) not yet implemented in cmpr1\n");
+        prt("Error: Event system commands (--T0, --event, --strength, --memorize, --recall, --T) not yet implemented in cmpr1");
+        if (ind_event) {
+            prt(" (event=\"%s\")", event_str ? event_str : "");
+        }
+        if (ind_strength) {
+            prt(" (strength=%d)", strength_value);
+        }
+        prt("\n");
         flush_exit(1);
     }
 
     if (ind_map_error) {
-        prt("Error: --map-error not yet implemented\n");
+        prt("Error: --map-error not yet implemented");
+        if (map_error_line) {
+            prt(" (line %s)", map_error_line);
+        }
+        prt("\n");
         flush_exit(1);
     }
 
