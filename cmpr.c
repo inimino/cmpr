@@ -3086,11 +3086,9 @@ void print_config() {
 
 We present the supported arguments and flags in a tabular form (as with langtable previously).
 
-TODO: Change --help behavior to match cmpr2: by default, print only a short usage summary (one line), and allow --help to be combined with specific flags to get detailed help for those flags. This is better UX than the current all-or-nothing detailed help output.
-
 Command syntax summary:
 
-cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
+cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
 
 Command argument and flag table:
 
@@ -3106,6 +3104,7 @@ Command argument and flag table:
 --print-code <index>
 --expand-block <id>
 --rewritepl <id>
+--prompt <id>
 --after <id>
 --replace <id>
 --replace-comment <id>
@@ -3133,13 +3132,10 @@ print-conf:
   Print configuration settings and exit.
 
 help:
-  Print usage summary with detailed help for each flag and exit.
-  First print the usage line with argv[0].
-  Then print a blank line.
-  Then print "Options:" followed by a blank line.
-  Then for each flag, print the flag name (left-aligned with 2 space indent) followed by the help string from section 4.
-  Use consistent formatting: "  --flag-name [<arg>]" on one line, then help text indented by 4 spaces on next line(s).
-  After printing all help text, flush() and exit(0).
+  Print short usage summary and exit.
+  Output format: single line showing "Usage: cmpr [options...]" with the command syntax from the summary above.
+  No detailed flag descriptions - just the compact usage line.
+  After printing, flush() and exit(0).
 
 init:
   Initialize .cmpr/ in the current directory.
@@ -3161,6 +3157,13 @@ rewritepl:
   Takes a block ID as argument.
   Sends the NL to the LLM to generate fresh PL code.
   The new PL replaces the existing PL in the block.
+
+prompt:
+  Print the prompt that would be sent to the LLM for nl2pl conversion of the given block.
+  Takes a block ID as argument.
+  Useful for debugging and understanding what context the LLM receives.
+  Does not actually call the LLM - just shows the prompt text.
+  Exits after printing.
 
 after:
   Insert a new block after the specified block ID.
@@ -3253,9 +3256,8 @@ print-conf:
   we print the configuration (print_config()) and exit; we must have called parse_config (and set an alt conf file if any) prior
 
 help:
-  Print usage line with argv[0], then print detailed help for each flag as specified in section 2.
-  Format the output clearly with proper indentation.
-  Include all flags from section 1 in the help output.
+  Print only the usage line: "Usage: cmpr [options...]" using the command syntax from the summary above.
+  Do NOT print detailed descriptions of each flag.
   After printing, call flush() and exit(0).
 
 init:
@@ -3285,6 +3287,15 @@ rewritepl:
   sends it to the LLM configured in the config file
   replaces the PL part with the LLM's response
   saves the updated block back to the file
+
+prompt:
+  requires code be loaded, so call get_code() first
+  parses the block ID/index argument
+  validates the block exists
+  calls build_prompt() or similar to construct the nl2pl prompt for that block
+  prints the prompt to stdout (this is what would be sent to the LLM)
+  does NOT actually call the LLM
+  exits successfully
 
 after:
   requires code be loaded, so call get_code() first
@@ -3403,7 +3414,7 @@ init:
   Initialize a new directory for use with cmpr.
 
 help:
-  Display this help message.
+  Display short usage summary.
 
 version:
   Display the version number / build string.
@@ -3416,6 +3427,9 @@ expand-block:
 
 rewritepl:
   Regenerate PL (code) from NL (comment) using LLM.
+
+prompt:
+  Print the nl2pl prompt that would be sent to the LLM for the given block.
 
 after:
   Insert new block after <id>, reading content from stdin.
@@ -3489,7 +3503,7 @@ We also have an int "action_arg" which tracks whether one of the action flags ha
 Action flags (cannot be combined, mutually exclusive):
 - print-block, print-comment, print-code, expand-block
 - content-index, grep, count-blocks, files-blocks, print-all
-- rewritepl, after, replace, replace-comment, replace-code
+- rewritepl, prompt, after, replace, replace-comment, replace-code
 - run, agents
 
 If more than one is set, we print an error message and exit.
@@ -3504,7 +3518,7 @@ Once we know the conf file to read from, we call parse_config before we do anyth
 If "--print-conf" is passed in, we print our configuration settings and exit.
 This is only OK to do once we have already called parse_config, so the configuration settings have already been read in from the file.
 
-For --print-block, --print-comment, --print-code, --expand-block, --rewritepl: Use block_from_arg() to parse the argument which can be either a numeric index or a block ID (with or without '#' prefix).
+For --print-block, --print-comment, --print-code, --expand-block, --rewritepl, --prompt: Use block_from_arg() to parse the argument which can be either a numeric index or a block ID (with or without '#' prefix).
 
 If "--content-index <search>" is passed in, we call content_index() which searches all blocks for the literal string and outputs a space-separated list of one-based indices of all matching blocks.
 
@@ -3516,6 +3530,8 @@ If "--expand-block <id>" is passed in, we parse the block ID/index, validate it,
 
 If "--rewritepl <id>" is passed in, we parse the block ID/index, set state->curr_block_idx to that index, then call nl2pl_rewrite() which regenerates the PL from NL using the LLM.
 
+If "--prompt <id>" is passed in, we parse the block ID/index, validate it, then call handle_prompt(idx) which prints the nl2pl prompt that would be sent to the LLM for that block, without actually calling the LLM.
+
 If "--after <id>" is passed in, we call after() with the block ID/index as a span argument. The after() function reads stdin and inserts content after the specified block.
 
 If "--replace <id>" is passed in, we call replace() with the block ID/index as a span argument. The replace() function reads stdin and replaces the entire block.
@@ -3526,7 +3542,7 @@ If "--replace-code <id>" is passed in, we call replace_code() with the block ID/
 
 IMPORTANT: This block's PL implementation should be SIMPLE and delegate complex logic to separate blocks.
 Do NOT inline the full implementation of complex commands like --run or --agents here.
-Extract that logic into separate helper blocks (e.g., #handle_run, #handle_agents, #after, #replace, etc.).
+Extract that logic into separate helper blocks (e.g., #handle_run, #handle_agents, #handle_prompt, #after, #replace, etc.).
 This block should mainly:
 1. Declare indicator variables (int ind_*) and argument pointers (char *arg_*)
 2. Parse arguments in a loop and set indicators
@@ -3539,7 +3555,7 @@ The indicator variables should include:
 - ind_conf, ind_print_conf, ind_help, ind_init, ind_version
 - ind_print_block, ind_print_comment, ind_print_code, ind_expand_block
 - ind_content_index, ind_grep, ind_count_blocks, ind_files_blocks, ind_print_all
-- ind_rewritepl, ind_after, ind_replace, ind_replace_comment, ind_replace_code
+- ind_rewritepl, ind_prompt, ind_after, ind_replace, ind_replace_comment, ind_replace_code
 - ind_run, ind_agents
 - ind_T0, ind_event, ind_strength, ind_memorize, ind_recall, ind_T
 - ind_map_error, ind_test_block_map
@@ -3547,11 +3563,14 @@ The indicator variables should include:
 The argument pointers should include:
 - conf_filepath, content_index_search, grep_pattern, run_block_id
 - arg_print_block, arg_print_comment, arg_print_code, arg_expand_block
-- arg_rewritepl, arg_after, arg_replace, arg_replace_comment, arg_replace_code
+- arg_rewritepl, arg_prompt, arg_after, arg_replace, arg_replace_comment, arg_replace_code
 - event_string, event_strength_str
 
 This function will always call parse_config, always before printing the config if "--print-conf" is used, and always after updating the config file if "--conf" is used.
 In particular, even if no alternate conf file was set, we still need to read the default conf file.
+
+The --help handler should print ONLY a short usage summary line, not detailed descriptions.
+Format: "Usage: cmpr [options...]" using the command syntax from #argtable.
 
 Manually maintained.
 
@@ -3560,13 +3579,13 @@ void handle_args(int argc, char **argv) {
     int ind_conf = 0, ind_print_conf = 0, ind_help = 0, ind_init = 0, ind_version = 0;
     int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_expand_block = 0;
     int ind_content_index = 0, ind_grep = 0, ind_count_blocks = 0, ind_files_blocks = 0, ind_print_all = 0;
-    int ind_rewritepl = 0, ind_after = 0, ind_replace = 0, ind_replace_comment = 0, ind_replace_code = 0;
+    int ind_rewritepl = 0, ind_prompt = 0, ind_after = 0, ind_replace = 0, ind_replace_comment = 0, ind_replace_code = 0;
     int ind_run = 0, ind_agents = 0;
     int ind_T0 = 0, ind_event = 0, ind_strength = 0, ind_memorize = 0, ind_recall = 0, ind_T = 0;
     int ind_map_error = 0, ind_test_block_map = 0;
     char *conf_filepath = NULL, *content_index_search = NULL, *grep_pattern = NULL, *run_block_id = NULL;
     char *arg_print_block = NULL, *arg_print_comment = NULL, *arg_print_code = NULL, *arg_expand_block = NULL;
-    char *arg_rewritepl = NULL, *arg_after = NULL, *arg_replace = NULL, *arg_replace_comment = NULL, *arg_replace_code = NULL;
+    char *arg_rewritepl = NULL, *arg_prompt = NULL, *arg_after = NULL, *arg_replace = NULL, *arg_replace_comment = NULL, *arg_replace_code = NULL;
     char *event_str = NULL, *map_error_line = NULL;
     int strength_value = 0;
 
@@ -3597,6 +3616,9 @@ void handle_args(int argc, char **argv) {
         } else if (strcmp(argv[i], "--rewritepl") == 0 && i + 1 < argc) {
             arg_rewritepl = argv[++i];
             ind_rewritepl = 1;
+        } else if (strcmp(argv[i], "--prompt") == 0 && i + 1 < argc) {
+            arg_prompt = argv[++i];
+            ind_prompt = 1;
         } else if (strcmp(argv[i], "--after") == 0 && i + 1 < argc) {
             arg_after = argv[++i];
             ind_after = 1;
@@ -3656,60 +3678,7 @@ void handle_args(int argc, char **argv) {
     }
 
     if (ind_help) {
-        prt("Usage: cmpr [--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block|--rewritepl) <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n\n");
-        prt("Options:\n\n");
-        prt("  --conf <filepath>\n");
-        prt("      Use alternate configuration file <filepath>.\n\n");
-        prt("  --print-conf\n");
-        prt("      Print the current configuration settings.\n\n");
-        prt("  --init\n");
-        prt("      Initialize a new directory for use with cmpr.\n\n");
-        prt("  --help\n");
-        prt("      Display this help message.\n\n");
-        prt("  --version\n");
-        prt("      Display the version number / build string.\n\n");
-        prt("  --print-block <id>\n");
-        prt("  --print-comment <id>\n");
-        prt("  --print-code <id>\n");
-        prt("      Print a complete block (or comment or code part) given by index.\n\n");
-        prt("  --expand-block <id>\n");
-        prt("      Print block with all @blockid references transitively expanded inline.\n\n");
-        prt("  --rewritepl <id>\n");
-        prt("      Regenerate PL (code) from NL (comment) using LLM.\n\n");
-        prt("  --after <id>\n");
-        prt("      Insert new block after <id>, reading content from stdin.\n\n");
-        prt("  --replace <id>\n");
-        prt("      Replace entire block <id> with content from stdin (NL + PL).\n\n");
-        prt("  --replace-comment <id>\n");
-        prt("      Replace only NL part of block <id> with content from stdin.\n\n");
-        prt("  --replace-code <id>\n");
-        prt("      Replace only PL part of block <id> with content from stdin.\n\n");
-        prt("  --content-index <search>\n");
-        prt("      Print space-separated list of one-based indices of all blocks matching literal search string.\n\n");
-        prt("  --grep <pattern>\n");
-        prt("      Search all blocks using POSIX ERE pattern. Outputs space-separated list of matching block IDs (\"#id\" for NL matches, \"#id:code\" for PL-only matches). Note: Uses POSIX Extended Regular Expressions, not JavaScript regex. Use [0-9] instead of \\d, [a-zA-Z0-9_] instead of \\w, [[:space:]] instead of \\s.\n\n");
-        prt("  --count-blocks\n");
-        prt("      Print number of blocks in project.\n\n");
-        prt("  --files-blocks\n");
-        prt("      Print a list of project files with block indexes and IDs per file.\n\n");
-        prt("  --print-all\n");
-        prt("      Print all blocks in the project sequentially.\n\n");
-        prt("  --run <block_id>\n");
-        prt("      Execute the code part of block <block_id> as a shell script.\n\n");
-        prt("  --agents\n");
-        prt("      List all registered agents (blocks matching #agent_* pattern).\n\n");
-        prt("  --T0\n");
-        prt("      Initialize or reset the event state T to empty.\n\n");
-        prt("  --event <string>\n");
-        prt("      Add an event string to T (use with --strength).\n\n");
-        prt("  --strength <value>\n");
-        prt("      Specify strength value 0-255 for an event (use with --event).\n\n");
-        prt("  --memorize\n");
-        prt("      Save current event state T to persistent storage.\n\n");
-        prt("  --recall\n");
-        prt("      Load previously memorized event state T.\n\n");
-        prt("  --T\n");
-        prt("      Output current event state T as SN lines.\n\n");
+        prt("Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n");
         flush_exit(0);
     }
 
@@ -3740,11 +3709,11 @@ void handle_args(int argc, char **argv) {
         flush_exit(0);
     }
 
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents > 1) {
-            prt("Error: --print-block, --print-comment, --print-code, --expand-block, --content-index, --grep, --count-blocks, --files-blocks, --print-all, --rewritepl, --after, --replace, --replace-comment, --replace-code, --run, and --agents cannot be combined.\n");
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents > 1) {
+            prt("Error: --print-block, --print-comment, --print-code, --expand-block, --content-index, --grep, --count-blocks, --files-blocks, --print-all, --rewritepl, --prompt, --after, --replace, --replace-comment, --replace-code, --run, and --agents cannot be combined.\n");
             flush_exit(1);
         }
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents) {
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents) {
           get_code();
         }
         if (ind_print_block) {
@@ -3787,6 +3756,14 @@ void handle_args(int argc, char **argv) {
             }
             state->curr_block_idx = idx;
             nl2pl_rewrite();
+            flush_exit(0);
+        } else if (ind_prompt) {
+            int idx = block_from_arg(arg_prompt);
+            if (idx < 0 || idx >= state->blocks.n) {
+                prt("Block id or index not found: %s\n", arg_prompt);
+                flush_exit(1);
+            }
+            handle_prompt(idx);
             flush_exit(0);
         } else if (ind_after) {
             after(S(arg_after));
@@ -3882,7 +3859,6 @@ void handle_args(int argc, char **argv) {
         flush_exit(0);
     }
 }
-
 /* #print_files_blocks @gcb @ids_for_block
 
 void print_files_blocks();
@@ -9733,6 +9709,30 @@ void handle_agents() {
     }
     prt("\nTotal agents: %d\n", agent_count);
     flush_exit(0);
+}
+/* #handle_prompt @nl2pl_rewrite
+
+void handle_prompt(int block_idx);
+
+Print the nl2pl prompt that would be sent to the LLM for the given block.
+This is useful for debugging and understanding what context the LLM receives.
+Does not actually call the LLM.
+
+Implementation:
+Set state->curr_block_idx to block_idx so template variables work correctly.
+Get the prompt template for "nl2pl_rewrite" operation using get_prompt_template().
+Get the template variables for the current block using current_block_template_vars().
+Expand the template with the variables using expand_template().
+Print the expanded prompt to stdout.
+*/
+
+void handle_prompt(int block_idx) {
+    state->curr_block_idx = block_idx;
+    span op = S("nl2pl_rewrite");
+    span template = get_prompt_template(op);
+    spans vars = current_block_template_vars();
+    span expanded_prompt = expand_template(template, vars);
+    prt("%.*s", (int)(expanded_prompt.end - expanded_prompt.buf), expanded_prompt.buf);
 }
 /* #grep_blocks
 
