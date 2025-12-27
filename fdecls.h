@@ -4,6 +4,8 @@ void rope_release(rope*);
 span rope_alloc_atleast(rope*,size_t);
 void event_add_internal(span event_str, unsigned char strength);
 spans dir_listing(span dirname);
+void event_parse_sn(span content);
+void event_parse_sn(span);
 Partial partial_sp_sp(span, void(*)(span,span));
 Partial partial_0_sp(void(*)(span));
 void apply_partial(Partial,span);

@@ -1091,6 +1091,8 @@ Reports event space state using SN notation:
 - "The constraint is satisfied." 20. (if everything is good)
 
 */
+
+
 /* #root_agent_fix
 
 Executable agent that attempts to fix the #root want by creating hub blocks.
@@ -1801,6 +1803,7 @@ span head_line(span* content) {
 
 void event_add_internal(span event_str, unsigned char strength);
 spans dir_listing(span dirname);
+void event_parse_sn(span content);
 
 void event_parse_content(span content) {
     event_parse_sn(content);  // Use corrected SN-compliant parsing from #event_parse_sn
@@ -1975,6 +1978,8 @@ void event_recall() {
 /* #event_parse_sn
 
 Parse event content in SN (Strength Notation) format.
+
+void event_parse_sn(span);
 
 SN lines have the format: "<event_string>" <strength>.
 
@@ -2425,6 +2430,10 @@ If not, it will chdir up the filesystem hierarchy to see if a parent directory i
 We projfiles_alloc the files array on the state.
 We just set the capacity to the full capacity of the projfiles arena, which we can find in the init() function, above, since there won't be any other projfiles arrays allocated.
 
+First, we initialize state->now using clock_gettime(CLOCK_REALTIME, &state->now).
+This gives us a consistent timestamp for the entire run, which is needed by filename_template (used for revision files, API call logs, etc).
+@- This is especially important for CLI commands like --rewritepl that exit before reaching main_loop.
+
 We call a function handle_args to handle argc and argv.
 This function will not do anything directly, but sets indicators on state (possibly spans in cmp space) that define what we should do next.
 @- This function will also read our config file (if any).
@@ -2444,6 +2453,7 @@ Next we call a function get_code().
 This function reads the files indicated by our config file, populates inp, and handles any code indexing steps.
 */
 void read_(int argc, char** argv) {
+    clock_gettime(CLOCK_REALTIME, &state->now);
     handle_args(argc, argv);
     check_conf_vars();
     check_dirs();
