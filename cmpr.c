@@ -9,6 +9,7 @@ See #root_agent for more.
 
 The following blocks serve as navigation hubs to reach different parts of the codebase:
 
+- #cmpr_c_overview - High-level structure of cmpr.c: entry points, CLI, TUI, and core operations
 - #root_agent - The agent system for maintaining the root navigation structure
 - #cmpr_events - The events/T/E/S system for temporal reasoning
 - #claude_experience_report_blocklist_20251226 - Experience report: cmpr1 vs cmpr2 blocklist comparison and navigation structure analysis
@@ -3507,7 +3508,12 @@ Below the loop we then handle the necessaries in the correct order.
 We use "int ind_*" for these variables so they don't conflict with functions or anything else we already have.
 We also have an int "action_arg" which tracks whether one of the action flags has been set, char pointers for string arguments like conf filepath or content-index search or run block ID.
 
-None of these flags can be combined: print-block, print-comment, print-code, content-index, grep, count-blocks, run, agents.
+Action flags (cannot be combined, mutually exclusive):
+- print-block, print-comment, print-code, expand-block
+- content-index, grep, count-blocks, files-blocks, print-all
+- rewritepl, after, replace, replace-comment, replace-code
+- run, agents
+
 If more than one is set, we print an error message and exit.
 If any of these are set then we exit successfully, but if none of them is, then we will return from this function and enter our main loop.
 
@@ -3520,7 +3526,7 @@ Once we know the conf file to read from, we call parse_config before we do anyth
 If "--print-conf" is passed in, we print our configuration settings and exit.
 This is only OK to do once we have already called parse_config, so the configuration settings have already been read in from the file.
 
-For --print-block, --print-comment, --print-code: Use block_from_arg() to parse the argument which can be either a numeric index or a block ID (with or without '#' prefix).
+For --print-block, --print-comment, --print-code, --expand-block, --rewritepl: Use block_from_arg() to parse the argument which can be either a numeric index or a block ID (with or without '#' prefix).
 
 If "--content-index <search>" is passed in, we call content_index() which searches all blocks for the literal string and outputs a space-separated list of one-based indices of all matching blocks.
 
@@ -3528,14 +3534,43 @@ If "--run <block_id>" is passed in, we delegate to handle_run() which extracts a
 
 If "--agents" is passed in, we delegate to handle_agents() which lists all registered agents.
 
+If "--expand-block <id>" is passed in, we parse the block ID/index, validate it, then call expand_block(idx) which prints the block with all @blockid references transitively expanded.
+
+If "--rewritepl <id>" is passed in, we parse the block ID/index, set state->curr_block_idx to that index, then call nl2pl_rewrite() which regenerates the PL from NL using the LLM.
+
+If "--after <id>" is passed in, we call after() with the block ID/index as a span argument. The after() function reads stdin and inserts content after the specified block.
+
+If "--replace <id>" is passed in, we call replace() with the block ID/index as a span argument. The replace() function reads stdin and replaces the entire block.
+
+If "--replace-comment <id>" is passed in, we call replace_comment() with the block ID/index as a span argument. This replaces only the NL (comment) part while preserving the PL (code).
+
+If "--replace-code <id>" is passed in, we call replace_code() with the block ID/index as a span argument. This replaces only the PL (code) part while preserving the NL (comment).
+
 IMPORTANT: This block's PL implementation should be SIMPLE and delegate complex logic to separate blocks.
 Do NOT inline the full implementation of complex commands like --run or --agents here.
-Extract that logic into separate helper blocks (e.g., #handle_run, #handle_agents).
+Extract that logic into separate helper blocks (e.g., #handle_run, #handle_agents, #after, #replace, etc.).
 This block should mainly:
-1. Parse arguments and set indicators
-2. Call get_code() if needed
-3. Dispatch to helper functions or separate implementation blocks
-4. Keep the main flow readable
+1. Declare indicator variables (int ind_*) and argument pointers (char *arg_*)
+2. Parse arguments in a loop and set indicators
+3. Validate mutually exclusive action flags
+4. Call get_code() if needed for action flags
+5. Dispatch to helper functions based on indicators
+6. Keep the main flow readable
+
+The indicator variables should include:
+- ind_conf, ind_print_conf, ind_help, ind_init, ind_version
+- ind_print_block, ind_print_comment, ind_print_code, ind_expand_block
+- ind_content_index, ind_grep, ind_count_blocks, ind_files_blocks, ind_print_all
+- ind_rewritepl, ind_after, ind_replace, ind_replace_comment, ind_replace_code
+- ind_run, ind_agents
+- ind_T0, ind_event, ind_strength, ind_memorize, ind_recall, ind_T
+- ind_map_error, ind_test_block_map
+
+The argument pointers should include:
+- conf_filepath, content_index_search, grep_pattern, run_block_id
+- arg_print_block, arg_print_comment, arg_print_code, arg_expand_block
+- arg_rewritepl, arg_after, arg_replace, arg_replace_comment, arg_replace_code
+- event_string, event_strength_str
 
 This function will always call parse_config, always before printing the config if "--print-conf" is used, and always after updating the config file if "--conf" is used.
 In particular, even if no alternate conf file was set, we still need to read the default conf file.
@@ -3545,14 +3580,16 @@ Manually maintained.
 */
 void handle_args(int argc, char **argv) {
     int ind_conf = 0, ind_print_conf = 0, ind_help = 0, ind_init = 0, ind_version = 0;
-    int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_content_index = 0, ind_grep = 0, ind_count_blocks = 0, ind_files_blocks = 0, ind_print_all = 0, ind_run = 0, ind_agents = 0;
+    int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_expand_block = 0;
+    int ind_content_index = 0, ind_grep = 0, ind_count_blocks = 0, ind_files_blocks = 0, ind_print_all = 0;
+    int ind_rewritepl = 0, ind_after = 0, ind_replace = 0, ind_replace_comment = 0, ind_replace_code = 0;
+    int ind_run = 0, ind_agents = 0;
     int ind_T0 = 0, ind_event = 0, ind_strength = 0, ind_memorize = 0, ind_recall = 0, ind_T = 0;
     int ind_map_error = 0, ind_test_block_map = 0;
-    int action_arg = 0;
     char *conf_filepath = NULL, *content_index_search = NULL, *grep_pattern = NULL, *run_block_id = NULL;
-    char *arg_print_block = NULL, *arg_print_comment = NULL, *arg_print_code = NULL;
+    char *arg_print_block = NULL, *arg_print_comment = NULL, *arg_print_code = NULL, *arg_expand_block = NULL;
+    char *arg_rewritepl = NULL, *arg_after = NULL, *arg_replace = NULL, *arg_replace_comment = NULL, *arg_replace_code = NULL;
     char *event_str = NULL, *map_error_line = NULL;
-    int block_index = -1;
     int strength_value = 0;
 
     for (int i = 1; i < argc; i++) {
@@ -3563,13 +3600,10 @@ void handle_args(int argc, char **argv) {
             ind_print_conf = 1;
         } else if (strcmp(argv[i], "--help") == 0) {
             ind_help = 1;
-            action_arg = 1;
         } else if (strcmp(argv[i], "--init") == 0) {
             ind_init = 1;
-            action_arg = 1;
         } else if (strcmp(argv[i], "--version") == 0) {
             ind_version = 1;
-            action_arg = 1;
         } else if (strcmp(argv[i], "--print-block") == 0 && i + 1 < argc) {
             arg_print_block = argv[++i];
             ind_print_block = 1;
@@ -3579,6 +3613,24 @@ void handle_args(int argc, char **argv) {
         } else if (strcmp(argv[i], "--print-code") == 0 && i + 1 < argc) {
             arg_print_code = argv[++i];
             ind_print_code = 1;
+        } else if (strcmp(argv[i], "--expand-block") == 0 && i + 1 < argc) {
+            arg_expand_block = argv[++i];
+            ind_expand_block = 1;
+        } else if (strcmp(argv[i], "--rewritepl") == 0 && i + 1 < argc) {
+            arg_rewritepl = argv[++i];
+            ind_rewritepl = 1;
+        } else if (strcmp(argv[i], "--after") == 0 && i + 1 < argc) {
+            arg_after = argv[++i];
+            ind_after = 1;
+        } else if (strcmp(argv[i], "--replace") == 0 && i + 1 < argc) {
+            arg_replace = argv[++i];
+            ind_replace = 1;
+        } else if (strcmp(argv[i], "--replace-comment") == 0 && i + 1 < argc) {
+            arg_replace_comment = argv[++i];
+            ind_replace_comment = 1;
+        } else if (strcmp(argv[i], "--replace-code") == 0 && i + 1 < argc) {
+            arg_replace_code = argv[++i];
+            ind_replace_code = 1;
         } else if (strcmp(argv[i], "--content-index") == 0 && i + 1 < argc) {
             content_index_search = argv[++i];
             ind_content_index = 1;
@@ -3615,30 +3667,28 @@ void handle_args(int argc, char **argv) {
             ind_map_error = 1;
         } else if (strcmp(argv[i], "--test-block-map") == 0) {
             ind_test_block_map = 1;
+        } else if (argv[i][0] == '-' && argv[i][1] == '-') {
+            prt("Unknown flag: %s\n", argv[i]);
+            flush_exit(1);
         }
     }
 
-    if (action_arg) {
-        if (ind_conf && ind_init) {
-            prt("Error: --conf and --init cannot be combined.\n");
-            flush_exit(1);
-        }
-        if (ind_help) {
-            prt("Usage: %s [OPTIONS]\n\n", argv[0]);
+    if (ind_help) {
+            prt("Usage: cmpr [--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block|--rewritepl) <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n\n");
             prt("Options:\n\n");
             prt("  --conf <filepath>\n");
             prt("      Use alternate configuration file <filepath>.\n\n");
             prt("  --print-conf\n");
             prt("      Print the current configuration settings.\n\n");
-            prt("  --help\n");
-            prt("      Display this help message.\n\n");
             prt("  --init\n");
             prt("      Initialize a new directory for use with cmpr.\n\n");
+            prt("  --help\n");
+            prt("      Display this help message.\n\n");
             prt("  --version\n");
             prt("      Display the version number / build string.\n\n");
-            prt("  --print-block <index>\n");
-            prt("  --print-comment <index>\n");
-            prt("  --print-code <index>\n");
+            prt("  --print-block <id>\n");
+            prt("  --print-comment <id>\n");
+            prt("  --print-code <id>\n");
             prt("      Print a complete block (or comment or code part) given by index.\n\n");
             prt("  --expand-block <id>\n");
             prt("      Print block with all @blockid references transitively expanded inline.\n\n");
@@ -3678,93 +3728,41 @@ void handle_args(int argc, char **argv) {
             prt("      Load previously memorized event state T.\n\n");
             prt("  --T\n");
             prt("      Output current event state T as SN lines.\n\n");
-            flush_exit(0);
-        }
-        if (ind_version) {
-            prt("Version: $VERSION$\n");
-            flush_exit(0);
-        }
-        if (ind_init) {
-            cmpr_init();
-            flush_exit(0);
-        }
-    } else {
+        flush_exit(0);
+    }
+
+    if (ind_version) {
+        prt("Version: $VERSION$\n");
+        flush_exit(0);
+    }
+
+    if (ind_init) {
         if (ind_conf) {
-            state->config_file_path = S(conf_filepath);
-        }
-        parse_config();
-        if (ind_print_conf) {
-            print_config();
-            flush_exit(0);
-        }
-        
-        if (ind_T0) {
-            event_T0();
-            flush_exit(0);
-        }
-        if (ind_test_block_map) {
-            int failures = block_map_selftest();
-            flush_exit(failures ? 1 : 0);
-        }
-        if (ind_map_error) {
-            span diag_line = S(map_error_line);
-            span diag_path = nullspan();
-            int diag_line_no = 0;
-            if (!parse_compiler_error_line(diag_line, &diag_path, &diag_line_no)) {
-                prt("Could not parse compiler diagnostic line. Expected format like path:line:...\n");
-                flush_exit(1);
-            }
-
-            span block_map = read_whole_file(S(".cmpr/block-map"));
-            if (empty(block_map)) {
-                prt("No .cmpr/block-map found.\n");
-                flush_exit(1);
-            }
-
-            spans ids = block_ids_for_file_line(block_map, diag_path, diag_line_no);
-            if (ids.n == 0) {
-                prt("No block ids found for %.*s:%d\n", len(diag_path), diag_path.buf, diag_line_no);
-                flush_exit(1);
-            }
-
-            prt("Blocks for %.*s:%d:\n", len(diag_path), diag_path.buf, diag_line_no);
-            for (int i = 0; i < ids.n; i++) {
-                prt(" - ");
-                wrs(ids.a[i]);
-                terpri();
-            }
-            flush_exit(0);
-        }
-        if (ind_event) {
-            if (!ind_strength) {
-                prt("Error: --event requires --strength\n");
-                flush_exit(1);
-            }
-            if (strength_value < 0 || strength_value > 255) {
-                prt("Error: --strength must be between 0 and 255\n");
-                flush_exit(1);
-            }
-            event_add(S(event_str), strength_value);
-            flush_exit(0);
-        }
-        if (ind_memorize) {
-            event_memorize();
-            flush_exit(0);
-        }
-        if (ind_recall) {
-            event_recall();
-            flush_exit(0);
-        }
-        if (ind_T) {
-            event_print_T();
-            flush_exit(0);
-        }
-        
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_run + ind_agents > 1) {
-            prt("Error: --print-block, --print-comment, --print-code, --content-index, --grep, --count-blocks, --print-all, --run, and --agents cannot be combined.\n");
+            prt("Error: --init and --conf cannot be used together\n");
             flush_exit(1);
         }
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_run + ind_agents) {
+        cmpr_init();
+        flush_exit(0);
+    }
+
+    if (ind_conf) {
+        state->config_file_path = S(conf_filepath);
+    }
+
+    if (!ind_init) {
+        parse_config();
+    }
+
+    if (ind_print_conf) {
+        print_config();
+        flush_exit(0);
+    }
+
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents > 1) {
+            prt("Error: --print-block, --print-comment, --print-code, --expand-block, --content-index, --grep, --count-blocks, --files-blocks, --print-all, --rewritepl, --after, --replace, --replace-comment, --replace-code, --run, and --agents cannot be combined.\n");
+            flush_exit(1);
+        }
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents) {
           get_code();
         }
         if (ind_print_block) {
@@ -3791,6 +3789,35 @@ void handle_args(int argc, char **argv) {
             }
             print_code(idx);
             flush_exit(0);
+        } else if (ind_expand_block) {
+            int idx = block_from_arg(arg_expand_block);
+            if (idx < 0 || idx >= state->blocks.n) {
+                prt("Block id or index not found: %s\n", arg_expand_block);
+                flush_exit(1);
+            }
+            expand_block(idx);
+            flush_exit(0);
+        } else if (ind_rewritepl) {
+            int idx = block_from_arg(arg_rewritepl);
+            if (idx < 0 || idx >= state->blocks.n) {
+                prt("Block id or index not found: %s\n", arg_rewritepl);
+                flush_exit(1);
+            }
+            state->curr_block_idx = idx;
+            nl2pl_rewrite();
+            flush_exit(0);
+        } else if (ind_after) {
+            after(S(arg_after));
+            flush_exit(0);
+        } else if (ind_replace) {
+            replace(S(arg_replace));
+            flush_exit(0);
+        } else if (ind_replace_comment) {
+            replace_comment(S(arg_replace_comment));
+            flush_exit(0);
+        } else if (ind_replace_code) {
+            replace_code(S(arg_replace_code));
+            flush_exit(0);
         } else if (ind_content_index) {
             content_index(S(content_index_search));
             flush_exit(0);
@@ -3798,12 +3825,11 @@ void handle_args(int argc, char **argv) {
             grep_blocks(S(grep_pattern));
             flush_exit(0);
         } else if (ind_count_blocks) {
-            int count = count_blocks();
-            prt("%d\n", count);
+            prt("%d\n", state->blocks.n);
             flush_exit(0);
-            } else if (ind_files_blocks) {
-                print_files_blocks();
-                flush_exit(0);
+        } else if (ind_files_blocks) {
+            print_files_blocks();
+            flush_exit(0);
         } else if (ind_print_all) {
             for (int i = 0; i < state->blocks.n; i++) {
                 print_block(i);
@@ -3811,9 +3837,25 @@ void handle_args(int argc, char **argv) {
             flush_exit(0);
         } else if (ind_agents) {
             handle_agents();
+            flush_exit(0);
         } else if (ind_run) {
             handle_run(run_block_id);
+            flush_exit(0);
         }
+
+    if (ind_T0 || ind_event || ind_strength || ind_memorize || ind_recall || ind_T) {
+        prt("Error: Event system commands (--T0, --event, --strength, --memorize, --recall, --T) not yet implemented in cmpr1\n");
+        flush_exit(1);
+    }
+
+    if (ind_map_error) {
+        prt("Error: --map-error not yet implemented\n");
+        flush_exit(1);
+    }
+
+    if (ind_test_block_map) {
+        block_map_selftest();
+        flush_exit(0);
     }
 }
 /* #print_files_blocks @gcb @ids_for_block
@@ -9554,6 +9596,24 @@ int block_from_arg(char* arg) {
         advance1(&sarg);
     return block_by_id(sarg);
 }
+/* #block_id_arg @block_from_arg
+
+int block_id_arg(span block_id_or_int);
+
+This is similar to #block_from_arg above, in fact the behavior is the same, but the argument is provided as a span instead of char*.
+*/
+
+int block_id_arg(span block_id_or_int) {
+    if (!empty(block_id_or_int) && isdigit(*block_id_or_int.buf)) {
+        int n = parse_int(block_id_or_int);
+        return n > 0 ? n - 1 : -1;
+    } else {
+        if (!empty(block_id_or_int) && *block_id_or_int.buf == '#')
+            advance1(&block_id_or_int);
+        return block_by_id(block_id_or_int);
+    }
+}
+
 /* #handle_run
 
 void handle_run(char* run_block_id);
@@ -9763,6 +9823,415 @@ void grep_blocks(span pattern) {
     prt("\n");
     regfree(&regex);
 }
+/* #after @block_id_arg @files @blocks @file_for_block
+
+void after(span arg);
+
+We get the block index corresponding to arg.
+From now on this is just "the block".
+
+If we get -1, then we complain "Block not found: <arg>" and exit.
+
+The purpose of --after is to read stdin and add it after the block given by the identifier.
+Whatever is given will just be appended as-is, so it can extend the block, or add any number of new blocks after it.
+We also write a rev, as we must do for any change, and we update the projfile on disk.
+@- interestingly, this should probably be an option
+
+First we read stdin into a span in cmp space using read_file_into_cmp(S("/dev/stdin")).
+Call this span new_content.
+
+We check that len(inp) + len(new_content) < BUF_SZ, otherwise complain and exit.
+
+First we want to fix inp to reflect the new reality, and then we will write out the new disk file from inp (our global input span).
+We will also fix the contents spans of all of the files starting with this one, and including all later ones.
+
+We get the span corresponding to the block, in a local variable for convenience.
+We can do the same for the .contents of the current file.
+
+@complain_and_exit
+
+The contents of inp are already correct, up to the start of this block (or empty file), which is what we want to replace.
+We need to move the contents after it (in inp) to the right in memory by len(new_content) using memmove.
+We also must adjust inp.end by the same amount.
+
+Once we have done this, we have everything correct in inp except for the new data.
+We memcpy the new_content starting at the current .end of the block.
+
+Now inp is representing the new state of the project.
+
+However, the file[i].contents for the files including and subsequent to this one may be incorrect.
+Specifically, the difference in length of this block must be added to the .end of the file contents span for this file, and to both the .buf and .end of every subsequent file.
+
+We need to update and re-index the blocks, since any blocks after and including this one may have moved, so we call ingest().
+
+Then we call a helper function, new_rev, with an empty filename, since we read the data from stdin, and the file index for the projfile that was altered.
+This function is responsible for storing a new rev and updating the projfile on disk.
+*/
+
+void after(span arg) {
+    int block_idx = block_id_arg(arg);
+    if (block_idx == -1) {
+        prt("Block not found: %S\n", arg);
+        flush_err();
+        exit(1);
+    }
+
+    span new_content = read_stdin_into_cmp();
+    dbgd(len(new_content));
+    if (len(inp) + len(new_content) >= BUF_SZ) {
+        prt("Too much input to insert, buffer size exceeded\n");
+        flush_err();
+        exit(1);
+    }
+
+    span block = state->blocks.a[block_idx];
+    int file_idx = file_for_block(block);
+
+    projfile *pf = &state->files.a[file_idx];
+
+    u8 *after_block = block.end;
+    size_t tail_len = inp.end - after_block;
+
+    memmove(after_block + len(new_content), after_block, tail_len);
+    inp.end += len(new_content);
+    memcpy(after_block, new_content.buf, len(new_content));
+
+    pf = &state->files.a[file_idx];
+    pf->contents.end += len(new_content);
+
+    for (int i = file_idx + 1; i < state->files.n; ++i) {
+        state->files.a[i].contents.buf += len(new_content);
+        state->files.a[i].contents.end += len(new_content);
+    }
+
+    ingest();
+
+    new_rev(S(""), file_idx);
+}
+
+/* #replace @after:all @libraryintro
+
+void replace(span arg);
+
+Replace the contents of a block, with all that this entails.
+
+This should be similar to #after, above, except that we replace the block instead of appending after it.
+
+
+void replace(span arg) {
+    int block_idx = block_id_arg(arg);
+    if (block_idx == -1) {
+        prt("Block not found: %S\n", arg);
+        flush_err();
+        exit(1);
+    }
+
+    span new_content = read_stdin_into_cmp();
+    if (len(inp) + len(new_content) >= BUF_SZ) {
+        prt("Too much input to insert, buffer size exceeded\n");
+        flush_err();
+        exit(1);
+    }
+
+    span block = state->blocks.a[block_idx];
+    int file_idx = file_for_block(block);
+
+    projfile *pf = &state->files.a[file_idx];
+
+    size_t old_block_len = len(block);
+    u8 *block_start = block.buf;
+    u8 *block_end = block.end;
+    size_t tail_len = inp.end - block_end;
+
+    ssize_t diff = (ssize_t)len(new_content) - (ssize_t)old_block_len;
+
+    if (diff > 0) {
+        if (len(inp) + diff >= BUF_SZ) {
+            prt("Too much input to replace, buffer size exceeded\n");
+            flush_err();
+            exit(1);
+        }
+        memmove(block_end + diff, block_end, tail_len);
+        inp.end += diff;
+    } else if (diff < 0) {
+        memmove(block_end + diff, block_end, tail_len);
+        inp.end += diff;
+    }
+
+    memcpy(block_start, new_content.buf, len(new_content));
+
+    pf->contents.end += diff;
+
+    for (int i = file_idx + 1; i < state->files.n; ++i) {
+        state->files.a[i].contents.buf += diff;
+        state->files.a[i].contents.end += diff;
+    }
+
+    ingest();
+
+    new_rev(S(""), file_idx);
+}
+
+Modify the above code as follows: after we read stdin into the cmp space, we should check that the last byte is a "\n" and add one if not.
+
+*/
+
+void replace(span arg) {
+    int block_idx = block_id_arg(arg);
+    if (block_idx == -1) {
+        prt("Block not found: %S\n", arg);
+        flush_err();
+        exit(1);
+    }
+
+    span new_content = read_stdin_into_cmp();
+
+    if (len(new_content) == 0 || new_content.end[-1] != '\n') {
+        if (len(inp) + len(new_content) + 1 >= BUF_SZ) {
+            prt("Too much input to insert, buffer size exceeded\n");
+            flush_err();
+            exit(1);
+        }
+        *new_content.end++ = '\n';
+    }
+
+    if (len(inp) + len(new_content) >= BUF_SZ) {
+        prt("Too much input to insert, buffer size exceeded\n");
+        flush_err();
+        exit(1);
+    }
+
+    span block = state->blocks.a[block_idx];
+    int file_idx = file_for_block(block);
+
+    projfile *pf = &state->files.a[file_idx];
+
+    size_t old_block_len = len(block);
+    u8 *block_start = block.buf;
+    u8 *block_end = block.end;
+    size_t tail_len = inp.end - block_end;
+
+    ssize_t diff = (ssize_t)len(new_content) - (ssize_t)old_block_len;
+
+    if (diff > 0) {
+        if (len(inp) + diff >= BUF_SZ) {
+            prt("Too much input to replace, buffer size exceeded\n");
+            flush_err();
+            exit(1);
+        }
+        memmove(block_end + diff, block_end, tail_len);
+        inp.end += diff;
+    } else if (diff < 0) {
+        memmove(block_end + diff, block_end, tail_len);
+        inp.end += diff;
+    }
+
+    memcpy(block_start, new_content.buf, len(new_content));
+
+    pf->contents.end += diff;
+
+    for (int i = file_idx + 1; i < state->files.n; ++i) {
+        state->files.a[i].contents.buf += diff;
+        state->files.a[i].contents.end += diff;
+    }
+
+    ingest();
+
+    new_rev(S(""), file_idx);
+}
+
+/* #replace_comment #replace_code @replace:all @block_comment_part @block_code_part
+
+void replace_comment(span);
+void replace_code(span);
+
+Similar to replace, but replace_comment replaces only the NL (comment) part while preserving the PL (code) part, and replace_code does the opposite.
+
+For replace_comment: read new comment from stdin, extract code part from existing block, concatenate them in cmp space, then use same buffer manipulation as replace().
+
+For replace_code: read new code from stdin, extract comment part from existing block, concatenate them in cmp space, then use same buffer manipulation as replace().
+
+Manually maintained.
+*/
+
+void replace_comment(span arg) {
+    int block_idx = block_id_arg(arg);
+    if (block_idx == -1) {
+        prt("Block not found: %S\n", arg);
+        flush_err();
+        exit(1);
+    }
+
+    span new_comment = read_stdin_into_cmp();
+    if (len(new_comment) == 0 || new_comment.end[-1] != '\n') {
+        if (cmp.end + 1 >= cmp_space + BUF_SZ) {
+            prt("Too much input to insert, buffer size exceeded\n");
+            flush_err();
+            exit(1);
+        }
+        *cmp.end++ = '\n';
+        new_comment.end++;
+    }
+
+    span block = state->blocks.a[block_idx];
+    span code_part = block_code_part(block);
+
+    // Append code part to cmp after new comment
+    if (cmp.end + len(code_part) >= cmp_space + BUF_SZ) {
+        prt("Too much input to insert, buffer size exceeded\n");
+        flush_err();
+        exit(1);
+    }
+    memcpy(cmp.end, code_part.buf, len(code_part));
+    cmp.end += len(code_part);
+
+    span new_content = (span){new_comment.buf, cmp.end};
+
+    if (len(inp) + len(new_content) >= BUF_SZ) {
+        prt("Too much input to insert, buffer size exceeded\n");
+        flush_err();
+        exit(1);
+    }
+
+    int file_idx = file_for_block(block);
+    projfile *pf = &state->files.a[file_idx];
+
+    size_t old_block_len = len(block);
+    u8 *block_start = block.buf;
+    u8 *block_end = block.end;
+    size_t tail_len = inp.end - block_end;
+
+    ssize_t diff = (ssize_t)len(new_content) - (ssize_t)old_block_len;
+
+    if (diff > 0) {
+        if (len(inp) + diff >= BUF_SZ) {
+            prt("Too much input to replace, buffer size exceeded\n");
+            flush_err();
+            exit(1);
+        }
+        memmove(block_end + diff, block_end, tail_len);
+        inp.end += diff;
+    } else if (diff < 0) {
+        memmove(block_end + diff, block_end, tail_len);
+        inp.end += diff;
+    }
+
+    memcpy(block_start, new_content.buf, len(new_content));
+
+    pf->contents.end += diff;
+
+    for (int i = file_idx + 1; i < state->files.n; ++i) {
+        state->files.a[i].contents.buf += diff;
+        state->files.a[i].contents.end += diff;
+    }
+
+    ingest();
+
+    new_rev(S(""), file_idx);
+}
+
+void replace_code(span arg) {
+    int block_idx = block_id_arg(arg);
+    if (block_idx == -1) {
+        prt("Block not found: %S\n", arg);
+        flush_err();
+        exit(1);
+    }
+
+    span new_code = read_stdin_into_cmp();
+    if (len(new_code) == 0 || new_code.end[-1] != '\n') {
+        if (cmp.end + 1 >= cmp_space + BUF_SZ) {
+            prt("Too much input to insert, buffer size exceeded\n");
+            flush_err();
+            exit(1);
+        }
+        *cmp.end++ = '\n';
+        new_code.end++;
+    }
+
+    span block = state->blocks.a[block_idx];
+    span comment_part = block_comment_part(block);
+
+    // Build new content in cmp: move new_code after comment_part
+    u8 *comment_start = cmp.end;
+    if (cmp.end + len(comment_part) >= cmp_space + BUF_SZ) {
+        prt("Too much input to insert, buffer size exceeded\n");
+        flush_err();
+        exit(1);
+    }
+    memcpy(cmp.end, comment_part.buf, len(comment_part));
+    cmp.end += len(comment_part);
+
+    // Move new_code to be after comment
+    memmove(cmp.end, new_code.buf, len(new_code));
+    cmp.end += len(new_code);
+
+    span new_content = (span){comment_start, cmp.end};
+
+    if (len(inp) + len(new_content) >= BUF_SZ) {
+        prt("Too much input to insert, buffer size exceeded\n");
+        flush_err();
+        exit(1);
+    }
+
+    int file_idx = file_for_block(block);
+    projfile *pf = &state->files.a[file_idx];
+
+    size_t old_block_len = len(block);
+    u8 *block_start = block.buf;
+    u8 *block_end = block.end;
+    size_t tail_len = inp.end - block_end;
+
+    ssize_t diff = (ssize_t)len(new_content) - (ssize_t)old_block_len;
+
+    if (diff > 0) {
+        if (len(inp) + diff >= BUF_SZ) {
+            prt("Too much input to replace, buffer size exceeded\n");
+            flush_err();
+            exit(1);
+        }
+        memmove(block_end + diff, block_end, tail_len);
+        inp.end += diff;
+    } else if (diff < 0) {
+        memmove(block_end + diff, block_end, tail_len);
+        inp.end += diff;
+    }
+
+    memcpy(block_start, new_content.buf, len(new_content));
+
+    pf->contents.end += diff;
+
+    for (int i = file_idx + 1; i < state->files.n; ++i) {
+        state->files.a[i].contents.buf += diff;
+        state->files.a[i].contents.end += diff;
+    }
+
+    ingest();
+
+    new_rev(S(""), file_idx);
+}
+/* #expand_block @gcb
+
+void expand_block(int idx);
+
+This function takes a block index, calls expand_refs_2 with "both" as the mode, and prts the result.
+
+(It is the implementation of the --expand-block command-line feature.)
+*/
+
+void expand_block(int idx) {
+    if (idx < 0 || idx >= state->blocks.n) {
+        prt("Invalid block index: %d\n", idx);
+        flush();
+        exit(1);
+    }
+    span block = state->blocks.a[idx];
+    span result = expand_refs_2(block, S("both"));
+    wrs(result);
+    terpri();
+    flush();
+}
+
 /* #block_by_id
 
 int block_by_id(span id_no_hash);

@@ -348,6 +348,25 @@ int copy_file(const char *src, const char *dest); // TODO: maybe take spans inst
 span inp_compl();
 span cmp_compl();
 span out_compl();
+/* #read_stdin_into_cmp @spanio_basics
+
+span read_stdin_into_cmp();
+
+Helper function to read stdin into the cmp buffer space.
+Returns a span pointing to the read data in cmp space.
+*/
+
+span read_stdin_into_cmp() {
+  span ret = {cmp.end,cmp.end};
+  char c;
+  while ((c = getchar()) != EOF) {
+    *cmp.end = c;
+    cmp.end++;
+    if (len(cmp) == BUF_SZ) { prt("cmp space overflow reading stdin\n"); flush_err(); exit(1); }
+  }
+  ret.end = cmp.end;
+  return ret;
+}
 /* #spanio_basics
 
 input statistics on raw bytes; span basics
