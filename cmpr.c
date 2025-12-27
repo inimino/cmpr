@@ -1823,9 +1823,11 @@ void event_load_T() {
 }
 
 void event_save_T() {
-    span t_file = prs("%.*s/T", len(state->cmprdir), state->cmprdir.buf);
     span saved_cmp = cmp;
-    cmp.buf = cmp.end; // Start fresh in cmp space
+    span t_file = prs("%.*s/T", len(state->cmprdir), state->cmprdir.buf);
+
+    span content = (span){cmp.end, cmp.end};
+    out_sav sav = out2cmp();
 
     for (size_t i = 0; i < state->events.n; i++) {
         prt("\"");
@@ -1833,7 +1835,9 @@ void event_save_T() {
         prt("\" %d.\n", state->events.a[i].strength);
     }
 
-    span content = (span){saved_cmp.end, cmp.end};
+    content.end = cmp.end;
+    out_rst(sav);
+
     write_to_file_span(content, t_file, 1);
     cmp = saved_cmp;
 }
@@ -1865,38 +1869,39 @@ void event_add(span event_str, unsigned char strength) {
 }
 
 void event_memorize() {
+    span saved_cmp = cmp;
     span events_dir = prs("%.*s/events", len(state->cmprdir), state->cmprdir.buf);
     mkdir(s(events_dir), 0777);
 
     // Get current timestamp
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
-    
+
     // Format timestamp as YYYYMMDD-HHMMSS
     struct tm *tm_info = localtime(&ts.tv_sec);
-    span saved_cmp = cmp;
-    cmp.buf = cmp.end;
-    
-    prt("%.*s/%04d%02d%02d-%02d%02d%02d",
+
+    span filename = prs("%.*s/%04d%02d%02d-%02d%02d%02d-%09ld",
         len(events_dir), events_dir.buf,
         tm_info->tm_year + 1900,
         tm_info->tm_mon + 1,
         tm_info->tm_mday,
         tm_info->tm_hour,
         tm_info->tm_min,
-        tm_info->tm_sec);
-    
-    span filename = (span){saved_cmp.end, cmp.end};
-    cmp.buf = cmp.end;
-    
-    // Write events to timestamped file
+        tm_info->tm_sec,
+        (long)ts.tv_nsec);
+
+    span content = (span){cmp.end, cmp.end};
+    out_sav sav = out2cmp();
+
     for (size_t i = 0; i < state->events.n; i++) {
         prt("\"");
         wrs_esc(state->events.a[i].event_str);
         prt("\" %d.\n", state->events.a[i].strength);
     }
-    
-    span content = (span){filename.end, cmp.end};
+
+    content.end = cmp.end;
+    out_rst(sav);
+
     write_to_file_span(content, filename, 0);
     cmp = saved_cmp;
 }
@@ -1931,6 +1936,8 @@ void event_recall() {
     event_parse_content(content);
     event_save_T();
 }
+
+
 /* #network_ret network return type, used by LLM API functions
 
 Contains a response, generally json, if success; an error, a human readable string, otherwise.
@@ -2279,13 +2286,16 @@ void init() {
 
     state->config_file_path = S(".cmpr/conf");
     state->files = projfiles_alloc(1024);
+    state->events = event_entries_alloc(256);
     state->files.n = 0;
+    state->events.n = 0;
 
     set_default_clipboard_commands();
     
     read_openai_key();
     read_anthropic_key();
 }
+
 /* #read_
 
 This is one of the setup functions called from main().
@@ -3695,15 +3705,46 @@ void handle_args(int argc, char **argv) {
         }
 
     if (ind_T0 || ind_event || ind_strength || ind_memorize || ind_recall || ind_T) {
-        prt("Error: Event system commands (--T0, --event, --strength, --memorize, --recall, --T) not yet implemented in cmpr1");
+        if (ind_event && !ind_strength) {
+            prt("Error: --event requires --strength\n");
+            flush_exit(1);
+        }
+        if (ind_strength && !ind_event) {
+            prt("Error: --strength must be used with --event\n");
+            flush_exit(1);
+        }
+
+        int event_actions = ind_T0 + ind_event + ind_memorize + ind_recall + ind_T;
+        if (event_actions > 1) {
+            prt("Error: --T0, --event, --memorize, --recall, and --T cannot be combined\n");
+            flush_exit(1);
+        }
+
+        check_conf_vars();
+        check_dirs();
+        event_load_T();
+
+        if (ind_T0) {
+            event_T0();
+            flush_exit(0);
+        }
         if (ind_event) {
-            prt(" (event=\"%s\")", event_str ? event_str : "");
+            span event_span = { (u8 *)event_str, (u8 *)event_str + strlen(event_str) };
+            event_add(event_span, (unsigned char)strength_value);
+            flush_exit(0);
         }
-        if (ind_strength) {
-            prt(" (strength=%d)", strength_value);
+        if (ind_memorize) {
+            event_memorize();
+            flush_exit(0);
         }
-        prt("\n");
-        flush_exit(1);
+        if (ind_recall) {
+            event_recall();
+            flush_exit(0);
+        }
+        if (ind_T) {
+            event_print_T();
+            flush_exit(0);
+        }
     }
 
     if (ind_map_error) {
@@ -3720,6 +3761,7 @@ void handle_args(int argc, char **argv) {
         flush_exit(0);
     }
 }
+
 /* #print_files_blocks @gcb @ids_for_block
 
 void print_files_blocks();
