@@ -1,59 +1,37 @@
 /* #libraryintro
 
-The spanio library.
-We use spanio methods when possible and only use null-terminated C strings at interface boundaries where there is no way around it, see the s() pattern.
-When we say "print" we mean what prt() does, which is append output to the output span out; it has the printf interface, i.e. format string followed by varargs.
-You must flush() before the output will be printed to stdout and be visible to the user.
-A common cmpr pattern is prt, flush, getch.
-To "complain and exit" means prt, flush, exit(n>0).
-A span has a start pointer and an end pointer, called .buf and .end respectively.
+The spanio library provides span-based I/O and string manipulation for cmpr.
 
-- empty(span): If a span is empty (start and end pointers are equal).
-- len(span): The length of a span. Prefer this over less clear .end minus .buf.
-- init_spans(): Init global spans and buffers; called only from main().
-- prt(char *, ...): Formats and appends a string to the output span, i.e. prints it. Pronounced as prt.
-- prs(char *, ...): Same as prt, but returns a span (allocated in cmp space).
-- w_char(char): Writes a single character.
-- wrs(span): Writes the contents of a span.
-- bksp(): Backspace, shortens the output span by one.
-- sp(): Appends a space character to the output span, i.e. prints a space.
-- terpri(): Prints a newline (name courtesy Common Lisp).
-- out_sav out2cmp(), out_rst(out_sav): redirect all output functions to cmp (instead of out) and then undo (reset) back to given opaque state reprentation.
-- flush(), flush_err(): Flushes the output span to standard output or standard error.
-- write_to_file_span(span content, span path, int clobber): Write a span to a file, optionally overwriting.
-- write_to_file(span, const char*): Deprecated.
-- readable_file(span): whether a file exists as a regular file readable by us.
-- read_file_into_span(char*, span): Reads the contents of a file into a span. Deprecated.
-- read_file_S_into_span(span, span): Read the contents of a file $1 into a span $2. Used in new code. Returns a span prefix of $2.
-- read_file_into_cmp(span): Filename as a span, returns contents as a span inside cmp space.
-- read_file_into_inp(span): Filename as a span, returns contents as a span inside inp space.
-- advance1(span*), advance(span*, int): Advances the start pointer of a span by one or a specified number of characters.
-- shorten1(span*), shorten(span*, int): Shortens a span by one or by a given number of characters.
-- find_char(span, char): Searches for a character in a span and returns its first index or -1; find_char_rev(span,char) finds the last index or -1.
-- contains(span, span): Checks if one span TEXTUALLY contains another; "abc b"; O(n) string search.
-- contains_ptr(span, span): Checks if one span PHYSICALLY contains another; "[[]]"; O(1) pointer comparisons.
-- starts_with(span, span): Check if $2 is textual prefix of (or equal to) $1 (mnemonic for arg order: $1 starts-with $2).
-- ends_with(span, span): Check if $1 ends with $2.
-- consume_prefix(span, span*): Shortens a span by a prefix if present, returning that prefix or nullspan().
-- first_n(span, int): Returns n leading chars of a span.
-- skip_n(span, int): Returns a new span skipping n initial chars.
-- take_n(int, span*): Returns as a new span the first n characters from a span, mutating it; often used when parsing.
-- next_line(span*): Extracts the next line (up to \n or .end) from a span and returns it as a new span.
-- span_eq(span, span), span_cmp(span, span): Compares two spans for equality or lexicographical order.
-- S(char*): Creates a span from a null-terminated string.
-- char* s(span): Returns a null-terminated string (in cmp space) containing the given contents.
-- char* s_buffer(char*,int,span): Copies $3 into $1 (of length $2) and null-terminates it, returning $1 for convenience.
-- nullspan(): Returns the empty span at address 0.
-- index_of(span,spans): Return first element of $2 which is span_eq $1, or -1 if none match.
-- spanspan(span, span): Finds the first occurrence of a span within another span and returns a span into haystack.
-- trim(span): Gives the possibly smaller span with any isspace(3) trimmed on both sides.
-- split_whitespace(span): split a span into tokens on whitespace
-- concat(span,span): Returns a new span (in cmp space) containing a concatenation.
-- parse_int(span): Parse an int, but without altering the span.
-- parse_hex(span): Parse a hex value, without altering the span.
-- scan_int(span*), scan_hex(span*): Similar, but advances the span past the parsed value.
+## Core Concepts
 
-typedef struct { u8* buf; u8* end; } span; // the type of span
+#span - The span type definition
+#spanio_basics - Basic span operations
+#spanio_advanced - Advanced span operations
+#s_pattern - The S() and s() pattern for C string interop
+
+## Initialization and Usage
+
+#spanio_initialization - Library initialization
+#prt_usage - Print functions usage
+#span_usage - Common span patterns
+
+## Data Structures
+
+#spans - Dynamic array of spans
+#generic_array - Generic dynamic array implementation
+#jsonlib - JSON parsing using spans
+
+## I/O Operations
+
+#read_stdin_into_cmp - Reading from stdin
+#copy_file - File copying utilities
+#pathpart - Path manipulation
+
+## Advanced Features
+
+#thran - Thread-safe arena allocator
+#const - Compile-time constants
+#parserpattern - Parsing patterns and utilities
 
 */
 /* #spanio_advanced

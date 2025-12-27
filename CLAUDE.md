@@ -7,7 +7,7 @@ Guidance to Claude Code.
 
 cmpr provides code block database features.
 
-**cmpr1 vs cmpr2**: This is the cmpr1 codebase (C implementation). The parent directory contains cmpr2 (Python implementation), which is more feature-complete. Some documentation references blocks that exist in cmpr2 but not yet in cmpr1 (e.g., #agent_framework, #agent_implementation_pattern). These represent implementation goals. See #cmpr2_via_cmpr1 for accessing cmpr2 blocks.
+**cmpr1 vs cmpr2**: This is the cmpr1 codebase (C implementation). The parent directory contains cmpr2 (Python implementation), which is more feature-complete. cmpr1 now includes core agent framework documentation (#agent_infrastructure, #cmpr_agents) migrated from cmpr2. See #cmpr2_via_cmpr1 for accessing additional cmpr2 blocks.
 
 ## Building and Testing
 
@@ -142,22 +142,60 @@ cat /tmp/events_types.txt | cmpr --after '#rev_info'
 
 All navigation MUST start from the root block and follow block references:
 
-1. **Start at the root block**: Read it with `cmpr --print-comment` to see the main navigation hubs
+1. **Start at the root block**: Read it with `cmpr --print-comment '#root'` to see the main navigation hubs
 2. **Use 2-3 hops**: You should be able to reach any area of the codebase in 2-3 `--print-comment` calls by following block references
+
+**Navigation Structure** (as of 2025-12-27):
+
+The root block (#root) provides access to these main hubs:
+
+- **#cmpr_c_overview** - High-level architecture of cmpr.c
+  - Entry points (#main, #init, #read_, #main_loop)
+  - CLI system (#argtable)
+  - TUI system (#keybinds, #handle_keystroke)
+  - Core operations overview blocks
+
+- **#cmpr_implementation** - Implementation details
+  - #ui_display_overview - TUI display and state
+  - #block_editing_overview - Block editing and language detection
+  - #llm_integration_overview - LLM API integration
+  - #prompt_system_overview - Prompt templates and processing
+  - #block_ops_overview - Block operations
+  - #command_handlers_overview - CLI command implementations
+
+- **#libraryintro** - The spanio I/O library
+  - Core span operations and utilities
+  - Dynamic arrays and data structures
+  - JSON parsing and file I/O
+
+- **#root_agent** - Agent framework for maintaining project wants
+  - Agent infrastructure patterns (#agent_infrastructure)
+  - Executable agents (#root_agent_check, #root_agent_fix)
+  - Agent ecosystem (#cmpr_agents)
+
+- **#cmpr_events** - Event system (T/E/S) for temporal reasoning
+  - Event types and workflow
+  - Memorize/recall functionality
 
 **Example Navigation Paths**:
 
-To add a CLI feature to cmpr.c (like --grep):
-- Start at the root block → find references to argument handling → navigate to `#argtable` → then `#handle_args` (dispatching)
-- From there, look at similar implementations to understand the pattern
+To add a CLI feature:
+- `#root` → `#cmpr_c_overview` → `#argtable` (CLI definitions)
+- Look at similar commands for implementation patterns
 
-To understand the agent/want/decision system:
-- `#root` → `#root_agent` → #root_agent_check, #root_agent_fix (executable agents)
-- Follow references to implementation, design, and integration blocks
+To work on block operations:
+- `#root` → `#cmpr_implementation` → `#block_ops_overview`
+- Or: `#root` → `#cmpr_implementation` → `#command_handlers_overview`
+
+To understand the agent system:
+- `#root` → `#root_agent` → `#agent_infrastructure` (patterns)
+- `#root` → `#root_agent` → `#root_agent_check` (CHECK mode implementation)
 
 To work on the event system:
-- `#root` → `#cmpr_events` → #events_types, #events_functions (implementation)
-- Follow references to tests (#test_events_proposal) and integration docs
+- `#root` → `#cmpr_events` → referenced implementation blocks
+
+To work with spanio library:
+- `#root` → `#libraryintro` → specific span operations
 
 **Rule**: If you cannot reach the blocks you need from the root block by following direct references, that is a PROBLEM. DO NOT work around it by using search commands. Instead:
 1. STOP and inform the user that navigation is broken

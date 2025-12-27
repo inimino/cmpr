@@ -25,12 +25,13 @@ See #root_agent for more.
 
 The following blocks serve as navigation hubs to reach different parts of the codebase:
 
-- #cmpr_c_overview - High-level structure of cmpr.c: entry points, CLI, TUI, and core operations
-- #root_agent - The agent system for maintaining the root navigation structure
-- #cmpr_events - The events/T/E/S system for temporal reasoning
+#cmpr_c_overview
+#cmpr_implementation
+#libraryintro
+#root_agent
+#cmpr_events
 
 */
-
 /* #claude_exploration_report
 
 Claude's First Encounter with cmpr
@@ -641,6 +642,12 @@ This is why decisions have four states: tracked, checked, assisted, owned in the
 These are from the perspective of the system.
 We either track them (or they wouldn't have any state in the system) or we check them, which means we have a way to know the current state, or we can assist with them, which implies we can also check them, or they are owned, which means that we are expected to maintain the want without further input.
 
+## Agent Framework
+
+For general agent patterns and infrastructure:
+- #agent_infrastructure - Agent interface contract, state storage, output formats
+- #cmpr_agents - Agent ecosystem overview, agent vs script distinction
+
 ## Implementation
 
 Executable agents: #root_agent_check (runs CHECK mode), #root_agent_fix (runs FIX mode)
@@ -1128,6 +1135,159 @@ Strategy:
 5. Update #root to reference new hub blocks
 
 */
+/* #agent_infrastructure
+
+Agents are Unix processes that monitor and maintain project health.
+This block describes common patterns and infrastructure shared across agent implementations.
+
+Agent Interface Contract:
+
+All agents should follow these conventions:
+
+1. Exit codes:
+   - 0: Success, no issues detected
+   - 1: Issues found (the primary use case for health monitoring)
+   - 2: Agent error (missing dependencies, configuration problems, etc.)
+
+2. Output format:
+   - Write actionable items to stdout (one per line when possible)
+   - Write diagnostic/error messages to stderr
+   - Keep output machine-readable for dashboard consumption
+
+3. Invocation modes:
+   - No arguments: Run in "check" mode, report all issues
+   - With arguments: Run in "fix" mode or operate on specific items
+   - Support `-` as argument to read items from stdin (for piping)
+
+Agent State Storage:
+
+Agents should store persistent state under .cmpr/agents/<agent-name>/:
+   - last-run: timestamp of last execution
+   - last-status: exit code from last run
+   - report.txt: full output from last run
+   - metrics.json: structured data for dashboard consumption
+
+Example metrics.json structure:
+{
+  "agent": "justify",
+  "timestamp": "2025-12-19T07:30:00Z",
+  "status": "issues_found",
+  "count": 850,
+  "summary": "850 unjustified blocks"
+}
+
+Dashboard Integration:
+
+A future health dashboard (CLI or web) can:
+- Read metrics.json from all agents
+- Display summary: "justify: 850 issues, build: OK, nl2pl: 42 stale"
+- Show trends over time
+- Trigger agent runs and display live output
+
+Implementation Notes:
+
+Agents can be simple shell scripts or Python programs.
+They should be stateless - all state goes in .cmpr/agents/<name>/.
+This makes it easy to run agents manually, via cron, or via the TUI.
+
+*/
+/* #cmpr_agents
+
+In agents/ we have a set of executable files that can be run.
+Each one is the name of an agent, and will run that agent as an ordinary process.
+We rely on Unix here.
+
+The files are populated from the contents of same-named blocks.
+The list of agents is maintained here:
+
+#agent_nl2pl
+#agent_cmpr1_build
+#agent_justify
+#agent_block_names
+#agent_doc_build
+#agent_meta
+#agent_sn
+
+These are also the filenames under agents/, with the prefix "#agent_" stripped, e.g. agents/nl2pl corresponds to #agent_nl2pl.
+Currently, the agents are run manually by the user, but we will add some kind of a framework to manage them; this is a work in progress.
+For common agent infrastructure patterns (output format, state storage, dashboard integration), see #agent_infrastructure.
+
+The meta-agent (#agent_meta) is designed to run and monitor other agents, providing a single entry point for the agent ecosystem.
+
+Agents vs Scripts:
+
+Agents are continuous processes that monitor and respond to changes.
+They typically use file watching (entr) in an infinite loop.
+Example: agents/justify watches .cmpr/block-map for changes.
+
+Scripts are one-shot operations that run once and exit.
+They do the actual work when invoked by agents.
+Example: scripts/justify-check performs the justification check.
+
+This separation allows:
+- Manual execution of checks without running the agent
+- Agents to be simple monitors/schedulers
+- Scripts to focus on the actual task logic
+
+The list of check scripts is maintained here:
+
+#cmpr_justify_check
+#cmpr_nl2pl_check
+#cmpr_block_names_check
+#cmpr_doc_build_check
+
+These correspond to scripts/justify-check, scripts/nl2pl-check, etc.
+Each check script should have a corresponding block that defines its NL specification and PL implementation.
+
+There is also:
+
+.cmpr/agent-dashboard.sh
+    an in-progress view onto the system health data maintained by the individual agents under .cmpr/agents, e.g. `find .cmpr/agents/justify` and see the justify agent for the developing conventions here.
+
+What we eventually want here (among other things) is a tabular view of the health of every block.
+Currently we have columnar data stored under .cmpr/agents about the state of all the blocks wrt. some particular health check.
+What we want from the UI is to put these columns together into a table and show us the rows (blocks) that are most interesting.
+
+Another thing we want somewhat urgently is to be able to see the date of last change of a block.
+We already have access to this information via `rvs history` but it may need some testing or work.
+
+Agent Recipe:
+
+When adding a new agent:
+
+- create a new block or blocks for the agent and its check script
+- add the agent to the agents list above
+- add the check script to the check scripts list above
+- write NL for any new blocks, generate PL for them
+- for now, installation is manual; later we'll think about having some generic way to install the agents (i.e. to populate the agents/* files from the corresponding blocks)
+
+*/
+/* #rvs_feature_root
+
+CLI (rvs)
+-----
+CLI frontend; visibility into indices; testing and automatic instant UI for rvs_lib.
+Justifies: #rvs_cli #rvs_script_entry
+
+Library (rvs_lib)
+-----
+CLI feature set; specifies subcommands and CLI syntax for them; reference implementations; example for library use of rvs indices.
+Justifies: #rvs_lib_contract #rvs_index_catalog #rvs_ls #rvs_build_index #rvs_style_index #rvs_index_stats #rvs_git_import #rev_block_history_plan #history_feature_overview #rvs_build_blkmap #rvs_build_cks_rev #rvs_build_blkids #rvs_history #history_feature_status #rvs_stale
+
+API (rvs_lib)
+-----
+API access to (some of) the same rvs_lib features exposed by the CLI; extended as necessary to support frontend features.
+Justifies: #rvs_api_contract #rvs_api_history #rvs_api_history_rationale
+We also list API endpoint wiring through cmpr.py.
+Justifies: #handle_block_history #block_history
+
+Frontend (shortcommands)
+-----
+Provides programmer history UX; rvs shortcommand, history viz features to come, etc; incomplete.
+Justifies: #history_feature_status #shortcommand_rvs_behavior #shortcommand_rvs_types #shortcommand_rvs_parse_args #shortcommand_rvs_dispatch #shortcommand_rvs_help #shortcommand_rvs_autocomplete #shortcommand_rvs_output_format #shortcommand_rvs_freq_filter #shortcommand_rvs_bridge_lib #shortcommand_rvs_bridge_cli #shortcommand_rvs_index_status #shortcommand_rvs_errors #shortcommand_rvs_history #shortcommand_rvs_diff #shortcommand_rvs_diffs #shortcommand_rvs_revert #shortcommand_rvs_get #shortcommand_rvs_gets #shortcommand_rvs_manifest
+
+*/
+
 /* #agent_runner
 
 Helper utility to run agent CHECK and FIX modes.

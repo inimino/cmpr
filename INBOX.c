@@ -19,6 +19,142 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 
 
 
+/* #cmpr_implementation
+
+Implementation hubs for cmpr.c functionality.
+
+This block organizes implementation areas not covered by #cmpr_c_overview's architectural view.
+
+## Implementation Areas
+
+#ui_display_overview
+#block_editing_overview
+#llm_integration_overview
+#prompt_system_overview
+#block_ops_overview
+#command_handlers_overview
+
+*/
+/* #ui_display_overview
+
+TUI display and interaction system.
+
+## State Management
+
+#ui_state - TUI state variables
+
+## Display Functions
+
+#clear_display - Screen clearing
+#sbv_display - Status bar and view display
+
+*/
+/* #llm_integration_overview
+
+LLM integration for code generation and rewriting.
+
+## Core LLM Functions
+
+#gpt_message - Message formatting for LLMs
+#send_to_llm - Send requests to LLM APIs
+
+## Response Handlers
+
+#handle_openai_response - Process OpenAI API responses
+#handle_ollama_response - Process Ollama API responses
+#handle_anthropic_response - Process Anthropic API responses
+
+*/
+/* #prompt_system_overview
+
+Prompt template system for LLM interactions.
+
+## Prompt Palette
+
+#prompt_palette_design - Design of the prompt palette system
+#prompt_palette - Prompt palette implementation
+#optable - Operation table for prompts
+#get_palette - Palette retrieval
+#apply_prompt - Apply prompt to blocks
+
+## Template System
+
+#prompt_template_design - Template system design
+#prompt_list_gen - Prompt list generation
+#get_prompt_template - Template retrieval
+#template_language_design - Template language specification
+#parse_template - Template parser
+
+## Template Processing
+
+#output_template_var - Output variable handling
+#lookup_output - Output lookup functions
+#expand_template - Template expansion
+#print_template_literal - Literal printing
+#gcb - Get current block for templates
+#current_block_template_vars - Block template variables
+#eval_template_variable - Variable evaluation
+
+## Standard Prompts
+
+#nl2plrewrite - NL to PL rewriting prompt
+#agreement - Agreement prompt
+#agreement_to_nl_diff - Agreement to NL diff
+
+*/
+/* #block_editing_overview
+
+Block editing and file operations.
+
+## Editor Integration
+
+#edit_current_block - Edit the current block
+#tmp_filename - Temporary file naming
+#launch_editor - Launch external editor
+#file_for_block - Find source file for a block
+#handle_edited_file - Process edited files
+
+## Language Detection
+
+#current_block_language - Get language for current block
+#guess_language_from_filename - Language detection from filename
+#language_for_block - Determine block's language
+
+## Block Parts
+
+#block_comment_part - Extract NL comment part
+#block_comment_part_excl - Extract NL excluding markers
+#block_code_part - Extract PL code part
+
+*/
+/* #command_handlers_overview
+
+Command-line and TUI command handlers.
+
+## Agent Commands
+
+#handle_agent_run - Run agent in CHECK/FIX mode
+#handle_agents - List available agents
+#handle_run - Run block as executable
+
+## Block Commands
+
+#handle_prompt - Apply prompts to blocks
+#handle_checksum - Compute block checksums
+#print_block - Print entire block
+#content_index - Search block content
+#block_from_arg - Resolve block from argument
+#block_id_arg - Parse block ID argument
+
+## Configuration and Files
+
+#check_dirs - Verify required directories
+#check_conf_vars - Validate configuration
+#ensure_conf_var - Ensure config variable exists
+#update_projfile - Update project files
+#new_rev - Create new revision
+
+*/
 /* #claude_experience_report_navigation_fixes_20251227
 
 Experience Report: Fixing Navigation Issues
