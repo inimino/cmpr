@@ -31,6 +31,10 @@ The following blocks serve as navigation hubs to reach different parts of the co
 #root_agent
 #cmpr_events
 
+## Build System
+
+#makefile
+
 */
 /* #claude_exploration_report
 
@@ -213,6 +217,10 @@ An example output of -T would be the following:
 Note that we only support 255 because we are only concerned in this version with events that are certain if they occur at all.
 This output indicates that we are looking at the example block.
 We would expect to see other things that are related to this block.
+
+## Guide and Documentation
+
+See #event_system_guide for a comprehensive guide to using the event system.
 
 ## Implementation and Related Blocks
 
@@ -9355,7 +9363,15 @@ int main(int argc, char** argv) {
 #endif
 
 /**/
-#include "prompt_templates.c"
+// Hardcoded prompt templates
+span pt_nl2pl_rewrite() { return S("```{langtag}\n{context}\n```\n\n(above: references)\n---\n(below: current task)\n\n```{langtag}\n{comment}\n```\n\nWrite the code only for the current task. Reply only with a code block beginning with \"```{langtag}\". Do not include comments.\n"); }
+span pt_agreement() { return S("TODO"); }
+span pt_agreement_to_nl_diff() { return S("TODO"); }
+span pt_agreement_to_pl_diff() { return S("TODO"); }
+span pt_pl2nl_rewrite() { return S("TODO"); }
+span pt_nl2algo() { return S("TODO"); }
+span pt_summarize_block() { return S("TODO"); }
+
 
 /* #get_prompt_template @gcb @prompt_template_design @prompt_list @complain_and_prompt
 

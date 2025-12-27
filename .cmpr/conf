@@ -17,16 +17,8 @@ language: Markdown
 file: TODO
 
 language: C
-file: prompt_templates.c
 
 language: Markdown
-file: prompts/nl2pl_rewrite
-file: prompts/agreement
-file: prompts/agreement_to_nl_diff
-file: prompts/agreement_to_pl_diff
-file: prompts/pl2nl_rewrite
-file: prompts/nl2algo
-file: prompts/summarize_block
 
 language: C
 file: spanio.c

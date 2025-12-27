@@ -176,6 +176,11 @@ The root block (#root) provides access to these main hubs:
 - **#cmpr_events** - Event system (T/E/S) for temporal reasoning
   - Event types and workflow
   - Memorize/recall functionality
+  - User guide: #event_system_guide
+
+- **#makefile** - Build system
+  - Build targets and process
+  - Dependencies and configuration
 
 **Example Navigation Paths**:
 
@@ -193,9 +198,13 @@ To understand the agent system:
 
 To work on the event system:
 - `#root` → `#cmpr_events` → referenced implementation blocks
+- `#root` → `#cmpr_events` → `#event_system_guide` (user guide)
 
 To work with spanio library:
 - `#root` → `#libraryintro` → specific span operations
+
+To understand the build system:
+- `#root` → `#makefile`
 
 **Rule**: If you cannot reach the blocks you need from the root block by following direct references, that is a PROBLEM. DO NOT work around it by using search commands. Instead:
 1. STOP and inform the user that navigation is broken
@@ -269,9 +278,9 @@ We're using cmpr to build cmpr itself here, so if cmpr doesn't work right, then 
 
 ### Single-Tier C System
 This is a pure C application with no web frontend or HTTP server:
-- **`cmpr.c`** - Main application: block database, CLI commands, and terminal UI (TUI)
+- **`cmpr.c`** - Main application: block database, CLI commands, and terminal UI (TUI). Includes hardcoded prompt templates for nl2pl code generation.
 - **`spanio.c`** - Custom I/O library using span-based string handling
-- **`prompt_templates.c`** - LLM prompt templates for nl2pl code generation
+- **`Makefile`** - Build system (see #makefile for details)
 
 ### Block-Based Code Organization
 - Code is organized into discrete "blocks" with IDs like `#block_name`
@@ -301,9 +310,10 @@ This is a pure C application with no web frontend or HTTP server:
 - Arena allocation avoiding malloc overhead
 - Efficient string operations without null-terminator dependencies
 
-### prompt_templates.c
-- LLM prompt templates for nl2pl (natural language to programming language) conversion
-- System prompts and few-shot examples for code generation
+### Prompt System
+- LLM prompt templates for nl2pl (natural language to programming language) conversion are hardcoded in cmpr.c
+- Prompt functions (pt_nl2pl_rewrite, pt_agreement, etc.) return template strings
+- Simplified from previous generation-based system to avoid circular build dependencies
 
 ## Development Patterns
 
@@ -372,13 +382,13 @@ Per the SN notation convention:
 
 ## File Structure
 
-- **Core Application**: `cmpr.c` (main application with CLI and TUI)
+- **Core Application**: `cmpr.c` (main application with CLI and TUI, includes hardcoded prompt templates)
 - **I/O Library**: `spanio.c` (span-based string handling)
-- **Prompt Templates**: `prompt_templates.c` (LLM prompts for nl2pl)
 - **Staging Area**: `INBOX.c` (staging area for new blocks)
 - **Configuration**: `.cmpr/conf` (project configuration)
-- **Build System**: `Makefile`
+- **Build System**: `Makefile` (see #makefile for details)
 - **Revisions**: `.cmpr/revs/` (automatic versioning)
+- **Events**: `.cmpr/events/` (event system snapshots), `.cmpr/T` (current transient memory)
 - **Build Output**: `dist/cmpr` (compiled binary)
 
 ## Common Pitfalls and Process Reminders

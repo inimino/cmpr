@@ -1,14 +1,11 @@
 CC := gcc
 
-.PHONY: all clean debug dev
+.PHONY: all clean debug dev install
 
 all: dist/cmpr
 
 CFLAGS := -O2 -Wall
 LDFLAGS := -lm
-
-# TODO: we should put the different builds in different output directories; currently switching requires `make -B`
-#OUTDIR := dev/
 
 debug: CFLAGS := -g -O0 -Wall -fsanitize=address
 debug: dist/cmpr
@@ -16,16 +13,9 @@ debug: dist/cmpr
 dev: CFLAGS := -g -O2 -Wall -Werror -fsanitize=address
 dev: dist/cmpr
 
-dist/cmpr: cmpr.c prompt_templates.c fdecls.h spanio.c siphash/siphash.o siphash/halfsiphash.o
+dist/cmpr: cmpr.c fdecls.h spanio.c siphash/siphash.o siphash/halfsiphash.o
 	mkdir -p dist
 	(VER=8; D=$$(date +%Y%m%d-%H%M%S); GIT=$$(git log -1 --pretty="%h %f"); echo '#line 1 "cmpr.c"' >cmpr-sed.c; sed 's/\$$VERSION\$$/'"$$VER"' (build: '"$$D"' '"$$GIT"')/' <cmpr.c >>cmpr-sed.c; echo "Version: $$VER (build: $$D $$GIT)"; $(CC) -o dist/cmpr-$$D cmpr-sed.c siphash/siphash.o siphash/halfsiphash.o $(CFLAGS) $(LDFLAGS) && rm -f dist/cmpr && ln -s cmpr-$$D dist/cmpr)
-
-prompt_list: cmpr.c fdecls.h spanio.c siphash/siphash.o siphash/halfsiphash.o
-	$(CC) -o prompt_list -D PROMPT_LIST cmpr.c siphash/siphash.o siphash/halfsiphash.o $(CFLAGS) $(LDFLAGS)
-
-prompt_templates.c: prompt_list prompts/*
-	rm -f prompts/*.bak
-	(echo "// GENERATED CODE, do not edit (see Makefile)"; ./prompt_list) > prompt_templates.c
 
 siphash/siphash.o: siphash/siphash.c
 	$(CC) -c siphash/siphash.c $(CFLAGS) -o siphash/siphash.o
@@ -35,6 +25,11 @@ siphash/halfsiphash.o: siphash/halfsiphash.c
 
 fdecls.h: cmpr.c
 	cat $^ | python3 extract_decls.py > fdecls.h
+
+clean:
+	rm -f dist/cmpr dist/cmpr-* cmpr-sed.c
+	rm -f fdecls.h
+	rm -f siphash/*.o
 
 install: dist/cmpr
 	install -m 755 dist/cmpr /usr/local/bin/cmpr
