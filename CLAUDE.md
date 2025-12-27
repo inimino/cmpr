@@ -297,6 +297,38 @@ This is a pure C application with no web frontend or HTTP server:
 - 20 bits = ~1 million to 1 confidence (virtually certain)
 - 0 bits = describes possible event with no support
 
+### Event System (T/E/S)
+
+The event system provides temporal reasoning capabilities through tracking events in "transient memory" (T).
+
+**Key Concepts**:
+- **T (transient memory)**: Current event state, automatically persisted to `.cmpr/T`
+- **E (events)**: Individual event strings with associated strength values
+- **S (strength)**: Binary log odds representing bits of support for a proposition
+- **SN lines**: Format is `"event_string" <strength>.` where interior quotes are NOT escaped
+
+**CLI Commands**:
+- `cmpr --T0` - Reset T to empty state
+- `cmpr --event "string" --strength 255` - Add event to T (currently only strength 255 supported)
+- `cmpr --T` - Print current T state as SN lines
+- `cmpr --memorize` - Save timestamped snapshot of T to `.cmpr/events/`
+- `cmpr --recall` - Search snapshots using current T as query, load matching snapshot with full context
+
+**Implementation Details**:
+- T persists automatically to `.cmpr/T` on every change
+- Events are loaded on startup and saved after modifications
+- Memorize creates timestamped snapshots (YYYYMMDD-HHMMSS-nanos format)
+- Recall searches snapshots (newest first) for ones containing any query event from current T, then loads all events from the matching snapshot
+- Event strings can contain any characters including quotes (per SN spec)
+- Duplicate events update strength rather than creating duplicates
+
+**SN Format Specification**:
+Per the SN notation convention:
+- SN lines begin with `"` and end with `" <digits>.`
+- Interior double quotes are NOT escaped
+- Parse by finding `" <digits>.` pattern at end of line
+- Everything between opening `"` and final `" <digits>.` is the event string
+
 ## File Structure
 
 - **Core Application**: `cmpr.c` (main application with CLI and TUI)

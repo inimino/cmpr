@@ -1,3 +1,19 @@
+/* #source_intro
+
+Source code introduction
+----
+
+The cmpr source is organized into blocks.
+
+Each block starts with a block comment, which is often followed by some code.
+
+The blocks can be read in sequence from start to end inside this file.
+
+If you start from #root, which is the next block, you can reach any block that has a code part within 2 hops.
+
+*/
+
+
 /* #root
 
 "We want this block to contain a list of blocks, such that each block contains another list of at least 2 and at most 16 other blocks, such that every code block in the project is reachable within 2 hops." 255.
@@ -14,21 +30,6 @@ The following blocks serve as navigation hubs to reach different parts of the co
 - #cmpr_events - The events/T/E/S system for temporal reasoning
 
 */
-/* #source_intro
-
-Source code introduction
-----
-
-The cmpr source is organized into blocks.
-
-Each block starts with a block comment, which is often followed by some code.
-
-The blocks can be read in sequence from start to end inside this file.
-
-If you start from #root, which is the next block, you can reach any block that has a code part within 2 hops.
-
-*/
-
 
 /* #claude_exploration_report
 
@@ -1743,6 +1744,34 @@ void event_memorize()
   This captures the joint event (all events in T at this moment).
   Does NOT clear T or modify .cmpr/T.
 
+void event_recall()
+  Associative memory lookup using current T as query.
+  Algorithm:
+    1. Check that T is non-empty (state->events.n > 0)
+       If empty, error: "Cannot recall with empty T. Add query events first."
+    2. Get list of all snapshot files in .cmpr/events/ directory
+       If no snapshots exist, error: "No memorized snapshots found."
+    3. Iterate through snapshots in reverse chronological order (newest first)
+       For each snapshot file:
+         a. Read snapshot contents
+         b. Parse events from snapshot into a temporary event list
+         c. Check if ANY query event from current T matches ANY event in snapshot
+            (Use span_eq to compare event_str fields)
+         d. If match found:
+            - Clear current T (state->events.n = 0)
+            - Load ALL events from snapshot into T (using event_add_internal)
+            - Call event_save_T() to persist
+            - Return successfully
+    4. If no matching snapshot found after checking all:
+       Error: "No memorized snapshot contains the query events."
+  
+  Implementation notes:
+    - Need temporary storage for snapshot events (can't overwrite T until we find a match)
+    - Use dir_listing to get snapshot files (already sorted lexicographically)
+    - Iterate in reverse (from end to beginning) to check newest first
+    - Match criterion: ANY query event matches ANY snapshot event (not ALL)
+    - On match, load complete snapshot (all events), not just matching ones
+
 void event_print_T()
   Print current T state as SN lines.
   For each event in state->events:
@@ -1774,43 +1803,7 @@ void event_add_internal(span event_str, unsigned char strength);
 spans dir_listing(span dirname);
 
 void event_parse_content(span content) {
-    state->events.n = 0;
-
-    while (!empty(content)) {
-        span line = head_line(&content);
-        if (empty(line)) continue;
-
-        // Skip leading whitespace
-        while (!empty(line) && (*line.buf == ' ' || *line.buf == '\t')) line.buf++;
-        if (empty(line)) continue;
-
-        // Expect format: "event_string" strength.
-        if (*line.buf != '"') continue;
-        line.buf++; // Skip opening quote
-
-        // Find closing quote
-        u8 *end = line.buf;
-        while (end < line.end && *end != '"') {
-            if (*end == '\\' && end + 1 < line.end) end++; // Skip escaped char
-            end++;
-        }
-        if (end >= line.end) continue; // No closing quote found
-
-        span event_str = (span){line.buf, end};
-        line.buf = end + 1; // Skip closing quote
-
-        // Skip whitespace
-        while (!empty(line) && (*line.buf == ' ' || *line.buf == '\t')) line.buf++;
-
-        // Parse strength
-        int strength = 0;
-        while (!empty(line) && *line.buf >= '0' && *line.buf <= '9') {
-            strength = strength * 10 + (*line.buf - '0');
-            line.buf++;
-        }
-
-        event_add_internal(event_str, (unsigned char)strength);
-    }
+    event_parse_sn(content);  // Use corrected SN-compliant parsing from #event_parse_sn
 }
 
 void event_load_T() {
@@ -1915,28 +1908,150 @@ void event_print_T() {
 }
 
 void event_recall() {
+    // 1. Check that T is non-empty (must have query events)
+    if (state->events.n == 0) {
+        prt("Error: Cannot recall with empty T. Add query events first.\n");
+        flush_exit(1);
+    }
+
+    // Save current T events as query (before we potentially overwrite them)
+    event_entries query_events = state->events;
+    
+    // 2. Get list of snapshot files
     span events_dir = prs("%.*s/events", len(state->cmprdir), state->cmprdir.buf);
     spans files = dir_listing(events_dir);
 
     if (files.n == 0) {
-        prt("No memorized events found.\n");
+        prt("No memorized snapshots found.\n");
         flush_exit(1);
     }
 
-    span latest = files.a[files.n - 1];
-    span path = prs("%.*s/%.*s", len(events_dir), events_dir.buf, len(latest), latest.buf);
-    span content = read_whole_file(path);
+    // 3. Search snapshots in reverse chronological order (newest first)
+    for (int i = (int)files.n - 1; i >= 0; i--) {
+        span snapshot_path = prs("%.*s/%.*s", len(events_dir), events_dir.buf, 
+                                  len(files.a[i]), files.a[i].buf);
+        span content = read_whole_file(snapshot_path);
+        
+        if (empty(content)) continue;
 
-    if (empty(content)) {
-        prt("Failed to read memorized events.\n");
-        flush_exit(1);
+        // Parse snapshot into temporary storage
+        event_entries snapshot_events = {0};
+        span saved_cmp = cmp;
+        event_entries saved_state_events = state->events;
+        state->events = snapshot_events;
+        
+        event_parse_content(content);
+        snapshot_events = state->events;
+        
+        // Check if any query event matches any snapshot event
+        int found_match = 0;
+        for (size_t qi = 0; qi < query_events.n; qi++) {
+            for (size_t si = 0; si < snapshot_events.n; si++) {
+                if (span_eq(query_events.a[qi].event_str, snapshot_events.a[si].event_str)) {
+                    found_match = 1;
+                    break;
+                }
+            }
+            if (found_match) break;
+        }
+
+        if (found_match) {
+            // Found a match! Load this snapshot into T
+            state->events = snapshot_events;
+            event_save_T();
+            cmp = saved_cmp;
+            return;
+        }
+
+        // No match, restore state and continue
+        state->events = saved_state_events;
+        cmp = saved_cmp;
     }
 
-    event_parse_content(content);
-    event_save_T();
+    // 4. No matching snapshot found
+    prt("No memorized snapshot contains the query events.\n");
+    flush_exit(1);
 }
+/* #event_parse_sn
 
+Parse event content in SN (Strength Notation) format.
 
+SN lines have the format: "<event_string>" <strength>.
+
+Where:
+- The line begins with a double quote (after optional whitespace)
+- The line ends with: double quote, space, one or more digits, and a period
+- Interior double quotes are NOT escaped
+- To parse, we must find the pattern `" <digits>.` at the end of the line
+- Everything between the opening `"` and the final `" <digits>.` pattern is the event string
+
+Parsing algorithm:
+1. For each line in content
+2. Skip leading whitespace
+3. If line doesn't start with `"`, skip it
+4. Search backwards from end of line for the pattern `" <digits>.`
+5. Extract the event string between opening `"` and the `"` in the end pattern
+6. Extract the strength digits
+7. Call event_add_internal with the event string and strength
+
+Implementation details:
+- Use head_line to get each line
+- Skip empty lines and lines without leading `"`
+- To find the end pattern: scan from end of line backwards
+- Look for `.` then digits going backwards, then space, then `"`
+- Event string is from position 1 (after opening quote) to the position of the final `"`
+- Parse strength as integer from the digit span
+
+*/
+void event_parse_sn(span content) {
+    state->events.n = 0;
+
+    while (!empty(content)) {
+        span line = head_line(&content);
+        if (empty(line)) continue;
+
+        // Skip leading whitespace
+        while (!empty(line) && (*line.buf == ' ' || *line.buf == '\t')) line.buf++;
+        if (empty(line)) continue;
+
+        // Must start with double quote
+        if (*line.buf != '"') continue;
+        line.buf++; // Skip opening quote
+
+        // Find the end pattern: " <digits>.
+        // Scan backwards from end of line
+        u8 *p = line.end - 1;
+        
+        // Skip past the period
+        if (p < line.buf || *p != '.') continue;
+        p--;
+
+        // Scan backwards over digits
+        u8 *digits_end = p + 1;
+        while (p >= line.buf && *p >= '0' && *p <= '9') p--;
+        u8 *digits_start = p + 1;
+        
+        if (digits_start >= digits_end) continue; // No digits found
+        
+        // Should have a space before digits
+        if (p < line.buf || *p != ' ') continue;
+        p--;
+        
+        // Should have a closing quote
+        if (p < line.buf || *p != '"') continue;
+        
+        // Event string is from line.buf to p (before the closing quote)
+        span event_str = (span){line.buf, p};
+        
+        // Parse strength from digits
+        int strength = 0;
+        for (u8 *d = digits_start; d < digits_end; d++) {
+            strength = strength * 10 + (*d - '0');
+        }
+        
+        event_add_internal(event_str, (unsigned char)strength);
+    }
+}
 /* #network_ret network return type, used by LLM API functions
 
 Contains a response, generally json, if success; an error, a human readable string, otherwise.
@@ -3121,7 +3236,10 @@ memorize:
   Save the current event state T to persistent storage.
 
 recall:
-  Load a previously memorized event state T from persistent storage.
+  Use current T as query to search memorized snapshots.
+  Finds the most recent snapshot containing any query event from current T.
+  Loads all events from that snapshot into T (associative memory lookup).
+  T must be non-empty before calling --recall (add query events first).
 
 T:
   Output the current event state T as SN (strength-notation) lines.
@@ -3259,8 +3377,12 @@ memorize:
   we don't need to load code for this
 
 recall:
-  load T state from persistent storage
-  replace current in-memory T with the loaded state
+  perform associative memory lookup using current T as query
+  search all timestamped snapshots in .cmpr/events/ (newest first)
+  for each snapshot, check if any event in current T matches any event in the snapshot
+  when a match is found, load all events from that snapshot into T
+  if T is empty, error: "Cannot recall with empty T. Add query events first."
+  if no matching snapshot found, error: "No memorized snapshot contains the query events."
   we don't need to load code for this
 
 T:
@@ -3341,7 +3463,7 @@ memorize:
   Save current event state T to persistent storage.
 
 recall:
-  Load previously memorized event state T.
+  Search snapshots using current T as query, load matching snapshot (associative memory).
 
 T:
   Output current event state T as SN lines.

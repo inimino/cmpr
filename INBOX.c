@@ -19,6 +19,60 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 
 
 
+/* #claude_experience_report_sn_parsing_20251227
+
+## Work completed
+
+Fixed event system to properly implement SN notation format per specification.
+
+## Problem identified
+
+The original `event_parse_content` function used naive quote-matching logic that stopped at the first `"` character encountered. This violated the SN specification which states:
+
+- "Interior double quotes are not escaped in any way"
+- SN lines are parsed by finding `" <digits>.` pattern at end of line
+- Everything between opening `"` and the final `" <digits>.` is the event content
+
+This meant events like `The message is: "hello world"` would be truncated to `The message is: ` when parsed from disk.
+
+## Solution implemented
+
+Created new block #event_parse_sn with correct SN-compliant parsing:
+1. Parse backwards from end of line to find pattern `" <digits>.`
+2. Extract event string from beginning to the `"` in that pattern
+3. Extract strength value from the digits
+4. No escaping/unescaping of interior quotes
+
+Modified #events_functions to make `event_parse_content` call the corrected `event_parse_sn` function.
+
+## Testing
+
+All existing tests pass:
+- test_events_basic.sh - PASS
+- test_events_persistence.sh - PASS
+- test_events_memorize_recall.sh - PASS
+
+Manual testing confirms:
+- Events with interior quotes write correctly: `"The message is: "hello world"" 255.`
+- Events round-trip correctly through save/load cycle
+- No escaping is applied (per SN spec)
+
+## Key learnings
+
+1. Read the specification first - the #SN block in ../cmpr clearly documented the format
+2. Tests should verify compliance with the spec, not implementation details
+3. When fixing code, check if it's block-managed before using traditional file tools
+4. Slow down when making edits - multiple rushed attempts created more errors
+5. SN is just "SN" - the notational convention, not an acronym
+
+## Files modified
+
+- Created #event_parse_sn block with corrected implementation
+- Modified #events_functions to delegate to #event_parse_sn
+- Modified cmpr.c directly (one-line change to event_parse_content body)
+- Updated CLAUDE.md with event system documentation
+
+*/
 /* #codex_report_events_agents_20251227 @INBOX
 
 # Events ↔ Agents alignment report
@@ -405,25 +459,34 @@ End-to-end test for the event system (T/E/S).
 **Test steps**:
 1. Run `dist/cmpr --T0`
 2. Add events to create state A: `dist/cmpr --event "state A event 1" --strength 255`
-3. Run `dist/cmpr --memorize` and capture the timestamp before the call
-4. Check that `.cmpr/events/` directory contains a new file
-5. Verify filename format matches revs format: YYYYMMDD-HHMMSS (or with fractional seconds)
-6. Read the file and verify it contains the event in SN format
-7. Add different event: `dist/cmpr --event "state B event" --strength 255`
-8. Verify `dist/cmpr --T` shows the new event (memorize doesn't clear T)
-9. Sleep 1 second, then run `dist/cmpr --memorize` again
-10. Verify two distinct timestamped files exist in `.cmpr/events/`
-11. Run `dist/cmpr --T0` to clear T
-12. **Test --recall**: Load the first memorized state (need to determine recall syntax - does it take a filename?)
-13. Verify T now contains the original events from state A
+3. Add another event: `dist/cmpr --event "state A event 2" --strength 255`
+4. Run `dist/cmpr --memorize` to save snapshot A
+5. Check that `.cmpr/events/` directory contains a new file
+6. Verify filename format matches revs format: YYYYMMDD-HHMMSS-nanos
+7. Read the file and verify it contains both events in SN format
+8. Sleep 1 second, clear T, add different events for state B
+9. Run `dist/cmpr --event "state B event 1" --strength 255`
+10. Run `dist/cmpr --memorize` again
+11. Verify two distinct timestamped files exist in `.cmpr/events/`
+12. **Test --recall with empty T**: Run `dist/cmpr --T0`, then `dist/cmpr --recall`
+13. Verify error: "Cannot recall with empty T. Add query events first."
+14. **Test associative recall**: Add query event from state A: `dist/cmpr --event "state A event 1" --strength 255`
+15. Run `dist/cmpr --recall`
+16. Verify T now contains ALL events from state A (both "state A event 1" and "state A event 2")
+17. **Test recall finds correct snapshot**: Clear T, add query from state B
+18. Run `dist/cmpr --recall` and verify it loads state B, not state A
+19. **Test recall with no match**: Clear T, add event not in any snapshot
+20. Run `dist/cmpr --recall` and verify error: "No memorized snapshot contains the query events."
 
 **Tricky aspects**:
 - Tests timestamp format consistency with existing revs convention
 - Verifies --memorize does NOT clear T (it's a snapshot, not a move)
-- Tests --recall functionality (loading a joint event)
-- Needs to handle the question: how does --recall select which timestamp to load?
+- Tests --recall as associative memory lookup (not "load latest")
+- Verifies recall uses current T as query and loads complete matching snapshot
+- Tests that recall finds most recent matching snapshot when multiple match
+- Tests all error cases: empty T, no snapshots, no matching snapshot
 
-**Open question**: Does --recall take a timestamp/filename argument, or does it load the most recent one, or something else?
+
 
 ## Test 4: test_events_edge_cases.sh
 
@@ -501,6 +564,7 @@ rm -rf "$TESTDIR"
 ```
 
 */
+
 /* #claude_experience_report_cmpr2_parity_20251227
 
 Experience Report: Implementing cmpr2 Parity for Block Manipulation Commands
