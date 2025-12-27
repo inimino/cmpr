@@ -19,6 +19,38 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 
 
 
+/* #codex_report_events_agents_20251227 @INBOX
+
+# Events ↔ Agents alignment report
+
+## Event system shape
+- **Transient memory (T)** persists to `.cmpr/T` automatically. Adding events with `--event` updates in-memory state and saves it; `--T0` clears and re-saves; `--memorize` snapshots T into timestamped files under `.cmpr/events`; `--recall` reloads the latest snapshot. The CLI prints T as SN lines via `--T`. The implementation lives in `#events_functions` (see cmpr.c lines ~1698-1938).
+- Events are stored as quoted strings paired with a strength value (currently 0 or 255 in practice). Parsing is string-based, making event spaces implicit (e.g., variations of "The block id is: …" all live in one implicit namespace).
+
+## Agent system shape
+- A **want** defines an event space: desired state vs. complements. Agents operate in CHECK/FIX modes to evaluate and adjust wants. Decision states (tracked → checked → assisted → owned) express how much automation exists.
+- The `--agents` command lists blocks ending in `_agent`, showing their first NL line to advertise available automation (implemented in `#handle_agents`).
+- Each agent is defined via NL + executable script blocks. Example: `#root_agent_check` and `#root_agent_fix` wrap shell scripts that report SN lines describing whether all blocks are reachable via the hub structure.
+
+## Interaction points
+- Agents communicate their findings using **SN notation**—each CHECK script emits event-state lines (e.g., "The constraint is satisfied." 20.) so the event subsystem or humans can treat outcomes as events.
+- Agent predicates often mirror event spaces. The root agent declares events such as "There is a block…not reachable from the root" or "The constraint is satisfied," making coverage violations first-class observations that could be stored in T or memorized alongside other events.
+- Because events persist to disk, agent runs can append or persist their emitted SN lines to provide a historical trail; currently this wiring is manual (agents print SN lines, while T persistence is separate).
+
+## Opportunities
+- Add a helper that lets agents pipe their SN output directly into `event_add` or `event_memorize`, creating durable records of agent checks and enabling time-series views of want satisfaction.
+- Document a convention for mapping agent result categories to event strings, so multiple agents (e.g., root coverage, prompt health) contribute consistently to the same event spaces.
+*/
+/* #codex_experience_report_events_agents_20251227_2 @INBOX
+
+Session experience report.
+
+- Built dist/cmpr to use block-aware tooling and reviewed event/agent blocks via the navigation hubs.
+- Documented how the event persistence flow aligns with agent wants and CHECK/FIX behaviors in a new Markdown report block.
+- Created .cmpr/revs directory after noticing cmpr could not write revisions when adding the report block.
+
+Next steps: consider wiring agent SN output into the event persistence helpers to keep historical traces of agent runs and align event namespaces across agents.
+*/
 /* #codex_experience_report_events_20251227_1 @INBOX
 
 Experience report after addressing event CLI review feedback.
