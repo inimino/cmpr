@@ -220,7 +220,9 @@ We would expect to see other things that are related to this block.
 
 ## Guide and Documentation
 
+See #ES_names for standard block event space definitions (BC, BS, BID, BIX, BTS).
 See #event_system_guide for a comprehensive guide to using the event system.
+See #block_context_workflow for the manual workflow to load complete block context into T.
 
 ## Implementation and Related Blocks
 
@@ -228,6 +230,129 @@ Implementation: #events_types (data structures), #events_functions (CLI operatio
 Design Q&A: #events_persistence_questions #events_workflow_questions #events_example_interpretation
 Testing: #test_events_proposal
 Integration: #claude_experience_report_root_agent_t_integration_20251227 (agent/event system integration)
+
+*/
+/* #block_context_workflow @cmpr_events @ES_names @event_system_guide
+
+Manual workflow for loading complete block context into T (transient memory).
+
+## Purpose
+
+When working on a specific block, we want to load everything relevant about that block into T, memorize it, and recall it later when resuming work. This creates temporal snapshots of block-focused work sessions.
+
+## The Five Standard Block Event Spaces
+
+From ES_names in cmpr2, five event spaces describe the complete state of a block:
+
+BID: "The block id is: {blockid}"
+BIX: "The block idx is: {idx}"  
+BC: "The block content is: {content}"
+BS: "The block summary is: {summary}"
+BTS: "The block revtime is: {ts}"
+
+Together these form the "total block event space" - a joint event with full support in all five spaces describes a complete block.
+
+## Manual Workflow
+
+### Starting a block work session:
+
+1. Reset T to empty state:
+   cmpr --T0
+
+2. Add the block id event:
+   cmpr --event "The block id is: #example_block" --strength 255
+
+3. Find the block index (from --files-blocks or --print-block):
+   cmpr --event "The block idx is: 42" --strength 255
+
+4. Extract and add block content:
+   cmpr --print-block '#example_block' > /tmp/block.txt
+   cmpr --event "The block content is: $(cat /tmp/block.txt)" --strength 255
+
+5. Add summary (extracted from first line of NL or manually written):
+   cmpr --event "The block summary is: Implements foo feature" --strength 255
+
+6. Add revision timestamp (from rvs system or file mtime):
+   cmpr --event "The block revtime is: 2025-12-27T10:30:00" --strength 255
+
+7. Add session metadata:
+   cmpr --event "Session started: $(date -Iseconds)" --strength 255
+   cmpr --event "Working on: feature X" --strength 255
+
+8. Save snapshot:
+   cmpr --memorize
+
+### During work:
+
+Add events as you discover things:
+   cmpr --event "Block #example_block references #other_block" --strength 255
+   cmpr --event "Found bug in line 42" --strength 255
+   cmpr --event "Attempted fix: approach A failed" --strength 255
+
+Periodically memorize important states:
+   cmpr --memorize
+
+### Resuming work:
+
+1. Reset T:
+   cmpr --T0
+
+2. Add block id query:
+   cmpr --event "The block id is: #example_block" --strength 255
+
+3. Recall the full context:
+   cmpr --recall
+
+4. View what was loaded:
+   cmpr --T
+
+This restores all events from the most recent snapshot containing that block id.
+
+## Extended Context (Optional)
+
+Beyond the five standard event spaces, you can add:
+
+Block references (what this block mentions):
+   cmpr --event "References block: #foo" --strength 255
+   cmpr --event "References block: #bar" --strength 255
+
+Reverse references (what references this block):
+   cmpr --grep '^#example_block' to find mentioning blocks
+   cmpr --event "Referenced by: #caller_block" --strength 255
+
+File location:
+   cmpr --event "Block file: cmpr.c" --strength 255
+
+Agent wants:
+   cmpr --event "Want: block must be reachable from root" --strength 255
+
+## Current Limitations
+
+1. Block content can be large - may hit event string limits
+   Workaround: Use BS (summary) instead of full BC (content)
+
+2. No automatic extraction tools yet
+   Must manually construct event strings from cmpr output
+
+3. Recall loads full snapshot - may include unrelated events
+   Workaround: Use distinctive block id events as primary query
+
+## Future Directions
+
+From Model system and product patterns:
+
+- Automatic BC → BS pattern learning (content to summary)
+- BID → BC product pattern (id to content lookup)
+- Multi-hop queries (block id → references → referenced content)
+- Surprise handlers for missing event spaces
+- Integration with agent system for automatic context loading
+
+## See Also
+
+#ES_names - Event space definitions (cmpr2)
+#event_system_guide - T/E/S system guide
+#Model - Model system and product patterns (cmpr2)
+#claude_product_pattern_experience - Product pattern exploration
 
 */
 /* #claude_experience_report_events_20251224 @cmpr_events

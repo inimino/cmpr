@@ -19,6 +19,27 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 
 
 
+/* #ES_names
+
+Event space names used, and patterns matched by their events:
+
+"The block content"
+  "The block content is: {content}"
+"The block summary"
+  "The block summary is: {summary}"
+"The block id"
+  "The block id is: {blockid}"
+"The block idx"
+  "The block idx is: {idx}"
+"The block revtime"
+  "The block revtime is: {ts}"
+
+We have short names used as convenient abbreviations: BC, BS, BID, BIX, BTS for these five respectively.
+(We could expose block content as BNL and BPL as well at some point---it's already obvious in context what these mean.)
+
+These five could be called the total block event space, and the joint event should be fully supported in each of the five atomic event spaces.
+
+*/
 /* #makefile
 
 Build system for cmpr.
@@ -1307,11 +1328,12 @@ Session complete. Delivered:
 No active blockers for this session's goals. Clean state for commit.
 
 >>>>>>> b4d9a3c (claude)
+
 /* #test_events_proposal
 
 End-to-end test for the event system (T/E/S).
 
-## Test 1: test_events_basic.sh
+## Test 1: test_events_basic.sh ✓ IMPLEMENTED
 
 **Purpose**: Basic T lifecycle - initialization, event addition, output format
 
@@ -1329,7 +1351,7 @@ End-to-end test for the event system (T/E/S).
 - Verifies exact output format (quotes, period after strength)
 - Checks file I/O happens correctly
 
-## Test 2: test_events_persistence.sh
+## Test 2: test_events_persistence.sh ✓ IMPLEMENTED
 
 **Purpose**: Cross-invocation persistence - T survives across cmpr calls
 
@@ -1348,7 +1370,7 @@ End-to-end test for the event system (T/E/S).
 - Verifies auto-load on startup and auto-save on changes
 - Tests that --T0 persists the empty state
 
-## Test 3: test_events_memorize_recall.sh
+## Test 3: test_events_memorize_recall.sh ✓ IMPLEMENTED
 
 **Purpose**: Joint event timestamping - --memorize creates timestamped snapshots
 
@@ -1382,9 +1404,7 @@ End-to-end test for the event system (T/E/S).
 - Tests that recall finds most recent matching snapshot when multiple match
 - Tests all error cases: empty T, no snapshots, no matching snapshot
 
-
-
-## Test 4: test_events_edge_cases.sh
+## Test 4: test_events_edge_cases.sh (NOT YET IMPLEMENTED)
 
 **Purpose**: String handling and strength updates
 
@@ -1407,7 +1427,7 @@ End-to-end test for the event system (T/E/S).
 - Tests edge cases: special chars, unicode, empty strings
 - Ensures file format can round-trip all these cases
 
-## Test 5: test_events_event_spaces.sh
+## Test 5: test_events_event_spaces.sh (NOT YET IMPLEMENTED)
 
 **Purpose**: Event space distinctness and prefix matching
 
@@ -1435,10 +1455,30 @@ End-to-end test for the event system (T/E/S).
 - Verifies the string interning/deduplication only deduplicates EXACT matches
 - Tests the conceptual model: event spaces are implicit in the string structure
 
+## Test 6: test_block_context.sh ✓ IMPLEMENTED
+
+**Purpose**: Complete block context loading using all 5 event spaces from #ES_names
+
+See #test_block_context for full documentation.
+
+**Test steps**:
+1. Select test block (#ES_names)
+2. Extract all 5 event spaces: BID, BIX, BC, BS, BTS
+3. Load all 5 into T with strength 255
+4. Memorize snapshot
+5. Reset T and query with just BID
+6. Recall and verify all 5 event spaces restored
+
+**Tricky aspects**:
+- Works with actual repository blocks (not temp directory)
+- Tests "joint event" concept: 5 event spaces describe complete block state
+- Tests associative recall: query with BID retrieves all other block properties
+- Validates #block_context_workflow pattern
+
 ## Implementation notes
 
 All tests should:
-- Use a temporary test directory with its own `.cmpr/` to avoid polluting the main repo
+- Use a temporary test directory with its own `.cmpr/` to avoid polluting the main repo (EXCEPTION: test_block_context works with actual repo)
 - Print clear PASS/FAIL status for each assertion
 - Exit with code 0 on success, non-zero on failure
 - Clean up temp files after running
@@ -1460,7 +1500,59 @@ rm -rf "$TESTDIR"
 ```
 
 */
+/* #test_block_context @test_events_proposal @block_context_workflow @ES_names
 
+End-to-end test for loading complete block context using all 5 event spaces.
+
+## Purpose
+
+Tests the #block_context_workflow pattern: loading a block's complete context into T using all 5 event spaces from #ES_names (BID, BIX, BC, BS, BTS), then verifying recall restores the full context.
+
+## Implementation
+
+File: tests/test_block_context.sh
+
+Uses a temporary test directory with synthetic block data. The test focuses on the event system behavior rather than file scanning, so it manually constructs all 5 event spaces for a synthetic block.
+
+## Test Steps
+
+1. Create synthetic block data (BID, BIX, BC, BS, BTS values)
+2. Reset T and add all 5 event spaces with strength 255
+3. Verify T contains exactly 5 events
+4. Verify each event space prefix is present
+5. Memorize the snapshot
+6. Verify snapshot file was created in .cmpr/events/
+7. Reset T and add only BID as query (1 event)
+8. Recall to load complete context
+9. Verify all 5 event spaces were restored
+10. Test recall with different query event space (BIX instead of BID)
+11. Verify recall via BIX also restores all 5 event spaces
+
+## What This Tests
+
+- Complete block context loading workflow with all 5 standard event spaces
+- Joint event concept: 5 event spaces together describe complete block state
+- Memorize creates complete snapshot with all events
+- Recall is associative: query with one event space (BID or BIX) retrieves all related events
+- Multiple query paths: can recall the same snapshot via different event spaces
+- Self-contained test using synthetic data (no dependency on actual codebase blocks)
+
+## Tricky Aspects
+
+- Uses synthetic data instead of real blocks to keep test self-contained
+- Tests associative recall with different query event spaces (BID vs BIX)
+- Verifies snapshot creation and file structure
+- Tests that recall restores complete context from partial query
+
+## Future Extensions
+
+- Test with multiple blocks in same snapshot (verify recall gets all related events)
+- Test BTS integration with actual rvs timestamps
+- Test BC with very large blocks (verify event size limits)
+- Test recall precedence (if multiple snapshots match, newest wins)
+- Test recall with multiple query events from different blocks
+
+*/
 /* #claude_experience_report_cmpr2_parity_20251227
 
 Experience Report: Implementing cmpr2 Parity for Block Manipulation Commands

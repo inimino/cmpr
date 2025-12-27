@@ -7,7 +7,7 @@ Guidance to Claude Code.
 
 cmpr provides code block database features.
 
-**cmpr1 vs cmpr2**: This is the cmpr1 codebase (C implementation). The parent directory contains cmpr2 (Python implementation), which is more feature-complete. cmpr1 now includes core agent framework documentation (#agent_infrastructure, #cmpr_agents) migrated from cmpr2. See #cmpr2_via_cmpr1 for accessing additional cmpr2 blocks.
+**cmpr1 vs cmpr2**: This is the cmpr1 codebase (C implementation). The parent directory contains cmpr2 (Python implementation), which is more feature-complete. cmpr1 now includes core agent framework documentation (#agent_infrastructure, #cmpr_agents) migrated from cmpr2. See #cmpr2_via_cmpr1 for accessing additional cmpr2 blocks. The cmpr2 root block is #cmpr_project (access via: `cd ../cmpr; cmpr --print-comment '#cmpr_project'`).
 
 ## Building and Testing
 
