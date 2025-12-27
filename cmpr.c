@@ -3088,7 +3088,7 @@ We present the supported arguments and flags in a tabular form (as with langtabl
 
 Command syntax summary:
 
-cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
+cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
 
 Command argument and flag table:
 
@@ -3116,6 +3116,7 @@ Command argument and flag table:
 --print-all
 --run <block_id>
 --agents
+--checksum
 --T0
 --event <string>
 --strength <value>
@@ -3223,6 +3224,14 @@ agents:
   An agent is any block with ID matching the pattern #agent_*.
   For each agent found, print the block ID and extract the first line of the NL comment as a description.
   Requires code to be loaded.
+
+checksum:
+  Read data from stdin and compute a checksum hash.
+  Outputs the checksum in standard format (hexadecimal representation of the hash).
+  Can handle up to 2^30 bytes of input.
+  Uses the same checksum function (selected_checksum) used internally for block versioning.
+  Useful for scripting and comparing content hashes.
+  Does not require code to be loaded.
 
 T0:
   Initialize or reset the event state T to empty.
@@ -3365,6 +3374,15 @@ agents:
   print count of agents found
   exit successfully
 
+checksum:
+  does NOT require code to be loaded
+  reads all available data from stdin into a buffer (up to 2^30 bytes)
+  creates a span from the buffer
+  calls selected_checksum(span) to compute the hash
+  formats the checksum as a hexadecimal string
+  prints the hex string to stdout followed by newline
+  flush and exit successfully
+
 T0:
   initialize the event state T to empty
   this means clearing any in-memory event structures
@@ -3464,6 +3482,9 @@ run:
 agents:
   List all registered agents (blocks matching #agent_* pattern).
 
+checksum:
+  Read data from stdin and output checksum hash in hexadecimal format.
+
 T0:
   Initialize or reset the event state T to empty.
 
@@ -3504,7 +3525,7 @@ Action flags (cannot be combined, mutually exclusive):
 - print-block, print-comment, print-code, expand-block
 - content-index, grep, count-blocks, files-blocks, print-all
 - rewritepl, prompt, after, replace, replace-comment, replace-code
-- run, agents
+- run, agents, checksum
 
 If more than one is set, we print an error message and exit.
 If any of these are set then we exit successfully, but if none of them is, then we will return from this function and enter our main loop.
@@ -3525,6 +3546,8 @@ If "--content-index <search>" is passed in, we call content_index() which search
 If "--run <block_id>" is passed in, we delegate to handle_run() which extracts and executes the PL code from that block.
 
 If "--agents" is passed in, we delegate to handle_agents() which lists all registered agents.
+
+If "--checksum" is passed in, we delegate to handle_checksum() which reads stdin and outputs the checksum hash.
 
 If "--expand-block <id>" is passed in, we parse the block ID/index, validate it, then call expand_block(idx) which prints the block with all @blockid references transitively expanded.
 
@@ -3556,7 +3579,7 @@ The indicator variables should include:
 - ind_print_block, ind_print_comment, ind_print_code, ind_expand_block
 - ind_content_index, ind_grep, ind_count_blocks, ind_files_blocks, ind_print_all
 - ind_rewritepl, ind_prompt, ind_after, ind_replace, ind_replace_comment, ind_replace_code
-- ind_run, ind_agents
+- ind_run, ind_agents, ind_checksum
 - ind_T0, ind_event, ind_strength, ind_memorize, ind_recall, ind_T
 - ind_map_error, ind_test_block_map
 
@@ -3580,7 +3603,7 @@ void handle_args(int argc, char **argv) {
     int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_expand_block = 0;
     int ind_content_index = 0, ind_grep = 0, ind_count_blocks = 0, ind_files_blocks = 0, ind_print_all = 0;
     int ind_rewritepl = 0, ind_prompt = 0, ind_after = 0, ind_replace = 0, ind_replace_comment = 0, ind_replace_code = 0;
-    int ind_run = 0, ind_agents = 0;
+    int ind_run = 0, ind_agents = 0, ind_checksum = 0;
     int ind_T0 = 0, ind_event = 0, ind_strength = 0, ind_memorize = 0, ind_recall = 0, ind_T = 0;
     int ind_map_error = 0, ind_test_block_map = 0;
     char *conf_filepath = NULL, *content_index_search = NULL, *grep_pattern = NULL, *run_block_id = NULL;
@@ -3648,6 +3671,8 @@ void handle_args(int argc, char **argv) {
             ind_run = 1;
         } else if (strcmp(argv[i], "--agents") == 0) {
             ind_agents = 1;
+        } else if (strcmp(argv[i], "--checksum") == 0) {
+            ind_checksum = 1;
         } else if (strcmp(argv[i], "--T0") == 0) {
             ind_T0 = 1;
         } else if (strcmp(argv[i], "--event") == 0 && i + 1 < argc) {
@@ -3678,7 +3703,7 @@ void handle_args(int argc, char **argv) {
     }
 
     if (ind_help) {
-        prt("Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n");
+        prt("Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n");
         flush_exit(0);
     }
 
@@ -3709,8 +3734,8 @@ void handle_args(int argc, char **argv) {
         flush_exit(0);
     }
 
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents > 1) {
-            prt("Error: --print-block, --print-comment, --print-code, --expand-block, --content-index, --grep, --count-blocks, --files-blocks, --print-all, --rewritepl, --prompt, --after, --replace, --replace-comment, --replace-code, --run, and --agents cannot be combined.\n");
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents + ind_checksum > 1) {
+            prt("Error: --print-block, --print-comment, --print-code, --expand-block, --content-index, --grep, --count-blocks, --files-blocks, --print-all, --rewritepl, --prompt, --after, --replace, --replace-comment, --replace-code, --run, --agents, and --checksum cannot be combined.\n");
             flush_exit(1);
         }
         if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents) {
@@ -3799,6 +3824,9 @@ void handle_args(int argc, char **argv) {
             flush_exit(0);
         } else if (ind_run) {
             handle_run(run_block_id);
+            flush_exit(0);
+        } else if (ind_checksum) {
+            handle_checksum();
             flush_exit(0);
         }
 
@@ -9733,6 +9761,70 @@ void handle_prompt(int block_idx) {
     spans vars = current_block_template_vars();
     span expanded_prompt = expand_template(template, vars);
     prt("%.*s", (int)(expanded_prompt.end - expanded_prompt.buf), expanded_prompt.buf);
+}
+/* #handle_checksum @cmpr_checksum @selected_checksum
+
+void handle_checksum(void);
+
+Read data from stdin and output the checksum hash in hexadecimal format.
+This implements the --checksum flag functionality.
+
+Implementation:
+1. Read all available data from stdin into a buffer (up to 2^30 bytes)
+   - Use a dynamically allocated buffer or the arena
+   - Read in chunks until EOF
+2. Create a span from the buffer data
+3. Call selected_checksum(span) to compute the hash
+   - This returns a checksum struct wrapping a u64
+4. Format the checksum as a hexadecimal string
+   - The checksum.hash field is a u64
+   - Print it as a 16-character hex string (8 bytes = 16 hex digits)
+5. Print the hex string to stdout followed by newline
+6. No need to call flush_exit here - caller handles that
+
+Note: If stdin is empty, still compute and output the checksum of empty input.
+*/
+
+
+void handle_checksum(void) {
+    size_t capacity = 1 << 20;
+    size_t size = 0;
+    u8 *buffer = malloc(capacity);
+    if (!buffer) {
+        prt("Error: Failed to allocate memory\n");
+        flush_exit(1);
+    }
+    while (1) {
+        if (size == capacity) {
+            capacity *= 2;
+            if (capacity > (1ULL << 30)) {
+                prt("Error: Input too large\n");
+                free(buffer);
+                flush_exit(1);
+            }
+            u8 *new_buffer = realloc(buffer, capacity);
+            if (!new_buffer) {
+                prt("Error: Realloc failed\n");
+                free(buffer);
+                flush_exit(1);
+            }
+            buffer = new_buffer;
+        }
+        size_t bytes_read = fread(buffer + size, 1, capacity - size, stdin);
+        if (bytes_read == 0) {
+            if (feof(stdin)) break;
+            if (ferror(stdin)) {
+                prt("Error reading stdin\n");
+                free(buffer);
+                flush_exit(1);
+            }
+        }
+        size += bytes_read;
+    }
+    span input = {buffer, buffer + size};
+    checksum cs = selected_checksum(input);
+    prt("%016llX\n", (unsigned long long)cs.__u);
+    free(buffer);
 }
 /* #grep_blocks
 
