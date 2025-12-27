@@ -19,6 +19,16 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 
 
 
+/* #codex_experience_report_events_20251227_1 @INBOX
+
+Experience report after addressing event CLI review feedback.
+
+- Rebuilt dist/cmpr to rely on block-aware commands and confirmed event workflows via the existing shell regression tests.
+- Verified persistence, memorize/recall, and strength validation paths remain stable; no code changes were required for the event handlers.
+- Captured new guardrails in AGENTS.md to remind future sessions to start with CLAUDE.md and stick to cmpr-first navigation instead of slower tools.
+
+Next steps: consider documenting the event CLI flow inline with the block navigation hubs so future contributors can reach it faster.
+*/
 /* #test_events_proposal
 
 End-to-end test for the event system (T/E/S).
