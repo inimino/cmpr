@@ -19,6 +19,348 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 
 
 
+/* #claude_experience_report_root_agent_per_block_plan_20251227
+
+Experience Report: Creating plan for per-block event tracking in root_agent
+
+SESSION GOAL:
+Create a planning block for restructuring root_agent to use per-block event tracking instead of aggregate counts.
+
+WHAT WAS ACCOMPLISHED:
+
+1. UNDERSTOOD THE CURRENT SYSTEM
+   - Read #cmpr_events, #ES_names, #claude_experience_report_root_agent_t_integration_20251227
+   - Understood current root_agent uses aggregate events: "Unreferenced blocks: 264" 255.
+   - Verified both agents run: CHECK and FIX modes working
+   - Found minor bug in CHECK: #makefile shows "0\n0 blocks" with bash integer error
+
+2. DESIGNED PER-BLOCK EVENT SYSTEM
+   - Event pattern: "Block #X is reachable from root in 2 hops" 255.
+   - Rationale: Positive-only events (absence = unreachable) keeps T smaller
+   - Backward compatible: keep aggregate events as summaries
+   - Short name: BR (block reachability)
+
+3. CREATED COMPREHENSIVE PLAN
+   - Created #root_agent_per_block_tracking_plan in INBOX
+   - Documented 5 implementation steps:
+     1. Define event space (#root_agent_block_reachability_es)
+     2. Modify CHECK to write per-block events (~30 lines)
+     3. Modify FIX to use per-block events (~20 lines)
+     4. Add query helpers (optional shell functions)
+     5. Update documentation
+   - Included testing plan (functional, accuracy, temporal, integration)
+   - Documented benefits: granular tracking, temporal queries, focused fixes
+   - Addressed open questions: hub membership, hop counts, incremental checks
+   - Estimated ~60 lines total, low risk
+
+4. VERIFIED AGENTS WORK
+   - Ran both cmpr --print-code '#root_agent_check_impl' | bash
+   - Ran both cmpr --print-code '#root_agent_fix_impl' | bash
+   - CHECK: reports 264 unreachable blocks, all hubs satisfy 2-16 constraint
+   - FIX: reads guidance file, reports implementing guided fix
+
+WHAT WORKS:
+
+✓ Planning block created and in INBOX
+✓ Event space design is clear and simple
+✓ Implementation steps are concrete and achievable
+✓ Testing plan covers all critical paths
+✓ Both existing agents verified working
+
+KNOWN ISSUES:
+
+1. Minor bug in CHECK: #makefile shows "0\n0 blocks" with newline in count
+   - bash integer comparison fails
+   - Needs wc output to be stripped of whitespace/newlines
+
+2. Planning block is in INBOX, needs permanent home
+   - Should probably go after #root_agent in cmpr.c
+   - Or create separate planning/design file
+
+BENEFITS OF PER-BLOCK TRACKING:
+
+1. Granular progress: "Block #X became reachable on 2025-12-27"
+2. Temporal queries: "How many blocks were reachable last week?"
+3. Focused FIX: Work on specific unreachable blocks
+4. Better debugging: "When did #X become unreachable?"
+5. Integration ready: Other agents can query block reachability
+
+NEXT STEPS:
+
+1. Review plan with programmer
+2. Move planning block to permanent location
+3. Implement event space definition block
+4. Modify CHECK implementation
+5. Test thoroughly
+6. Modify FIX implementation
+7. Update documentation
+
+PROCESS IMPROVEMENT:
+
+User requested that summaries should go in experience reports, not in chat responses.
+Need to update CLAUDE.md to document this pattern:
+- Experience reports contain detailed session documentation
+- Chat responses should be one-line references to the experience report
+- Keeps conversation clean, all detail in searchable blocks
+
+STATUS: Plan created, ready for review and implementation
+
+*/
+/* #root_agent_per_block_tracking_plan
+
+PLAN: Restructure root_agent to use per-block event tracking
+
+## Current State
+
+The root_agent currently operates monolithically:
+- CHECK mode: counts ALL unreachable blocks, reports aggregate number
+- FIX mode: works on ALL unreachable blocks at once
+- Events written to T are aggregates: "Unreferenced blocks: 264" 255.
+- No tracking of individual block reachability status
+
+## Desired State
+
+The root_agent should track reachability per-block using the event system:
+- For each block, maintain an event indicating reachability status
+- CHECK mode: iterate blocks, write per-block reachability events to T
+- FIX mode: focus on specific unreachable blocks
+- Progress tracking: can query "Which blocks became reachable this session?"
+
+## Event Space Design
+
+Define a new event space for block reachability:
+
+Event pattern: "Block {blockid} reachability: {status}"
+Where status ∈ {reachable, unreachable}
+
+Examples:
+- "Block #foo reachability: reachable" 255.
+- "Block #bar reachability: unreachable" 255.
+
+Alternative (simpler - only record positive):
+- "Block #foo is reachable from root in 2 hops" 255.
+- Absence means unreachable
+
+Recommendation: Use the simpler form. Only write events for reachable blocks.
+Rationale: Smaller T, faster queries, clear semantics (presence = reachable)
+
+## Implementation Steps
+
+### 1. Define the event space (#root_agent_block_reachability_es)
+
+Create a block documenting the event space:
+- Name: "Block reachability from root"
+- Pattern: "Block {blockid} is reachable from root in 2 hops"
+- Short name: BR (block reachability)
+- Add to #ES_names or create separate agent-specific event space registry
+
+### 2. Modify #root_agent_check_impl
+
+Current logic:
+1. Extract hub block IDs from #root
+2. For each hub, count referenced blocks
+3. Count total blocks in project
+4. Compute unreferenced count = total - referenced
+5. Write aggregate events to T
+
+New logic:
+1. Extract hub block IDs from #root
+2. Build set of all reachable blocks (BFS from root, max 2 hops):
+   - Start: blocks referenced in #root (1 hop)
+   - Expand: blocks referenced by hub blocks (2 hops)
+3. Iterate ALL blocks in project:
+   - If block in reachable set: write "Block #X is reachable from root in 2 hops" 255.
+   - Track counts for summary
+4. Write summary events (backward compatibility):
+   - "Total blocks: N" 255.
+   - "Reachable blocks: M" 255.
+   - "Unreachable blocks: N-M" 255.
+5. Memorize snapshot
+
+Benefits:
+- Complete per-block tracking
+- Can query T for specific block reachability
+- Can use --recall to track progress: "How many blocks were reachable yesterday?"
+- Backward compatible (still outputs summary)
+
+### 3. Modify #root_agent_fix_impl
+
+Current logic:
+1. Run CHECK to get unreachable count
+2. Check for guidance file
+3. If guidance exists, implement (not yet implemented)
+4. Write aggregate events to T
+
+New logic:
+1. Run CHECK to populate T with per-block reachability
+2. Query T for unreachable blocks: grep for absence of reachability events
+3. Check for guidance file
+4. If guidance exists:
+   a. Select blocks to group (from unreachable set)
+   b. Create hub block
+   c. Add references to hub block
+   d. Update #root to reference new hub
+   e. Write events: "Block #X hub created: #new_hub" 255.
+   f. Write events: "Block #new_hub added to root" 255.
+5. Memorize snapshot
+
+Benefits:
+- Can track which specific blocks were fixed
+- Can verify fix worked by checking if block is now reachable
+- Incremental progress visible in T
+
+### 4. Add query helpers (optional)
+
+Could add convenience commands:
+- `cmpr --unreachable-blocks`: Query T for blocks without reachability events
+- `cmpr --reachable-blocks`: Query T for blocks with reachability events
+- `cmpr --block-status <blockid>`: Check if specific block is reachable
+
+These could be implemented as:
+- New CLI flags in cmpr.c
+- Helper shell functions in root_agent
+- Separate query agent blocks
+
+Recommendation: Start with shell functions in agent, promote to CLI if useful.
+
+### 5. Update documentation
+
+Blocks to update:
+- #root_agent: Mention per-block tracking
+- #root_agent_check: Update description
+- #root_agent_fix: Update description
+- #ES_names: Add BR (block reachability) event space
+
+## Benefits of Per-Block Tracking
+
+1. **Granular Progress Tracking**
+   - Know exactly which blocks are fixed
+   - Can see: "10 blocks became reachable this session"
+   - Can track: "Block #X became reachable on 2025-12-27"
+
+2. **Focused FIX Mode**
+   - Work on specific unreachable blocks
+   - Can prioritize: "Fix blocks in cmpr.c first"
+   - Can verify: "Did creating hub #X make block #Y reachable?"
+
+3. **Better Debugging**
+   - Can answer: "When did block #X become unreachable?"
+   - Can compare: "What changed between when #X was reachable and unreachable?"
+   - Can identify: "Which hub creation made #X reachable?"
+
+4. **Temporal Queries**
+   - "How many blocks were reachable last week?"
+   - "Which blocks became reachable today?"
+   - "Show me all blocks that became reachable after creating hub #new_hub"
+
+5. **Integration with Other Agents**
+   - Other agents could query block reachability
+   - Could build dependency: "Only process reachable blocks"
+   - Could alert: "Code change made block unreachable"
+
+## Migration Strategy
+
+To avoid breaking existing functionality:
+
+Phase 1: Add per-block events while keeping aggregate events
+- Both old and new events written to T
+- Existing scripts continue to work
+- New queries can use per-block events
+
+Phase 2: Update downstream consumers to use per-block events
+- Migrate scripts to query per-block events
+- Verify no regressions
+
+Phase 3: Remove aggregate events (optional)
+- If per-block events fully replace aggregate
+- Clean up T event space
+
+Recommendation: Stay in Phase 1 indefinitely. Aggregate events are useful summaries.
+
+## Implementation Complexity
+
+Estimated changes:
+- #root_agent_check_impl: ~30 lines added (BFS logic, per-block event writes)
+- #root_agent_fix_impl: ~20 lines added (query unreachable blocks, per-block fix events)
+- #ES_names or new block: ~10 lines (document event space)
+- Testing: Verify per-block events are correct, test recall queries
+
+Total: ~60 lines, mostly in CHECK impl.
+
+Risk: Low. Additive change, backward compatible.
+
+## Testing Plan
+
+1. **Functional Test**
+   - Run CHECK: verify per-block events written to T
+   - Count events: should match number of reachable blocks
+   - Verify unreachable blocks have no events
+
+2. **Accuracy Test**
+   - Manually verify sample of blocks:
+     - Pick reachable block, verify event exists
+     - Pick unreachable block, verify event absent
+   - Cross-check with old aggregate count
+
+3. **Temporal Test**
+   - Run CHECK, memorize
+   - Create hub block, add to root
+   - Run CHECK again, memorize
+   - Recall both snapshots, compare block counts
+   - Verify specific blocks changed status
+
+4. **Integration Test**
+   - Run FIX mode, verify it uses per-block events
+   - Verify FIX writes per-block fix events
+   - Query: "Which blocks were fixed?"
+
+## Open Questions
+
+1. **Should we track hub membership?**
+   - Event: "Block #X is in hub #Y" 255.
+   - Benefit: Can query "Which blocks are in hub #cmpr_implementation?"
+   - Cost: More events to write
+   - Decision: Defer to future, not needed for MVP
+
+2. **Should we track hop count?**
+   - Event: "Block #X is reachable in 1 hop" vs "...in 2 hops"
+   - Benefit: Can optimize, identify blocks close to root
+   - Cost: More complex logic
+   - Decision: Defer to future, binary reachability sufficient for now
+
+3. **How to handle dynamic block creation?**
+   - If new blocks added, do we auto-check them?
+   - Or require manual CHECK run?
+   - Decision: Require manual CHECK run, agent doesn't auto-trigger
+
+4. **Should CHECK be incremental?**
+   - Only re-check blocks that changed or whose dependencies changed?
+   - Benefit: Faster for large codebases
+   - Cost: Much more complex
+   - Decision: No, keep full check for now (fast enough)
+
+## Next Steps
+
+1. Review this plan with programmer
+2. Implement #root_agent_block_reachability_es event space definition
+3. Modify #root_agent_check_impl to write per-block events
+4. Test CHECK mode thoroughly
+5. Modify #root_agent_fix_impl to use per-block events
+6. Test FIX mode thoroughly
+7. Update documentation blocks
+8. Commit changes
+
+## References
+
+Related blocks:
+- #root_agent (want definition)
+- #root_agent_check_impl (CHECK implementation)
+- #root_agent_fix_impl (FIX implementation)
+- #cmpr_events (event system)
+- #ES_names (event space registry)
+- #claude_experience_report_root_agent_t_integration_20251227 (integration pattern)
+
+*/
 /* #ES_names
 
 Event space names used, and patterns matched by their events:

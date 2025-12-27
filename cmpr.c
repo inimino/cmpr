@@ -775,6 +775,23 @@ This is why decisions have four states: tracked, checked, assisted, owned in the
 These are from the perspective of the system.
 We either track them (or they wouldn't have any state in the system) or we check them, which means we have a way to know the current state, or we can assist with them, which implies we can also check them, or they are owned, which means that we are expected to maintain the want without further input.
 
+## Running Agents
+
+To execute an agent:
+```bash
+cmpr --print-code '#agent_block_id' | bash
+```
+
+To list all available agents:
+```bash
+dist/cmpr --agents
+```
+
+Example - run the migration agent:
+```bash
+cmpr --print-code '#migration_agent' | bash
+```
+
 ## Agent Framework
 
 For general agent patterns and infrastructure:

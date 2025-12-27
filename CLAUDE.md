@@ -325,6 +325,28 @@ This is a pure C application with no web frontend or HTTP server:
 
 ### Agent System and Decision Tracking
 
+**Running Agents**:
+
+To execute an agent:
+```bash
+cmpr --print-code '#agent_block_id' | bash
+```
+
+To list all available agents:
+```bash
+dist/cmpr --agents
+```
+
+Example - run the migration agent:
+```bash
+cmpr --print-code '#migration_agent' | bash
+```
+
+Navigation to agents:
+1. Start at `#root` → follow to `#root_agent`
+2. `#root_agent` lists all agent blocks and explains how to run them
+3. See `#migration_agent` for cmpr2→cmpr1 block migration
+
 **Agent Architecture** (see #agent_framework for details):
 - An agent = **Predicate (Want)** + **Step Function (CHECK/FIX)**
 - Wants establish event spaces: {desired state, complement}
@@ -441,7 +463,31 @@ Never be afraid to go back to the root block and look for something else.
 
 ## Experience Reports
 
-- Don't continue debugging endlessly - know when to stop
-- Write an experience report block documenting what was accomplished and what's broken
-- User can pick up debugging in next session with full context
-- Experience report blocks follow naming pattern: `#claude_experience_report_TOPIC_YYYYMMDD_N` or substitute other agent name for "claude" here, e.g. "codex", or others.
+**When to Write**:
+- At the end of every work session
+- When completing significant tasks (planning, implementation, debugging)
+- When stopping work on something that's not finished
+
+**What to Include**:
+- Session goal
+- What was accomplished (detailed)
+- What works
+- Known issues/blockers
+- Next steps
+- Full context for resuming work
+
+**Naming Pattern**:
+- Format: `#<agent>_experience_report_<topic>_YYYYMMDD_N`
+- Agent names: claude, codex, or other agents
+- Examples: `#claude_experience_report_root_agent_per_block_plan_20251227`
+
+**Response Format**:
+- Chat responses should be ONE LINE referencing the experience report
+- Example: "See #claude_experience_report_root_agent_per_block_plan_20251227"
+- ALL details, summaries, and context go in the experience report block
+- Keep conversation clean and searchable - detail lives in blocks
+
+**Storage**:
+- Experience reports go in INBOX initially: `cat report.txt | cmpr --after '#INBOX'`
+- Can be moved to permanent locations later during review
+- Or left in INBOX as temporal documentation

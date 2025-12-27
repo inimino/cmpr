@@ -48,7 +48,7 @@ Process:
 Justifies: #cmpr2_to_cmpr1_migration
 
 Usage:
-  cmpr --run '#migration_agent'
+  cmpr --print-code '#migration_agent' | bash
 
 */
 #!/bin/bash
@@ -56,37 +56,23 @@ Usage:
 
 set -e
 
-echo "=== cmpr2 to cmpr1 Migration Agent ==="
-echo ""
+echo "=== cmpr2 to cmpr1 Migration Agent ===" >&2
+echo "" >&2
 
 # Get block lists using --files-blocks and extract block IDs
-echo "Scanning blocks in both repositories..."
-CMPR1_BLOCKS=$(dist/cmpr --files-blocks | grep '^Block' | awk '{print $3}')
-CMPR2_BLOCKS=$(cd ../cmpr && cmpr --files-blocks | grep '^Block' | awk '{print $3}')
+# Filter to only include lines with actual block IDs (starting with #)
+echo "Scanning blocks in both repositories..." >&2
+CMPR1_BLOCKS=$(dist/cmpr --files-blocks | grep '^Block' | awk '{print $3}' | grep '^#')
+CMPR2_BLOCKS=$(cd ../cmpr && cmpr --files-blocks | grep '^Block' | awk '{print $3}' | grep '^#')
 
 # Find blocks only in cmpr2
 CMPR2_ONLY=$(comm -13 <(echo "$CMPR1_BLOCKS" | sort) <(echo "$CMPR2_BLOCKS" | sort))
 
-echo ""
-echo "Blocks in cmpr2 but not in cmpr1:"
-echo "$CMPR2_ONLY" | head -20
-echo ""
-echo "Total: $(echo "$CMPR2_ONLY" | wc -l) blocks"
-echo ""
-
-# Show migration status if the tracking block exists
-if cmpr --print-comment '#cmpr2_to_cmpr1_migration' &>/dev/null; then
-    echo "Migration status from #cmpr2_to_cmpr1_migration:"
-    cmpr --print-comment '#cmpr2_to_cmpr1_migration' | grep -A 10 "Progress tracking"
-else
-    echo "Note: #cmpr2_to_cmpr1_migration want block not yet created"
-fi
-
-echo ""
-echo "Next steps:"
-echo "1. Review overview blocks to identify needed implementation blocks"
-echo "2. For each needed block, use: cmpr --print-code '#extract_block_from_cmpr2' | sh -s -- BLOCKID AFTER_BLOCKID"
-echo "3. Update #cmpr2_to_cmpr1_migration progress tracking"
+echo "" >&2
+echo "Blocks in cmpr2 but not in cmpr1:" >&2
+echo "$CMPR2_ONLY"
+echo "" >&2
+echo "Total: $(echo "$CMPR2_ONLY" | wc -l) blocks" >&2
 /* #claude_experience_report_agents_command_20251226
 
 Experience Report: Implementing the --agents Command
