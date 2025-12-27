@@ -162,6 +162,7 @@ void content_index(span search_text);
 int block_from_arg(char* arg);
 int block_id_arg(span block_id_or_int);
 void handle_run(char* run_block_id);
+void handle_agent_run(char* agent_name, char* mode);
 void handle_agents();
 void handle_prompt(int block_idx);
 void handle_checksum(void);

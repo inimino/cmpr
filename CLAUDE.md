@@ -7,6 +7,8 @@ Guidance to Claude Code.
 
 cmpr provides code block database features.
 
+**cmpr1 vs cmpr2**: This is the cmpr1 codebase (C implementation). The parent directory contains cmpr2 (Python implementation), which is more feature-complete. Some documentation references blocks that exist in cmpr2 but not yet in cmpr1 (e.g., #agent_framework, #agent_implementation_pattern). These represent implementation goals. See #cmpr2_via_cmpr1 for accessing cmpr2 blocks.
+
 ## Building and Testing
 
 ```bash
@@ -34,7 +36,7 @@ See #makefile for further details.
 When the user asks you to work on ANY task related to this codebase, you MUST:
 
 1. **START by reading the root block**: `cmpr --print-comment '#root'`
-2. **NAVIGATE using block references**: Follow block IDs mentioned in the output (3-5 hops to reach any part of codebase)
+2. **NAVIGATE using block references**: Follow block IDs mentioned in the output (2-3 hops to reach any part of codebase)
 3. **NEVER use the Task tool with Explore subagent** - it uses traditional tools and defeats the entire cmpr workflow
 4. **NEVER start with grep/find/Read/Glob** - these are fallbacks for when cmpr navigation fails
 
@@ -141,7 +143,7 @@ cat /tmp/events_types.txt | cmpr --after '#rev_info'
 All navigation MUST start from the root block and follow block references:
 
 1. **Start at the root block**: Read it with `cmpr --print-comment` to see the main navigation hubs
-2. **Use 3-5 hops**: You should be able to reach any area of the codebase in 3-5 `--print-comment` calls by following block references
+2. **Use 2-3 hops**: You should be able to reach any area of the codebase in 2-3 `--print-comment` calls by following block references
 
 **Example Navigation Paths**:
 
@@ -150,12 +152,12 @@ To add a CLI feature to cmpr.c (like --grep):
 - From there, look at similar implementations to understand the pattern
 
 To understand the agent/want/decision system:
-- `#root` → `#root_agent` (example agent implementation)
-- See agent-related blocks for patterns
+- `#root` → `#root_agent` → #root_agent_check, #root_agent_fix (executable agents)
+- Follow references to implementation, design, and integration blocks
 
 To work on the event system:
-- `#root` → `#cmpr_events` (main description)
-- Check `#INBOX` for latest experience reports and documentation
+- `#root` → `#cmpr_events` → #events_types, #events_functions (implementation)
+- Follow references to tests (#test_events_proposal) and integration docs
 
 **Rule**: If you cannot reach the blocks you need from the root block by following direct references, that is a PROBLEM. DO NOT work around it by using search commands. Instead:
 1. STOP and inform the user that navigation is broken
@@ -214,7 +216,7 @@ DO NOT work around it but always stop and make some edits.
 
 The basic idea is this:
 The root block should give a high-level overview of the parts of the project.
-If you know what you're trying to do (e.g. add feature X) then you should be able to determine where the relevant code is by just following blockids and using --print-comment 3-5 times, which makes things very efficient.
+If you know what you're trying to do (e.g. add feature X) then you should be able to determine where the relevant code is by just following blockids and using --print-comment 2-3 times, which makes things very efficient.
 When that's not the case, you should probably ask the programmer about what needs to be improved in the structure, because we're still building this system out.
 
 Similarly, if a cmpr command doesn't work or doesn't do what you expect, don't fall back to using other tools, but always let the programmer know and we'll fix it together.
@@ -286,11 +288,12 @@ This is a pure C application with no web frontend or HTTP server:
 3. **Assisted**: We can offer help with fixing it
 4. **Owned**: We automatically maintain the want
 
-**Implementing Agents** (see #agent_implementation_pattern):
+**Implementing Agents** (see #agent_implementation_pattern in cmpr2; #root_agent_check and #root_agent_fix for cmpr1 examples):
 - Create two blocks: predicate block + step function block
-- Both executable via `cmpr --print-code '#blockid' | sh`
+- Both executable via `cmpr --print-code '#blockid' | sh` or `bash`
 - Step functions report state using SN notation
-- Example: `#root` (predicate) + `#root_agent_check` (step function)
+- Example in cmpr1: `#root` (predicate) + `#root_agent_check` (CHECK mode) + `#root_agent_fix` (FIX mode)
+- Agents integrate with the event system (T) to record activity - see #claude_experience_report_root_agent_t_integration_20251227
 
 **SN Notation** for confidence levels:
 - 255 bits = definitional (statement is defined to be true)

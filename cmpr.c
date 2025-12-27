@@ -213,7 +213,12 @@ Note that we only support 255 because we are only concerned in this version with
 This output indicates that we are looking at the example block.
 We would expect to see other things that are related to this block.
 
-In #events_persistence_questions and #events_workflow_questions #events_example_interpretation are some LLM questions and human answers about the feature.
+## Implementation and Related Blocks
+
+Implementation: #events_types (data structures), #events_functions (CLI operations)
+Design Q&A: #events_persistence_questions #events_workflow_questions #events_example_interpretation
+Testing: #test_events_proposal
+Integration: #claude_experience_report_root_agent_t_integration_20251227 (agent/event system integration)
 
 */
 /* #claude_experience_report_events_20251224 @cmpr_events
@@ -633,13 +638,16 @@ For any want, there are three questions we can ask:
 3. Can we fix it?
 
 This is why decisions have four states: tracked, checked, assisted, owned in the system.
-These are the names from the perspective of the system.
+These are from the perspective of the system.
 We either track them (or they wouldn't have any state in the system) or we check them, which means we have a way to know the current state, or we can assist with them, which implies we can also check them, or they are owned, which means that we are expected to maintain the want without further input.
 
-We continue to explore the root agent implementation in #root_agent_impl below.
+## Implementation
+
+Executable agents: #root_agent_check (runs CHECK mode), #root_agent_fix (runs FIX mode)
+Design discussion: #root_agent_impl, #root_agent_impl_2, #root_agent_impl_3
+Integration with events: #claude_experience_report_root_agent_t_integration_20251227
 
 */
-
 /* #root_agent_impl
 
 The criteria are:
@@ -741,8 +749,17 @@ So it's a relational database.
 We need to be able to say here is an event, give me a number for it.
 Now from here we want Claude Code to sketch how we build this out.
 
-*/
+## Implementation Blocks
 
+The actual implementation is in:
+- #root_agent_check (description), #root_agent_check_impl (executable bash script)
+- #root_agent_fix (description), #root_agent_fix_impl (executable bash script)
+- #claude_experience_report_root_agent_t_integration_20251227 (how CHECK/FIX integrate with T)
+
+Related infrastructure:
+- #cmpr_rels (relational database system for joint events)
+
+*/
 /* #cmpr_rels
 
 Rels (Relations) System - Overview from cmpr2
@@ -3098,7 +3115,7 @@ We present the supported arguments and flags in a tabular form (as with langtabl
 
 Command syntax summary:
 
-cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
+cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
 
 Command argument and flag table:
 
@@ -3126,6 +3143,7 @@ Command argument and flag table:
 --print-all
 --run <block_id>
 --agents
+--agent-run <agent_name> <mode>
 --checksum
 --T0
 --event <string>
@@ -3233,6 +3251,16 @@ agents:
   List all registered agents in the project.
   An agent is any block with ID matching the pattern #agent_*.
   For each agent found, print the block ID and extract the first line of the NL comment as a description.
+  Requires code to be loaded.
+
+agent-run:
+  Execute an agent in the specified mode (CHECK or FIX).
+  Takes two arguments: <agent_name> and <mode>.
+  Mode must be either CHECK or FIX (case-insensitive).
+  Constructs the implementation block ID as #<agent_name>_<mode_lower>_impl.
+  For example: --agent-run root_agent CHECK executes #root_agent_check_impl.
+  Executes the agent's implementation block as a shell script.
+  Exits with the agent's exit code.
   Requires code to be loaded.
 
 checksum:
@@ -3384,6 +3412,17 @@ agents:
   print count of agents found
   exit successfully
 
+agent-run:
+  requires code be loaded, so call get_code() first
+  parse two arguments: agent_name and mode
+  validate mode is either "CHECK" or "FIX" (case-insensitive)
+  convert mode to lowercase
+  construct block ID: #<agent_name>_<mode_lower>_impl
+  delegate to handle_agent_run(agent_name, mode) which:
+    - finds the implementation block by constructed ID
+    - extracts and executes the PL code (similar to --run)
+    - exits with the agent's exit code
+
 checksum:
   does NOT require code to be loaded
   reads all available data from stdin into a buffer (up to 2^30 bytes)
@@ -3491,6 +3530,9 @@ run:
 
 agents:
   List all registered agents (blocks matching #agent_* pattern).
+
+agent-run:
+  Execute agent <agent_name> in <mode> (CHECK or FIX). Runs #<agent_name>_<mode>_impl block.
 
 checksum:
   Read data from stdin and output checksum hash in hexadecimal format.
@@ -3613,10 +3655,10 @@ void handle_args(int argc, char **argv) {
     int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_expand_block = 0;
     int ind_content_index = 0, ind_grep = 0, ind_count_blocks = 0, ind_files_blocks = 0, ind_print_all = 0;
     int ind_rewritepl = 0, ind_prompt = 0, ind_after = 0, ind_replace = 0, ind_replace_comment = 0, ind_replace_code = 0;
-    int ind_run = 0, ind_agents = 0, ind_checksum = 0;
+    int ind_run = 0, ind_agents = 0, ind_agent_run = 0, ind_checksum = 0;
     int ind_T0 = 0, ind_event = 0, ind_strength = 0, ind_memorize = 0, ind_recall = 0, ind_T = 0;
     int ind_map_error = 0, ind_test_block_map = 0;
-    char *conf_filepath = NULL, *content_index_search = NULL, *grep_pattern = NULL, *run_block_id = NULL;
+    char *conf_filepath = NULL, *content_index_search = NULL, *grep_pattern = NULL, *run_block_id = NULL, *agent_run_name = NULL, *agent_run_mode = NULL;
     char *arg_print_block = NULL, *arg_print_comment = NULL, *arg_print_code = NULL, *arg_expand_block = NULL;
     char *arg_rewritepl = NULL, *arg_prompt = NULL, *arg_after = NULL, *arg_replace = NULL, *arg_replace_comment = NULL, *arg_replace_code = NULL;
     char *event_str = NULL, *map_error_line = NULL;
@@ -3681,6 +3723,10 @@ void handle_args(int argc, char **argv) {
             ind_run = 1;
         } else if (strcmp(argv[i], "--agents") == 0) {
             ind_agents = 1;
+        } else if (strcmp(argv[i], "--agent-run") == 0 && i + 2 < argc) {
+            agent_run_name = argv[++i];
+            agent_run_mode = argv[++i];
+            ind_agent_run = 1;
         } else if (strcmp(argv[i], "--checksum") == 0) {
             ind_checksum = 1;
         } else if (strcmp(argv[i], "--T0") == 0) {
@@ -3713,7 +3759,7 @@ void handle_args(int argc, char **argv) {
     }
 
     if (ind_help) {
-        prt("Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n");
+        prt("Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n");
         flush_exit(0);
     }
 
@@ -3744,11 +3790,11 @@ void handle_args(int argc, char **argv) {
         flush_exit(0);
     }
 
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents + ind_checksum > 1) {
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents + ind_agent_run + ind_checksum > 1) {
             prt("Error: --print-block, --print-comment, --print-code, --expand-block, --content-index, --grep, --count-blocks, --files-blocks, --print-all, --rewritepl, --prompt, --after, --replace, --replace-comment, --replace-code, --run, --agents, and --checksum cannot be combined.\n");
             flush_exit(1);
         }
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents) {
+        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents + ind_agent_run) {
           get_code();
         }
         if (ind_print_block) {
@@ -3831,6 +3877,9 @@ void handle_args(int argc, char **argv) {
             flush_exit(0);
         } else if (ind_agents) {
             handle_agents();
+            flush_exit(0);
+        } else if (ind_agent_run) {
+            handle_agent_run(agent_run_name, agent_run_mode);
             flush_exit(0);
         } else if (ind_run) {
             handle_run(run_block_id);
@@ -9695,6 +9744,93 @@ void handle_run(char* run_block_id) {
     }
     int exit_code = system(tmp_path);
     unlink(tmp_path);
+    exit(WEXITSTATUS(exit_code));
+}
+/* #handle_agent_run
+
+void handle_agent_run(char* agent_name, char* mode);
+
+Handle the --agent-run command: execute an agent in CHECK or FIX mode.
+
+Implementation:
+- Validate that mode is either "CHECK" or "FIX" (case-insensitive)
+- Convert mode to lowercase
+- Construct the implementation block ID: <agent_name>_<mode_lower>_impl (without # prefix)
+- Find the block by ID using block_by_id()
+- Extract the PL part using block_code_part()
+- Write it to a temporary file /tmp/cmpr_agent_run_<pid>.sh
+- Make it executable with chmod +x
+- Execute it with system() and capture exit code
+- Clean up the temp file
+- Exit with the agent's exit code
+
+Example:
+  --agent-run root_agent CHECK
+    → finds block root_agent_check_impl
+    → executes its PL code
+
+  --agent-run root_agent FIX
+    → finds block root_agent_fix_impl
+    → executes its PL code
+
+Note: block_by_id expects block IDs WITHOUT the # prefix.
+*/
+void handle_agent_run(char* agent_name, char* mode) {
+    // Validate and normalize mode
+    char mode_lower[16];
+    if (strcasecmp(mode, "CHECK") == 0) {
+        strcpy(mode_lower, "check");
+    } else if (strcasecmp(mode, "FIX") == 0) {
+        strcpy(mode_lower, "fix");
+    } else {
+        prt("Error: Invalid mode '%s'. Must be CHECK or FIX.\n", mode);
+        flush_exit(1);
+    }
+    
+    // Construct block ID: #<agent_name>_<mode>_impl
+    char block_id[256];
+    snprintf(block_id, sizeof(block_id), "%s_%s_impl", agent_name, mode_lower);
+    
+    // Find the block
+    int block_idx = block_by_id(S(block_id));
+    if (block_idx == -1) {
+        prt("Error: Agent implementation block not found: %s\n", block_id);
+        prt("Expected block ID format: #<agent_name>_<mode>_impl\n");
+        flush_exit(1);
+    }
+    
+    // Extract code part
+    span block = state->blocks.a[block_idx];
+    span comment_part = block_comment_part(block);
+    span code_part = block;
+    code_part.buf = comment_part.end;
+    
+    if (empty(code_part)) {
+        prt("Error: Block %s has no code part\n", block_id);
+        flush_exit(1);
+    }
+    
+    // Write to temporary file
+    char tmp_path[256];
+    snprintf(tmp_path, sizeof(tmp_path), "/tmp/cmpr_agent_run_%d.sh", getpid());
+    write_to_file_span(code_part, S(tmp_path), 1);
+    
+    // Make executable
+    char chmod_cmd[512];
+    snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod +x %s", tmp_path);
+    int chmod_result = system(chmod_cmd);
+    if (chmod_result != 0) {
+        prt("Error: failed to chmod %s\n", tmp_path);
+        flush_exit(WEXITSTATUS(chmod_result));
+    }
+    
+    // Execute the agent
+    int exit_code = system(tmp_path);
+    
+    // Clean up
+    unlink(tmp_path);
+    
+    // Exit with agent's exit code
     exit(WEXITSTATUS(exit_code));
 }
 /* #handle_agents
