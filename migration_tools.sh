@@ -1,3 +1,35 @@
+/* #cmpr2_to_cmpr1_migration
+
+"We want cmpr1 to have the essential blocks from cmpr2 that are referenced by cmpr1's wants and overview blocks." 20.
+
+Context:
+- cmpr1 (C implementation) is the open-source version
+- cmpr2 (Python implementation) is more feature-complete and private
+- cmpr1 should have blocks it references but not necessarily ALL cmpr2 blocks
+- See #cmpr2_via_cmpr1 for how to access cmpr2 blocks
+
+Current state (2025-12-27):
+- 374 blocks in cmpr1
+- 1033 blocks in cmpr2  
+- 747 blocks in cmpr2 but not in cmpr1
+
+The migration agent (#migration_agent) helps identify which blocks should be migrated by:
+1. Listing blocks only in cmpr2
+2. Checking if they're referenced by cmpr1 wants/overviews
+3. Presenting candidates for human approval
+4. Using #extract_block_from_cmpr2 for approved migrations
+
+Progress tracking:
+- 2025-12-27: Agent fixed to use --files-blocks, now functional
+- Previous: Migrated 5 core blocks + helpers (see #claude_experience_report_cmpr2_parity_20251227)
+
+Next actions:
+1. Run migration agent to identify candidates
+2. Review cmpr1 overview blocks for broken references
+3. Migrate needed blocks one by one
+4. Update confidence level as progress is made
+
+*/
 /* #migration_agent
 
 Agent to manage the migration of blocks from cmpr2 to cmpr1 with human approval.
@@ -27,10 +59,10 @@ set -e
 echo "=== cmpr2 to cmpr1 Migration Agent ==="
 echo ""
 
-# Get block lists
+# Get block lists using --files-blocks and extract block IDs
 echo "Scanning blocks in both repositories..."
-CMPR1_BLOCKS=$(dist/cmpr cmpr.c --list-blocks)
-CMPR2_BLOCKS=$(dist/cmpr ../cmpr/cmpr.c --list-blocks)
+CMPR1_BLOCKS=$(dist/cmpr --files-blocks | grep '^Block' | awk '{print $3}')
+CMPR2_BLOCKS=$(cd ../cmpr && cmpr --files-blocks | grep '^Block' | awk '{print $3}')
 
 # Find blocks only in cmpr2
 CMPR2_ONLY=$(comm -13 <(echo "$CMPR1_BLOCKS" | sort) <(echo "$CMPR2_BLOCKS" | sort))
@@ -42,16 +74,19 @@ echo ""
 echo "Total: $(echo "$CMPR2_ONLY" | wc -l) blocks"
 echo ""
 
-# Show migration status
-echo "Migration status from #cmpr2_to_cmpr1_migration:"
-cmpr --print-comment '#cmpr2_to_cmpr1_migration' | grep -A 10 "Progress tracking"
+# Show migration status if the tracking block exists
+if cmpr --print-comment '#cmpr2_to_cmpr1_migration' &>/dev/null; then
+    echo "Migration status from #cmpr2_to_cmpr1_migration:"
+    cmpr --print-comment '#cmpr2_to_cmpr1_migration' | grep -A 10 "Progress tracking"
+else
+    echo "Note: #cmpr2_to_cmpr1_migration want block not yet created"
+fi
 
 echo ""
 echo "Next steps:"
 echo "1. Review overview blocks to identify needed implementation blocks"
 echo "2. For each needed block, use: cmpr --print-code '#extract_block_from_cmpr2' | sh -s -- BLOCKID AFTER_BLOCKID"
 echo "3. Update #cmpr2_to_cmpr1_migration progress tracking"
-
 /* #claude_experience_report_agents_command_20251226
 
 Experience Report: Implementing the --agents Command

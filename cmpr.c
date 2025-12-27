@@ -787,6 +787,13 @@ Executable agents: #root_agent_check (runs CHECK mode), #root_agent_fix (runs FI
 Design discussion: #root_agent_impl, #root_agent_impl_2, #root_agent_impl_3
 Integration with events: #claude_experience_report_root_agent_t_integration_20251227
 
+## Other Agents
+
+Migration between cmpr1 and cmpr2:
+- #cmpr2_to_cmpr1_migration - Want: essential cmpr2 blocks should be in cmpr1
+- #migration_agent - Agent to identify and migrate blocks from cmpr2
+- #extract_block_from_cmpr2 - Helper script for extracting individual blocks
+
 */
 /* #root_agent_impl
 
