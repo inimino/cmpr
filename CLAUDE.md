@@ -68,12 +68,12 @@ Assistant: [Uses Glob to find agent files] ❌ WRONG
 - `cmpr --find-block 'search_term'` - Find blocks containing text (deprecated, use --grep instead)
 - `cmpr --files-blocks` - Overview of all blocks in the project
 
-**List blocks in a specific file** (FE has `blocks <file>` shortcommand, CLI uses grep):
+**List blocks in a specific file**:
 ```bash
 cmpr --files-blocks | grep -A 1000 'file: rvs_lib.py' | grep -B 1000 -m 1 '^file:' | head -n -1
 ```
 
-This is annoying but it's what we have to do.
+This grep pipeline extracts just the blocks for a specific file from the `--files-blocks` output.
 
 **Editing Commands**:
 - `cmpr --replace '#id'` - Replace entire block (NL + PL) from stdin; for blocks with no PL part, this effectively replaces just the NL
@@ -163,12 +163,6 @@ To work on the event system:
 3. Only proceed with the original task after navigation is fixed
 4. If the only thing you do is fix the navigation, so that you can find what you need to in 2-3 hops from root, and then you end the session and the programmer commits your change, that was a good session.
 
-**Important Distinctions**:
-- **Shortcommands** (like `get`, `grep`, `llm`) are FRONTEND features only, available in the web UI.
-- They are NOT available when you're working with cmpr.c (the CLI/TUI)
-- Don't confuse shortcommands with CLI flags (like `--grep`, `--find-block`)
-- We are currently working towards feature parity between frontend and CLI/TUI features (the frontend is ahead).
-
 ### NL/PL Synchronization
 
 **Standard Workflow** (use this for all changes):
@@ -200,14 +194,14 @@ To work on the event system:
 ### Testing Changes
 
 **Build System**:
-- An automatic build agent continuously rebuilds `dist/cmpr` in the background
+- Run `make` to build `dist/cmpr`
 - Check build timestamp: `dist/cmpr --version`
-- Only run `make` manually if the build is failing (to see compiler errors)
-- After code changes, the build agent will automatically rebuild within seconds
+- The Makefile will compile changed source files and link the binary
 
 **Testing Binary**:
 - Always test with `dist/cmpr`, not the system `cmpr` command
 - The system `cmpr` at `/usr/local/bin/cmpr` will be older
+- After code changes, run `make` to rebuild before testing
 
 ### Code Conventions
 
@@ -233,10 +227,11 @@ We're using cmpr to build cmpr itself here, so if cmpr doesn't work right, then 
 
 ## Core Architecture
 
-### Three-Tier System
-1. **C Backend (`cmpr.c`)** - Core database and terminal UI with vim-like navigation
-2. **Python HTTP Server (`cmpr.py`)** - REST API and web frontend backend
-3. **JavaScript Frontend (`app.js`)** - Web-based user interface
+### Single-Tier C System
+This is a pure C application with no web frontend or HTTP server:
+- **`cmpr.c`** - Main application: block database, CLI commands, and terminal UI (TUI)
+- **`spanio.c`** - Custom I/O library using span-based string handling
+- **`prompt_templates.c`** - LLM prompt templates for nl2pl code generation
 
 ### Block-Based Code Organization
 - Code is organized into discrete "blocks" with IDs like `#block_name`
@@ -254,22 +249,21 @@ We're using cmpr to build cmpr itself here, so if cmpr doesn't work right, then 
 
 ## Key Components
 
-### C Backend (`cmpr.c`)
-- **Terminal UI**: Single-keystroke commands (`j/k/g/G` for navigation, `r` for rewrite, `B` for build)
-- **spanio.c**: Custom I/O library using span-based string handling with `.buf` and `.end` pointers
-- **Memory Management**: Arena allocation avoiding malloc overhead
-- **Operations**: Block navigation, code generation, building, search, history
+### cmpr.c (Main Application)
+- **CLI Mode**: Command-line interface with flags like `--grep`, `--print-block`, `--replace`, etc.
+- **Terminal UI (TUI)**: Interactive mode with single-keystroke commands (`j/k/g/G` for navigation, `r` for rewrite, `B` for build)
+- **Block Database**: Parses and manages blocks across all source files
+- **Operations**: Block navigation, code generation (nl2pl), building, search, history
+- **LLM Integration**: Calls external LLM APIs for nl2pl code generation
 
-### Python HTTP Server (`cmpr.py`)
-- **Shortcommands System**: Built-in commands (`get`, `replace`, `llm`, `save`, `accept`)
-- **File Watching**: Uses inotify to monitor code changes with SSE notifications
-- **LLM Integration**: Supports OpenAI, Claude, Ollama, llama.cpp
-- **Real-time Updates**: WebSocket-style communication for live updates
+### spanio.c (I/O Library)
+- Custom I/O library using span-based string handling with `.buf` and `.end` pointers
+- Arena allocation avoiding malloc overhead
+- Efficient string operations without null-terminator dependencies
 
-### JavaScript Frontend (`app.js`)
-- **Sections**: Projects & Builds, Decisions, Chat, Blocks & Files, History & Settings
-- **Real-time UI**: SSE for live file change notifications
-- **Conversation System**: Chat-like interface for AI interactions
+### prompt_templates.c
+- LLM prompt templates for nl2pl (natural language to programming language) conversion
+- System prompts and few-shot examples for code generation
 
 ## Development Patterns
 
@@ -305,13 +299,14 @@ We're using cmpr to build cmpr itself here, so if cmpr doesn't work right, then 
 
 ## File Structure
 
-- **Core Application**: `cmpr.c` (main C TUI)
-- **HTTP Server**: `cmpr.py` (Python backend)
-- **Web Interface**: `app.js`, `style.css`
-- **Configuration**: `.cmpr/conf`
-- **Prompts**: `/prompts/` directory
+- **Core Application**: `cmpr.c` (main application with CLI and TUI)
+- **I/O Library**: `spanio.c` (span-based string handling)
+- **Prompt Templates**: `prompt_templates.c` (LLM prompts for nl2pl)
+- **Staging Area**: `INBOX.c` (staging area for new blocks)
+- **Configuration**: `.cmpr/conf` (project configuration)
 - **Build System**: `Makefile`
 - **Revisions**: `.cmpr/revs/` (automatic versioning)
+- **Build Output**: `dist/cmpr` (compiled binary)
 
 ## Common Pitfalls and Process Reminders
 
@@ -326,7 +321,7 @@ After exiting planning mode or when context-switching, it's easy to forget cmpr 
 
 **Common mistakes**:
 - ❌ Using Task tool with Explore subagent to "explore the codebase" → ✅ Start at root block and navigate
-- ❌ Using `Write` to create new Python functions → ✅ Use `cmpr --after <block_id>`
+- ❌ Using `Write` to create new blocks → ✅ Use `cmpr --after <block_id>`
 - ❌ Using `Edit` to modify existing blocks → ✅ Use `cmpr --replace '#block_id'`
 - ❌ Using `Read` + manual parsing → ✅ Use `cmpr --print-comment '#block_id'`
 - ❌ Using `grep`/`find` to locate code → ✅ Use `cmpr --grep` or navigate from root
