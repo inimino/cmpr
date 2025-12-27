@@ -354,9 +354,11 @@ This is the FIX mode counterpart to #root_agent_check_impl.
 Strategy:
 1. Run CHECK mode to get list of unreferenced blocks
 2. Check for programmer guidance on how to group blocks (.cmpr/root_agent_guidance.txt)
-3. If no guidance exists, emit REQUEST for grouping strategy
+3. If no guidance exists, write REQUEST to .cmpr/requests/ and emit to stdout
 4. If guidance exists, implement the grouping
 5. Update #root to reference new hub blocks
+
+Requests are saved to: .cmpr/requests/YYYYMMDD-HHMMSS_root_agent_DECISION_NEEDED.txt
 
 */
 
@@ -396,11 +398,19 @@ if [ -f "$guidance_file" ]; then
     exit 0
 fi
 
-# Step 3: No guidance exists - emit REQUEST
-echo "No guidance found - emitting REQUEST" >&2
+# Step 3: No guidance exists - write REQUEST to persistent storage
+echo "No guidance found - submitting REQUEST to programmer" >&2
 echo >&2
 
-cat <<'REQUEST'
+# Create requests directory if it doesn't exist
+mkdir -p .cmpr/requests
+
+# Generate timestamp in format: YYYYMMDD-HHMMSS
+timestamp=$(date +%Y%m%d-%H%M%S)
+request_file=".cmpr/requests/${timestamp}_root_agent_DECISION_NEEDED.txt"
+
+# Write REQUEST to file
+cat > "$request_file" <<'REQUEST'
 REQUEST: DECISION_NEEDED
 AGENT: #root_agent
 PRIORITY: MEDIUM
@@ -413,6 +423,10 @@ OPTIONS:
 RATIONALE: Organizing 221+ blocks requires understanding the codebase architecture and intended structure. This is a one-time architectural decision that will shape future navigation.
 REQUEST
 
+# Also emit to stdout
+cat "$request_file"
+
 echo >&2
+echo "✓ REQUEST saved to: $request_file" >&2
 echo "To provide guidance, create .cmpr/root_agent_guidance.txt with your decision" >&2
 exit 1

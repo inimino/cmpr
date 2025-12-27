@@ -12,7 +12,6 @@ The following blocks serve as navigation hubs to reach different parts of the co
 - #cmpr_c_overview - High-level structure of cmpr.c: entry points, CLI, TUI, and core operations
 - #root_agent - The agent system for maintaining the root navigation structure
 - #cmpr_events - The events/T/E/S system for temporal reasoning
-- #claude_experience_report_blocklist_20251226 - Experience report: cmpr1 vs cmpr2 blocklist comparison and navigation structure analysis
 
 */
 /* #source_intro

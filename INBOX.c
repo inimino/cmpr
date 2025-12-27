@@ -61,6 +61,302 @@ Experience report after addressing event CLI review feedback.
 
 Next steps: consider documenting the event CLI flow inline with the block navigation hubs so future contributors can reach it faster.
 */
+
+/* #block_ops_overview
+
+Block Operations Overview
+
+This hub organizes the block manipulation and query functions in cmpr.c.
+
+## Block Printing and Display
+
+- #print_block - Print entire block (NL + PL)
+- #print_files_blocks - List all files and their blocks
+
+## Block Modification
+
+- #after - Insert new block after specified block ID
+- #replace - Replace entire block content from stdin
+- #replace_comment - Replace only NL part, preserve PL
+- #replace_code - Replace only PL part, preserve NL
+- #replace_block - General block replacement function
+- #replace_block_code_part - Replace code part of a block
+
+## Block Reference Expansion
+
+- #expand_refs_rec - Recursively expand @blockid references
+
+## Block Parts Extraction
+
+- #block_comment_part - Extract NL comment part of a block
+- #block_comment_part_excl - Extract NL excluding markers
+
+Referenced by: #cmpr_c_overview
+
+*/
+/* #claude_experience_report_agent_requests_20251227
+
+Experience Report: Agent/Event Status Assessment & Request Submission Enhancement
+Session Date: 2025-12-27
+
+## Objective
+
+User asked "Where are we on events / agents?" to understand current implementation status.
+Secondary task: Enhance root agent FIX mode to submit reports/requests to the programmer.
+
+## What Was Accomplished
+
+### 1. Comprehensive Status Assessment
+
+Navigated from #root through the agent/event system to assess current state:
+
+**Agent System - Framework Working:**
+- ✅ `--agents` command operational (lists 2 agents: root_agent, migration_agent)
+- ✅ Agent pattern established: Want (predicate) + CHECK mode + FIX mode
+- ✅ #agent_runner utility functional for executing agents
+- ✅ SN notation defined (0-255 bits confidence)
+- ✅ #agent_request_protocol designed with 4 request types
+
+**Root Agent Status:**
+- ✅ CHECK mode fully functional (`cmpr --print-code '#root_agent_check_impl' | bash`)
+- ✅ Reports findings: 297 total blocks, 224 unreachable from #root, 1 hub violation
+- ✅ FIX mode exists with REQUEST emission
+- 🎯 Want: "Every block reachable in 2 hops from #root" - NOT satisfied (20 bits)
+- ⚠️ #claude_experience_report_blocklist_20251226 has 115 child blocks (violates 2-16 constraint)
+
+**Event System - Designed but Non-Functional:**
+- ❌ All CLI commands broken: `--T0`, `--event`, `--memorize`, `--recall`, `--T`
+- ❌ Returns "not yet implemented in cmpr1" error
+- ❌ Arena initialization missing (documented in #claude_experience_report_events_20251224)
+- ✅ Design complete: 15 blocks of documentation
+- ✅ Architecture clear: T/E/S system, persistence to `.cmpr/T`, timestamped joint events
+- ✅ Functions designed: #events_functions with full API signatures
+- ✅ Data structures defined: #events_types with arena allocators
+
+### 2. Enhanced Request Submission Protocol
+
+Modified #root_agent_fix_impl to persistently save requests:
+
+**Before:**
+- Emitted REQUEST to stdout only
+- Ephemeral - gone after shell exits
+- Hard for programmer to track or review later
+
+**After:**
+- Creates `.cmpr/requests/` directory
+- Saves timestamped files: `YYYYMMDD-HHMMSS_root_agent_DECISION_NEEDED.txt`
+- Emits to stdout (for immediate visibility)
+- Persistent record for programmer review
+
+**Test Results:**
+- Moved `.cmpr/root_agent_guidance.txt` temporarily
+- Ran FIX mode successfully
+- Generated `.cmpr/requests/20251227-014004_root_agent_DECISION_NEEDED.txt`
+- File contains full REQUEST with OPTIONS, RATIONALE, etc.
+- Guidance file mechanism still works when present
+
+### 3. Navigation Discovery
+
+Found key architectural blocks:
+- #root → #root_agent (agent framework)
+- #root → #cmpr_events (event system design)
+- #root → #cmpr_c_overview (15 subsystem blocks)
+- #cmpr_rels documented (from cmpr2) - relational database for tracking associations
+
+## Current State Summary
+
+**Agents: Partially Operational (ASSISTED state)**
+- Can CHECK wants and report violations
+- Can FIX by emitting requests to programmer
+- REQUEST mechanism now persistent
+- Blocked on navigation structure (224/297 blocks unreachable)
+- Blocked on event system (can't use SN notation for persistent state)
+
+**Events: Designed but Unimplemented**
+- Zero working code despite extensive design
+- Need arena initialization fix first
+- Need implementation of #events_functions
+- Need CLI argument handling for --T0, --event, etc.
+- Architecture is sound: T persistence, joint events, event spaces as future indexes
+
+**Integration Gap:**
+- Agents designed to use event system for state tracking
+- Event system not working, so agents use bash exit codes + text output
+- Once events work, agents could record state in T: "Agent #root_agent status: BLOCKED." 20.
+
+## Technical Details
+
+**Request File Format:**
+```
+REQUEST: DECISION_NEEDED
+AGENT: #root_agent
+PRIORITY: MEDIUM
+CONTEXT: 221+ blocks are unreferenced from #root. Need to create hub blocks to organize them.
+OPTIONS:
+  - Option A: Group by file (create hub per source file)
+  - Option B: Group by functionality (create hubs like #cmpr_c_core, #cmpr_py_api, #frontend)
+  - Option C: Group by subsystem (create hubs like #parsing, #io, #ui, #agents, #revisions)
+  - Option D: Manual - programmer will create hubs manually
+RATIONALE: Organizing 221+ blocks requires understanding the codebase architecture and intended structure. This is a one-time architectural decision that will shape future navigation.
+```
+
+**Response Mechanisms (from #agent_request_protocol):**
+1. Simple file: `.cmpr/root_agent_guidance.txt` (currently used)
+2. Rels: `(#root_agent, "programmer-decision", "Option C")` (needs #cmpr_rels implementation)
+3. Directive blocks: `#root_agent_directive_YYYYMMDD_N` (manual)
+
+**Code Change:**
+Modified #root_agent_fix_impl PL (bash script):
+- Added `mkdir -p .cmpr/requests`
+- Generate timestamp: `date +%Y%m%d-%H%M%S`
+- Write to `$request_file` with cat heredoc
+- Report save location to stderr
+- Exit code 1 when blocked (no guidance)
+
+## Blockers and Issues
+
+**Navigation Structure Broken:**
+- 224/297 blocks (75%) unreachable from #root in 2 hops
+- This is the root agent's primary concern
+- Violates the want in #root (255 bits confidence it should be satisfied)
+
+**Event System Non-Functional:**
+- Prevents agents from using T for state persistence
+- Prevents SN notation from being machine-readable (currently just text output)
+- Prevents joint event tracking (e.g., "Agent X in state Y at time Z")
+
+**Hub Constraint Violation:**
+- #claude_experience_report_blocklist_20251226 has 115 child blocks
+- Should be split or not treated as a hub
+- Is an experience report, shouldn't be navigation hub
+
+## Next Steps Priority
+
+If goal is functional agents + events:
+
+1. **Fix event system** (high impact, unblocks agent state tracking):
+   - Add arena initialization in init() function
+   - Implement #events_functions (event_T0, event_add, etc.)
+   - Add CLI arg handling for --T0, --event, --memorize, --T
+   - Test basic workflow: `dist/cmpr --T0 && dist/cmpr --event "test" --strength 255 && dist/cmpr --T`
+
+2. **Fix navigation structure** (satisfies root agent's want):
+   - Create proper hub blocks for major subsystems
+   - Update #root to reference hubs (not experience reports)
+   - Verify 2-hop reachability from #root
+
+3. **Implement rels in cmpr1** (enables richer agent communication):
+   - Port #cmpr_rels from cmpr2
+   - Add CLI interface: `dist/cmpr --rel-add <rel> <a> <b>`
+   - Use for agent responses: `cmpr --rel-add programmer-decision #root_agent "Option C"`
+
+4. **Enhance migration_agent** (leverage the framework):
+   - Implement CHECK mode for #migration_agent
+   - Use request mechanism for block approval workflow
+
+## Process Observations
+
+**What Worked Well:**
+- Starting from #root and following block references (per CLAUDE.md mandate)
+- Using `cmpr --print-comment` for navigation (not grep/find)
+- Testing agent by running CHECK/FIX modes directly
+- Incremental enhancement: just add request persistence, test, done
+
+**CLAUDE.md Compliance:**
+- ✅ Started at #root (`cmpr --print-comment '#root'`)
+- ✅ Followed block references (3-5 hops to reach relevant blocks)
+- ✅ Used cmpr commands exclusively (no grep/find/Read for navigation)
+- ✅ Used `cmpr --replace` to modify #root_agent_fix_impl
+- ✅ Tested with `dist/cmpr` (not system cmpr)
+
+**What Could Improve:**
+- Should have checked if #migration_agent has implementations
+- Could create a `--requests` command to list pending requests
+- Could add request acknowledgment (move processed requests to `.cmpr/requests/processed/`)
+
+## Files Modified
+
+- #root_agent_fix_impl - Added request file persistence
+
+## Files Created
+
+- `.cmpr/requests/20251227-014004_root_agent_DECISION_NEEDED.txt` - Test request
+
+## Testing Performed
+
+1. Moved guidance file to test REQUEST emission path
+2. Ran `cmpr --print-code '#root_agent_fix_impl' | bash`
+3. Verified request file created with correct timestamp
+4. Verified file contains full REQUEST content
+5. Verified stdout emission still works
+6. Verified stderr messaging informs programmer of save location
+7. Restored guidance file to leave system in original state
+
+## Meta-Observations
+
+**Agent System Architecture:**
+The agent framework is surprisingly well-designed:
+- Predicates (wants) define event spaces
+- CHECK mode verifies state
+- FIX mode attempts repair or requests help
+- Four states: tracked → checked → assisted → owned
+- Root agent currently in ASSISTED state (can check, can request help, but needs guidance)
+
+**Event System Gap:**
+The most striking finding is the gap between event system design quality and implementation:
+- 15 blocks of well-thought-out design
+- Function signatures documented
+- Persistence model specified
+- Data structures defined
+- BUT: zero working code
+
+This suggests the design was done in a prior session but implementation was never started or was blocked.
+
+**Request Mechanism Value:**
+Adding persistent request storage is small change (5 lines) but high value:
+- Makes agent/programmer communication auditable
+- Enables asynchronous workflow (agent runs, programmer reviews later)
+- Creates paper trail for decisions
+- Sets pattern for other agents (migration_agent can use same mechanism)
+
+## Recommendations
+
+**For Events:**
+Don't start from scratch. The design in #events_functions is good. Just implement it:
+1. Arena init in init() function
+2. Implement the 6 functions as specified
+3. Add arg handling in #handle_args or equivalent
+4. Test with the examples in #cmpr_events
+
+**For Agents:**
+The framework works. Focus on making root agent reach OWNED state:
+1. Respond to the current REQUEST (choose grouping strategy)
+2. Implement the grouping in FIX mode
+3. Test CHECK mode reports satisfaction
+4. Then root agent can run autonomously
+
+**For Integration:**
+Once events work, enhance agents to use T for state:
+```bash
+cmpr --T0
+cmpr --event "Agent #root_agent checked at $(date)" --strength 255
+cmpr --event "Unreferenced blocks: 224" --strength 255  
+cmpr --event "Status: BLOCKED on programmer decision" --strength 255
+cmpr --memorize  # Creates timestamped joint event
+```
+
+This makes agent state queryable and enables richer automation.
+
+## Status
+
+Session complete. Delivered:
+1. Comprehensive status report on events/agents (answered user question)
+2. Enhanced FIX mode with persistent request submission
+3. This experience report for future reference
+
+No active blockers for this session's goals. Clean state for commit.
+
+>>>>>>> b4d9a3c (claude)
 /* #test_events_proposal
 
 End-to-end test for the event system (T/E/S).
