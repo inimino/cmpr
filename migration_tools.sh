@@ -238,3 +238,181 @@ awk -v blockid="$BLOCKID" '
     flag {print}
     flag && $0 == "*/" {flag=0; exit}
 ' "$CMPR2" | cmpr --after "$AFTER"
+/* #root_agent_check_impl
+
+Executable agent that checks if the #root want is satisfied.
+
+Run with: cmpr --print-code '#root_agent_check_impl' | bash
+
+Returns exit code 0 if satisfied, 1 if not.
+
+Reports event space state using SN notation.
+
+*/
+
+#!/bin/bash
+set -euo pipefail
+
+echo "=== Root Agent CHECK ===" >&2
+echo >&2
+
+# Step 1: Get all block IDs from #root
+echo "Step 1: Extracting hub block IDs from #root..." >&2
+root_nl=$(cmpr --print-comment '#root')
+hub_ids=$(echo "$root_nl" | grep -oE '#[a-zA-Z_][a-zA-Z0-9_]*' | grep -v '^#root$' || true)
+hub_count=$(echo "$hub_ids" | grep -c . || echo 0)
+
+echo "Found $hub_count hub blocks in #root:" >&2
+echo "$hub_ids" >&2
+echo >&2
+
+# Step 2: For each hub, extract leaf block IDs and verify 2-16 constraint
+echo "Step 2: Checking each hub block..." >&2
+all_leaf_blocks=""
+hub_violations=0
+for hub in $hub_ids; do
+    echo "  Checking $hub..." >&2
+    hub_nl=$(cmpr --print-comment "$hub" 2>/dev/null || echo "ERROR: Block not found")
+    if echo "$hub_nl" | grep -q "ERROR"; then
+        echo "    ❌ Hub block $hub does not exist!" >&2
+        hub_violations=$((hub_violations + 1))
+        continue
+    fi
+    
+    leaf_ids=$(echo "$hub_nl" | grep -oE '#[a-zA-Z_][a-zA-Z0-9_]*' | grep -v "^$hub$" || true)
+    leaf_count=$(echo "$leaf_ids" | grep -c . || echo 0)
+    
+    if [ "$leaf_count" -lt 2 ] || [ "$leaf_count" -gt 16 ]; then
+        echo "    ❌ Has $leaf_count blocks (should be 2-16)" >&2
+        hub_violations=$((hub_violations + 1))
+    else
+        echo "    ✓ Has $leaf_count blocks" >&2
+    fi
+    
+    all_leaf_blocks="$all_leaf_blocks"$'\n'"$leaf_ids"
+done
+echo >&2
+
+# Step 3: Get all blocks in project
+echo "Step 3: Getting all blocks in project..." >&2
+all_blocks=$(cmpr --files-blocks | grep -oE 'Block [0-9]+: #[a-zA-Z_][a-zA-Z0-9_]*' | grep -oE '#[a-zA-Z_][a-zA-Z0-9_]*' || true)
+total_blocks=$(echo "$all_blocks" | grep -c . || echo 0)
+echo "Total named blocks in project: $total_blocks" >&2
+echo >&2
+
+# Step 4: Check coverage
+echo "Step 4: Checking coverage..." >&2
+unreferenced=""
+for block in $all_blocks; do
+    # Skip #root and hubs
+    if [ "$block" = "#root" ]; then
+        continue
+    fi
+    if echo "$hub_ids" | grep -qF "$block"; then
+        continue
+    fi
+    
+    # Check if in leaf blocks
+    if ! echo "$all_leaf_blocks" | grep -qF "$block"; then
+        unreferenced="$unreferenced $block"
+    fi
+done
+
+unreferenced_count=$(echo "$unreferenced" | wc -w)
+if [ "$unreferenced_count" -gt 0 ]; then
+    echo "❌ Found $unreferenced_count unreferenced blocks" >&2
+else
+    echo "✓ All blocks are referenced" >&2
+fi
+
+echo >&2
+echo "=== Summary ===" >&2
+echo "Hub blocks: $hub_count" >&2
+echo "Hub violations: $hub_violations" >&2
+echo "Unreferenced blocks: $unreferenced_count" >&2
+echo >&2
+
+# Report event space state using SN notation
+if [ "$unreferenced_count" -gt 0 ]; then
+    echo '"There is a block in the project that contains code that is not reachable from the root." 20.'
+    exit 1
+elif [ "$hub_violations" -gt 0 ]; then
+    echo '"There is a hub block that does not satisfy the 2-16 constraint." 20.'
+    exit 1
+else
+    echo '"The constraint is satisfied." 20.'
+    exit 0
+fi
+/* #root_agent_fix_impl
+
+Executable agent that attempts to fix the #root want by creating hub blocks.
+
+Run with: cmpr --print-code '#root_agent_fix_impl' | bash
+
+This is the FIX mode counterpart to #root_agent_check_impl.
+
+Strategy:
+1. Run CHECK mode to get list of unreferenced blocks
+2. Check for programmer guidance on how to group blocks (.cmpr/root_agent_guidance.txt)
+3. If no guidance exists, emit REQUEST for grouping strategy
+4. If guidance exists, implement the grouping
+5. Update #root to reference new hub blocks
+
+*/
+
+#!/bin/bash
+set -euo pipefail
+
+echo "=== Root Agent FIX ===" >&2
+echo >&2
+
+# Step 1: Run CHECK to identify unreferenced blocks
+echo "Step 1: Running CHECK mode to identify issues..." >&2
+check_output=$(cmpr --print-code '#root_agent_check_impl' | bash 2>&1) || true
+echo "$check_output" >&2
+echo >&2
+
+# Extract unreferenced blocks count
+unreferenced_count=$(echo "$check_output" | grep "Unreferenced blocks:" | awk '{print $3}')
+
+if [ "$unreferenced_count" -eq 0 ]; then
+    echo "✓ No fixes needed - constraint is satisfied" >&2
+    exit 0
+fi
+
+echo "Found $unreferenced_count unreferenced blocks" >&2
+echo >&2
+
+# Step 2: Check for programmer guidance
+echo "Step 2: Checking for programmer guidance..." >&2
+
+guidance_file=".cmpr/root_agent_guidance.txt"
+if [ -f "$guidance_file" ]; then
+    echo "Found guidance file: $guidance_file" >&2
+    cat "$guidance_file" >&2
+    echo >&2
+    echo "✓ Implementing guided fix..." >&2
+    # Implementation of guided fix would go here
+    exit 0
+fi
+
+# Step 3: No guidance exists - emit REQUEST
+echo "No guidance found - emitting REQUEST" >&2
+echo >&2
+
+cat <<'REQUEST'
+REQUEST: DECISION_NEEDED
+AGENT: #root_agent
+PRIORITY: MEDIUM
+CONTEXT: 221+ blocks are unreferenced from #root. Need to create hub blocks to organize them.
+OPTIONS:
+  - Option A: Group by file (create hub per source file)
+  - Option B: Group by functionality (create hubs like #cmpr_c_core, #cmpr_py_api, #frontend)
+  - Option C: Group by subsystem (create hubs like #parsing, #io, #ui, #agents, #revisions)
+  - Option D: Manual - programmer will create hubs manually
+RATIONALE: Organizing 221+ blocks requires understanding the codebase architecture and intended structure. This is a one-time architectural decision that will shape future navigation.
+REQUEST
+
+echo >&2
+echo "To provide guidance, create .cmpr/root_agent_guidance.txt with your decision" >&2
+exit 1

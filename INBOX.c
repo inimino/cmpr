@@ -18,6 +18,151 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 */
 
 
+
+/* #test_events_proposal
+
+End-to-end test for the event system (T/E/S).
+
+## Test 1: test_events_basic.sh
+
+**Purpose**: Basic T lifecycle - initialization, event addition, output format
+
+**Test steps**:
+1. Run `dist/cmpr --T0` to reset T
+2. Add two events: `dist/cmpr --event "The block id is: #root" --strength 255`
+3. Add second event: `dist/cmpr --event "The block id is: #cmpr_events" --strength 255`
+4. Run `dist/cmpr --T` and capture output
+5. Verify output format matches SN notation: `"event_string" strength.`
+6. Verify `.cmpr/T` file exists and contains both events
+7. Verify file contents match `--T` output
+
+**Tricky aspects**:
+- Tests auto-persistence to `.cmpr/T` without explicit --memorize
+- Verifies exact output format (quotes, period after strength)
+- Checks file I/O happens correctly
+
+## Test 2: test_events_persistence.sh
+
+**Purpose**: Cross-invocation persistence - T survives across cmpr calls
+
+**Test steps**:
+1. Run `dist/cmpr --T0` to start fresh
+2. Add event in first invocation: `dist/cmpr --event "persistence test" --strength 255`
+3. **Do not call --memorize** (this tests auto-save to `.cmpr/T`)
+4. In second invocation, run `dist/cmpr --T` and verify event is still there
+5. Add another event: `dist/cmpr --event "second event" --strength 255`
+6. In third invocation, verify both events are present
+7. Run `dist/cmpr --T0` and verify T is now empty
+8. In fourth invocation, verify T is still empty (T0 was persisted)
+
+**Tricky aspects**:
+- Tests that T is NOT transient across invocations (despite the name "transient memory")
+- Verifies auto-load on startup and auto-save on changes
+- Tests that --T0 persists the empty state
+
+## Test 3: test_events_memorize_recall.sh
+
+**Purpose**: Joint event timestamping - --memorize creates timestamped snapshots
+
+**Test steps**:
+1. Run `dist/cmpr --T0`
+2. Add events to create state A: `dist/cmpr --event "state A event 1" --strength 255`
+3. Run `dist/cmpr --memorize` and capture the timestamp before the call
+4. Check that `.cmpr/events/` directory contains a new file
+5. Verify filename format matches revs format: YYYYMMDD-HHMMSS (or with fractional seconds)
+6. Read the file and verify it contains the event in SN format
+7. Add different event: `dist/cmpr --event "state B event" --strength 255`
+8. Verify `dist/cmpr --T` shows the new event (memorize doesn't clear T)
+9. Sleep 1 second, then run `dist/cmpr --memorize` again
+10. Verify two distinct timestamped files exist in `.cmpr/events/`
+11. Run `dist/cmpr --T0` to clear T
+12. **Test --recall**: Load the first memorized state (need to determine recall syntax - does it take a filename?)
+13. Verify T now contains the original events from state A
+
+**Tricky aspects**:
+- Tests timestamp format consistency with existing revs convention
+- Verifies --memorize does NOT clear T (it's a snapshot, not a move)
+- Tests --recall functionality (loading a joint event)
+- Needs to handle the question: how does --recall select which timestamp to load?
+
+**Open question**: Does --recall take a timestamp/filename argument, or does it load the most recent one, or something else?
+
+## Test 4: test_events_edge_cases.sh
+
+**Purpose**: String handling and strength updates
+
+**Test steps**:
+1. Run `dist/cmpr --T0`
+2. Add event with quotes: `dist/cmpr --event 'The message is: "hello world"' --strength 255`
+3. Verify `dist/cmpr --T` escapes the inner quotes correctly
+4. Add event with same string but different strength: `dist/cmpr --event 'The message is: "hello world"' --strength 128`
+5. Verify `dist/cmpr --T` shows only ONE event with strength 128 (update, not append)
+6. Add event with backslash: `dist/cmpr --event 'Path is: C:\test\file' --strength 255`
+7. Verify proper escaping in output
+8. Add event with newline character (if supported): `dist/cmpr --event $'Line 1\nLine 2' --strength 255`
+9. Verify handling of special characters
+10. Add event with unicode: `dist/cmpr --event "Unicode: 你好 🎉" --strength 255`
+11. Verify all events persist correctly to `.cmpr/T` and reload properly
+
+**Tricky aspects**:
+- Tests escape sequence handling (quotes, backslashes)
+- Verifies duplicate event detection and strength UPDATE (not append)
+- Tests edge cases: special chars, unicode, empty strings
+- Ensures file format can round-trip all these cases
+
+## Test 5: test_events_event_spaces.sh
+
+**Purpose**: Event space distinctness and prefix matching
+
+**Test steps**:
+1. Run `dist/cmpr --T0`
+2. Add multiple events with the same prefix but different suffixes:
+   - `dist/cmpr --event "The block id is: #root" --strength 255`
+   - `dist/cmpr --event "The block id is: #cmpr_events" --strength 255`
+   - `dist/cmpr --event "The block id is: #test_events_proposal" --strength 255`
+3. Add events from a different event space:
+   - `dist/cmpr --event "The file is: cmpr.c" --strength 255`
+   - `dist/cmpr --event "The file is: cmpr.py" --strength 255`
+4. Verify `dist/cmpr --T` shows all 5 events distinctly (5 lines of output)
+5. Add another event with completely different format:
+   - `dist/cmpr --event "Random event with no structure" --strength 255`
+6. Verify all 6 events are stored independently
+7. Test that prefixes don't cause false collisions:
+   - Add `dist/cmpr --event "The block" --strength 255` (prefix of previous event space)
+   - Verify this is stored as a 7th distinct event
+
+**Tricky aspects**:
+- Tests that event spaces (as described in #cmpr_events) work correctly
+- Events with same prefix but different suffix are distinct
+- No false prefix matching causes collisions
+- Verifies the string interning/deduplication only deduplicates EXACT matches
+- Tests the conceptual model: event spaces are implicit in the string structure
+
+## Implementation notes
+
+All tests should:
+- Use a temporary test directory with its own `.cmpr/` to avoid polluting the main repo
+- Print clear PASS/FAIL status for each assertion
+- Exit with code 0 on success, non-zero on failure
+- Clean up temp files after running
+- Use the built binary `dist/cmpr`, not the system-installed one
+- Be executable shell scripts with proper shebang
+
+Test runner pattern:
+```bash
+#!/bin/bash
+set -e
+TESTDIR=$(mktemp -d)
+cd "$TESTDIR"
+dist/cmpr --init  # or create .cmpr manually if needed
+
+# ... test steps ...
+
+echo "PASS: test_name"
+rm -rf "$TESTDIR"
+```
+
+*/
 /* #claude_experience_report_cmpr2_parity_20251227
 
 Experience Report: Implementing cmpr2 Parity for Block Manipulation Commands
