@@ -269,29 +269,37 @@ Returns exit code 0 if satisfied, 1 if not.
 
 Reports event space state using SN notation.
 
-NEW: Integrates with T (transient memory):
+Integrates with T (transient memory):
+- Clears T at the start (--T0) to start fresh
 - Writes agent metadata to T (agent name, mode, timestamp)
-- Writes CHECK results to T (unreferenced count, hub violations, etc.)
+- Writes CHECK results to T (hub count, violations, unreferenced count, status)
 - Memorizes snapshot after check (for historical tracking)
 
 The script should:
-1. Add event: "Agent: root_agent" to T
-2. Add event: "Mode: CHECK" to T
-3. Add event: "Timestamp: <ISO8601>" to T
-4. Run the check logic (count hubs, check coverage, etc.)
-5. Add event: "Hub blocks: N" to T
-6. Add event: "Hub violations: N" to T
-7. Add event: "Unreferenced blocks: N" to T
-8. Add event: "Status: constraint satisfied" or "Status: constraint not satisfied" to T
-9. Memorize the snapshot
-10. Output the main SN line (for backward compatibility)
-11. Return appropriate exit code
+1. Clear T with --T0 (fresh start for this check run)
+2. Add event: "Agent: root_agent" to T
+3. Add event: "Mode: CHECK" to T
+4. Add event: "Timestamp: <ISO8601>" to T
+5. Run the check logic (count hubs, check coverage, etc.)
+6. Add event: "Hub blocks: N" to T
+7. Add event: "Hub violations: N" to T
+8. Add event: "Unreferenced blocks: N" to T
+9. Add event: "Status: constraint satisfied" or "Status: constraint not satisfied" to T
+10. Memorize the snapshot
+11. Output the main SN line (for backward compatibility)
+12. Return appropriate exit code
+
+T is designed to hold summary state for ONE run, not accumulate hundreds of block IDs.
+For per-block tracking, use a separate loop pattern with --T0/--memorize per block.
 
 Manually maintained.
 
 */
 #!/bin/bash
 set -euo pipefail
+
+# Clear T to start fresh
+dist/cmpr --T0 2>/dev/null || true
 
 # Integrate with T: Write agent metadata
 dist/cmpr --event "Agent: root_agent" --strength 255 2>/dev/null || true
@@ -369,8 +377,8 @@ if [ "$unreferenced_count" -gt 0 ]; then
 else
     echo "✓ All blocks are referenced" >&2
 fi
-
 echo >&2
+
 echo "=== Summary ===" >&2
 echo "Hub blocks: $hub_count" >&2
 echo "Hub violations: $hub_violations" >&2
@@ -405,95 +413,6 @@ else
     dist/cmpr --memorize 2>/dev/null || true
     exit 0
 fi
-#!/bin/bash
-set -euo pipefail
-
-# Integrate with T: Write agent metadata
-dist/cmpr --event "Agent: root_agent" --strength 255 2>/dev/null || true
-dist/cmpr --event "Mode: FIX" --strength 255 2>/dev/null || true
-dist/cmpr --event "Timestamp: $(date -Iseconds)" --strength 255 2>/dev/null || true
-
-echo "=== Root Agent FIX ===" >&2
-echo >&2
-
-# Step 1: Run CHECK to identify unreferenced blocks
-echo "Step 1: Running CHECK mode to identify issues..." >&2
-check_output=$(cmpr --print-code '#root_agent_check_impl' | bash 2>&1) || true
-echo "$check_output" >&2
-echo >&2
-
-# Extract unreferenced blocks count
-unreferenced_count=$(echo "$check_output" | grep "Unreferenced blocks:" | awk '{print $3}')
-
-if [ "$unreferenced_count" -eq 0 ]; then
-    echo "✓ No fixes needed - constraint is satisfied" >&2
-    dist/cmpr --event "Status: no fix needed (constraint satisfied)" --strength 255 2>/dev/null || true
-    dist/cmpr --memorize 2>/dev/null || true
-    exit 0
-fi
-
-echo "Found $unreferenced_count unreferenced blocks" >&2
-echo >&2
-
-dist/cmpr --event "Issue found: $unreferenced_count unreferenced blocks" --strength 255 2>/dev/null || true
-
-# Step 2: Check for programmer guidance
-echo "Step 2: Checking for programmer guidance..." >&2
-
-guidance_file=".cmpr/root_agent_guidance.txt"
-if [ -f "$guidance_file" ]; then
-    echo "Found guidance file: $guidance_file" >&2
-    cat "$guidance_file" >&2
-    echo >&2
-    echo "✓ Implementing guided fix..." >&2
-    
-    dist/cmpr --event "Guidance found: following programmer instructions" --strength 255 2>/dev/null || true
-    dist/cmpr --event "Status: implementing guided fix" --strength 255 2>/dev/null || true
-    dist/cmpr --memorize 2>/dev/null || true
-    
-    # Implementation of guided fix would go here
-    exit 0
-fi
-
-# Step 3: No guidance exists - write REQUEST to persistent storage
-echo "No guidance found - submitting REQUEST to programmer" >&2
-echo >&2
-
-# Create requests directory if it doesn't exist
-mkdir -p .cmpr/requests
-
-# Generate timestamp in format: YYYYMMDD-HHMMSS
-timestamp=$(date +%Y%m%d-%H%M%S)
-request_file=".cmpr/requests/${timestamp}_root_agent_DECISION_NEEDED.txt"
-
-# Write REQUEST to file
-cat > "$request_file" <<'REQUEST'
-REQUEST: DECISION_NEEDED
-AGENT: #root_agent
-PRIORITY: MEDIUM
-CONTEXT: 221+ blocks are unreferenced from #root. Need to create hub blocks to organize them.
-OPTIONS:
-  - Option A: Group by file (create hub per source file)
-  - Option B: Group by functionality (create hubs like #cmpr_c_core, #cmpr_py_api, #frontend)
-  - Option C: Group by subsystem (create hubs like #parsing, #io, #ui, #agents, #revisions)
-  - Option D: Manual - programmer will create hubs manually
-RATIONALE: Organizing 221+ blocks requires understanding the codebase architecture and intended structure. This is a one-time architectural decision that will shape future navigation.
-REQUEST
-
-# Also emit to stdout
-cat "$request_file"
-
-echo >&2
-echo "✓ REQUEST saved to: $request_file" >&2
-echo "To provide guidance, create .cmpr/root_agent_guidance.txt with your decision" >&2
-
-# Write to T that we emitted a request
-dist/cmpr --event "Request emitted: DECISION_NEEDED" --strength 255 2>/dev/null || true
-dist/cmpr --event "Request file: $request_file" --strength 255 2>/dev/null || true
-dist/cmpr --event "Status: awaiting programmer guidance" --strength 255 2>/dev/null || true
-dist/cmpr --memorize 2>/dev/null || true
-
-exit 1
 /* #root_agent_fix_impl
 
 Executable agent that attempts to fix the #root want by creating hub blocks.
@@ -511,16 +430,20 @@ Strategy:
 
 Requests are saved to: .cmpr/requests/YYYYMMDD-HHMMSS_root_agent_DECISION_NEEDED.txt
 
-NEW: Integrates with T (transient memory):
-- Writes agent metadata to T (agent name, mode, timestamp)
-- Records each action taken (hub created, blocks grouped, etc.)
-- Records if request was emitted
+Integrates with T (transient memory):
+- Clears T at the start (--T0) to start fresh
+- Runs CHECK as subprocess (CHECK writes to T but we discard that)
+- Writes FIX agent metadata to T AFTER CHECK completes
+- Records each action taken (guidance found, request emitted, etc.)
 - Memorizes snapshot after FIX attempt
 
 The script should:
-1. Add event: "Agent: root_agent" to T
-2. Add event: "Mode: FIX" to T
-3. Add event: "Timestamp: <ISO8601>" to T
+1. Clear T with --T0 (fresh start for this FIX run)
+2. Run CHECK to identify issues (CHECK will write to T and memorize its own snapshot)
+3. After CHECK completes, write FIX metadata to T:
+   - "Agent: root_agent"
+   - "Mode: FIX"
+   - "Timestamp: <ISO8601>"
 4. Run the fix logic
 5. For each hub created: Add event: "Created hub: #hub_name with N blocks" to T
 6. If request emitted: Add event: "Request emitted: DECISION_NEEDED" to T
@@ -528,17 +451,16 @@ The script should:
 8. Memorize the snapshot
 9. Return appropriate exit code
 
+Note: FIX gets its own clean T state separate from CHECK. Both memorize independently.
+
 Manually maintained.
 
 */
-
 #!/bin/bash
 set -euo pipefail
 
-# Integrate with T: Write agent metadata
-dist/cmpr --event "Agent: root_agent" --strength 255 2>/dev/null || true
-dist/cmpr --event "Mode: FIX" --strength 255 2>/dev/null || true
-dist/cmpr --event "Timestamp: $(date -Iseconds)" --strength 255 2>/dev/null || true
+# Clear T to start fresh
+dist/cmpr --T0 2>/dev/null || true
 
 echo "=== Root Agent FIX ===" >&2
 echo >&2
@@ -548,6 +470,11 @@ echo "Step 1: Running CHECK mode to identify issues..." >&2
 check_output=$(cmpr --print-code '#root_agent_check_impl' | bash 2>&1) || true
 echo "$check_output" >&2
 echo >&2
+
+# Now write FIX metadata to T (after CHECK has completed and used T)
+dist/cmpr --event "Agent: root_agent" --strength 255 2>/dev/null || true
+dist/cmpr --event "Mode: FIX" --strength 255 2>/dev/null || true
+dist/cmpr --event "Timestamp: $(date -Iseconds)" --strength 255 2>/dev/null || true
 
 # Extract unreferenced blocks count
 unreferenced_count=$(echo "$check_output" | grep "Unreferenced blocks:" | awk '{print $3}')

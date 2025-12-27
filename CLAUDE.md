@@ -402,6 +402,72 @@ Per the SN notation convention:
 - Parse by finding `" <digits>.` pattern at end of line
 - Everything between opening `"` and final `" <digits>.` is the event string
 
+**Event System Workflow and Design Intent**:
+
+CRITICAL UNDERSTANDING: T is "transient memory" - the name and the existence of `--T0` (clear T) reveal the design intent.
+
+T is meant to be CLEARED between work sessions. It holds CURRENT context, not ALL historical state.
+
+Typical workflow:
+```bash
+# Clear T for new work
+cmpr --T0
+
+# Set context (e.g., which block we're examining)
+cmpr --event "The block id is: #foo" --strength 255
+
+# Add facts about current context
+cmpr --event "The block author is: Alice" --strength 255
+cmpr --event "The block needs refactoring" --strength 255
+
+# Save snapshot for historical record
+cmpr --memorize
+
+# Repeat for next block/context
+```
+
+Event Pattern Usage:
+
+The **variable pattern** is the correct approach:
+```
+"The block id is: #foo" 255.
+"The block is reachable" 255.
+"The block author is: Alice" 255.
+```
+
+T holds context for ONE entity at a time. To track multiple entities, LOOP:
+```bash
+for block in $all_blocks; do
+  dist/cmpr --T0
+  dist/cmpr --event "The block id is: $block" --strength 255
+  dist/cmpr --event "The block is reachable" --strength 255
+  dist/cmpr --memorize
+done
+```
+
+WRONG APPROACHES (do not use):
+
+1. **"Embedded pattern"** - trying to avoid deduplication:
+   ```
+   "Block #foo is reachable" 255.  # WRONG
+   "Block #bar is unreachable" 255.  # WRONG
+   ```
+   This tries to load all entities into one T state, violating T's transient design.
+
+2. **Loading hundreds of events into one T state**:
+   Fights the design. T is not a database for all historical state.
+
+3. **"Alternative mechanisms"** (files, databases, etc.):
+   There is NO alternative. If you need per-entity tracking, use the T workflow correctly:
+   Loop with --T0, set context, add events, --memorize.
+
+When designing solutions:
+- If you find yourself fighting `--T0` or avoiding `--memorize`, you're doing it wrong
+- If you think you need an "embedded pattern" or "alternative mechanism", you're doing it wrong
+- T is for CURRENT work context, snapshots (via --memorize) are for HISTORICAL queries
+- Pay attention to what system commands exist - they reveal design intent
+- The existence of --T0 means T is MEANT to be cleared regularly
+
 ## File Structure
 
 - **Core Application**: `cmpr.c` (main application with CLI and TUI, includes hardcoded prompt templates)
@@ -435,6 +501,24 @@ After exiting planning mode or when context-switching, it's easy to forget cmpr 
 - ❌ Piping commands into `--replace-code` without testing → ✅ Test with `wc -l`, then `grep`, THEN replace
 - ❌ Grepping or filtering `make` output → ✅ Read it directly - it's a serious build system, not npm
 - ❌ Creating blocks without knowing final location → ✅ Use `cmpr --after '#INBOX'` and move later
+
+**CRITICAL: Navigation Structure**
+
+Every block MUST be reachable from #root in ≤2 hops. This is the #root want that root_agent maintains.
+
+When creating new blocks:
+1. ❌ **WRONG**: Create block in INBOX, leave it there permanently
+2. ✅ **CORRECT**: Create block AND immediately integrate it into navigation:
+   - Add reference to relevant hub block (e.g., #cmpr_events, #root_agent)
+   - OR create new hub if starting a new subsystem
+   - OR use INBOX only for temporary/experimental blocks
+
+The navigation structure IS the codebase organization. Breaking navigation means:
+- The block is effectively lost (not discoverable)
+- It won't appear in anyone's mental model of the system
+- The #root want is violated
+
+Fix navigation BEFORE implementing anything else. If you cannot reach the blocks you need in 2 hops from #root by following references, that is a PROBLEM that must be fixed first, not worked around.
 
 **Block structure patterns**:
 - ❌ One block containing multiple function implementations → ✅ Overview block listing child blocks

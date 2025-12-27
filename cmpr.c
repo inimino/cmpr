@@ -220,7 +220,9 @@ We would expect to see other things that are related to this block.
 
 ## Guide and Documentation
 
-See #ES_names for standard block event space definitions (BC, BS, BID, BIX, BTS).
+See #ES_names for standard block event space definitions (BC, BS, BID, BIX, BTS) and quality event spaces (BDQ, BSZ, BLNG, BMM).
+See #ES_BR for block reachability event space (used by #root_agent).
+See #block_quality_agents_overview for agents tracking block quality metrics.
 See #event_system_guide for a comprehensive guide to using the event system.
 See #block_context_workflow for the manual workflow to load complete block context into T.
 
@@ -800,7 +802,12 @@ For general agent patterns and infrastructure:
 
 ## Implementation
 
-Executable agents: #root_agent_check (runs CHECK mode), #root_agent_fix (runs FIX mode)
+Executable agents: 
+- #root_agent_check (documentation)
+- #root_agent_check_impl (CHECK mode implementation)
+- #root_agent_fix (documentation)
+- #root_agent_fix_impl (FIX mode implementation)
+
 Design discussion: #root_agent_impl, #root_agent_impl_2, #root_agent_impl_3
 Integration with events: #claude_experience_report_root_agent_t_integration_20251227
 
