@@ -453,7 +453,7 @@ u8 bootstrap_content_data[] =
   "\n"
   "**CRITICAL: Navigation Structure**\n"
   "\n"
-  "Every block MUST be reachable from #root in ≤2 hops. This is a core want maintained by the root agent.\n"
+  "Every block MUST be reachable from #root in ≤2 hops. This is the #root want that root_agent maintains.\n"
   "\n"
   "When creating new blocks:\n"
   "1. ❌ **WRONG**: Create block in INBOX, leave it there permanently\n"
@@ -566,7 +566,6 @@ u8 bootstrap_content_data[] =
   "**Storage**:\n"
   "- Experience reports go in INBOX initially: `cat report.txt | cmpr --after '#INBOX'`\n"
   "- Can be moved to permanent locations later during review\n"
-  "- Or left in INBOX as temporal documentation\n"
   ;
 
 int bootstrap_content_len = sizeof(bootstrap_content_data) - 1; // -1 for null terminator
