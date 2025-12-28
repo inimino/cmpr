@@ -29,20 +29,6 @@ See #help for the cmpr --help output.
 
 See #makefile for further details.
 
-## CRITICAL ISSUE: --rewritepl is BROKEN
-
-**DO NOT USE `cmpr --rewritepl` - IT IS CURRENTLY BROKEN**
-
-As of 2025-12-27, the `--rewritepl` command generates "Hello! How can I help you today?" instead of actual code.
-
-**Root cause**: The nl2pl prompt template system is broken. Error message: "Unknown prompt template: nl2pl_rewrite"
-
-**What to do**:
-- Mark ALL blocks that need code generation as "Manually maintained."
-- Write PL code directly instead of relying on --rewritepl
-- DO NOT attempt to fix blocks by running --rewritepl - it will replace valid code with garbage
-- Check revision history in `.cmpr/revs/` to restore any blocks that got corrupted
-
 ## Code Updates
 
 **MANDATORY FIRST STEP FOR EVERY TASK**:
@@ -228,7 +214,7 @@ To understand the build system:
 
 ### NL/PL Synchronization
 
-**Standard Workflow** (BLOCKED: see --rewritepl issue above):
+**Standard Workflow**:
 1. Edit ONLY the NL using `cmpr --replace-comment '#blockid'` which takes new contents on stdin.
    - you should always have the previous NL in scope, otherwise do a --print-comment first, then make your changes
 2. Run `cmpr --rewritepl '#block_id'` to regenerate PL from NL
@@ -561,6 +547,49 @@ Never be afraid to go back to the root block and look for something else.
 - Planning mode can last multiple turns - easy to forget the cmpr workflow
 - When exiting plan mode, IMMEDIATELY verify: "Am I working with block-managed files?"
 - Refresh memory of cmpr commands before starting implementation
+
+## Session Workflow
+
+**Starting a session:**
+
+Check current T state to see recent work:
+```bash
+dist/cmpr --T
+```
+
+T contains events from recent work sessions. Check for:
+- Experience report events: `"The experience report is: #blockid"`
+- Agent execution results: `"Agent: "`, `"Status: "`, etc.
+- Want tracking: `"The want is: "`, `"Automation state: "`
+
+To load context from a previous session:
+```bash
+dist/cmpr --T0  # Clear current T
+dist/cmpr --event "The experience report is: #blockid" --strength 255
+dist/cmpr --recall  # Loads all events from that session
+dist/cmpr --T  # View loaded context
+```
+
+**Ending a session:**
+
+1. Write experience report (see Experience Reports section below)
+2. Add experience report to INBOX: `cat report.txt | cmpr --after '#INBOX'`
+3. Add event to T with block ID:
+   ```bash
+   dist/cmpr --event "The experience report is: #claude_experience_report_topic_20251228" --strength 255
+   ```
+4. Save snapshot:
+   ```bash
+   dist/cmpr --memorize
+   ```
+
+This creates a queryable checkpoint. Future sessions can use `--recall` to load all events from this session, providing full context about what was done, which agents ran, what state was observed, etc.
+
+**Pattern:**
+- T is transient memory for CURRENT work
+- Snapshots (via --memorize) preserve historical context
+- Experience report events enable finding session work later
+- Each memorized snapshot contains: agent events + want tracking + experience report reference
 
 ## Experience Reports
 

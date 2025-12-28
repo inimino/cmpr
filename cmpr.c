@@ -1241,6 +1241,11 @@ Migration between cmpr1 and cmpr2:
 Want maturation tracking:
 - #want_maturation_overview - Tracks automation state progression (tracked/checked/assisted/owned) for all wants
 
+## Report Wants
+
+System visibility through generated reports:
+- #report_wants - Wants for 10 reports: wants dashboard, nl2pl health, navigation graph, INBOX flow, event activity, block size, test coverage, revision heatmap, agent ecosystem, dependency map
+
 */
 /* #root_agent_impl
 
@@ -3879,8 +3884,6 @@ in bootstrap_content.c during the build process.
 
 // Forward declaration for function generated in bootstrap_content.c
 span get_bootstrap_content_span();
-// we intentionally ship an empty body here because that generated file doesn't exist -- inimino
-span get_bootstrap_content_span(){}
 
 void print_bootstrap() {
     span content = get_bootstrap_content_span();

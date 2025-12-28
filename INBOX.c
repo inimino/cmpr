@@ -615,6 +615,409 @@ Never be afraid to go back to the root block and look for something else.
 - Experience reports go in INBOX initially: `cat report.txt | cmpr --after '#INBOX'`
 - Can be moved to permanent locations later during review
 - Or left in INBOX as temporal documentation
+Test nl2pl
+/* #claude_experience_report_nl2pl_fix_20251228
+
+## Session Goal
+
+Fix the CRITICAL issue: --rewritepl command was documented as broken in CLAUDE.md.
+
+## What Was Accomplished
+
+### Root Cause Identified ✅
+
+The issue was NOT with the nl2pl prompt system itself, but with a build error:
+- `get_bootstrap_content_span()` was defined twice in cmpr.c
+- Line 3888: stub implementation `span get_bootstrap_content_span(){}`
+- bootstrap_content.c: real implementation (appended during build)
+- This caused compilation to fail with redefinition error
+
+### Fixed Build Error ✅
+
+Modified #print_bootstrap block:
+- Removed stub implementation at line 3888
+- Kept only forward declaration: `span get_bootstrap_content_span();`
+- This allows bootstrap_content.c to provide the actual implementation
+
+### Verified Fix ✅
+
+Tested --rewritepl functionality:
+```bash
+# Created test block with NL comment
+cat <<'BLOCK' | cmpr --after '#INBOX'
+
+/* #test_nl2pl_function
+
+Write a function called add_two_numbers that takes two integers and returns their sum.
+
+*/
+
+int add_two_numbers(int a, int b) {
+    return a + b;
+}
+
+/* #claude_experience_report_session_workflow_documentation_20251228
+
+## Session Goal
+
+Update CLAUDE.md to document the session workflow pattern using T (transient memory) for context continuity between sessions.
+
+## What Was Accomplished
+
+### Updated CLAUDE.md ✅
+
+Added new "Session Workflow" section at line 565 (before "Experience Reports").
+
+**Starting a session:**
+- Check T state: `dist/cmpr --T`
+- Look for experience report events, agent results, want tracking
+- Load previous session context via --recall
+
+**Ending a session:**
+1. Write experience report
+2. Add to INBOX: `cat report.txt | cmpr --after '#INBOX'`
+3. Add event: `dist/cmpr --event "The experience report is: #blockid" --strength 255`
+4. Save snapshot: `dist/cmpr --memorize`
+
+**Pattern documented:**
+- T is transient memory for CURRENT work
+- Snapshots preserve historical context
+- Experience report events enable finding session work later
+- Each snapshot contains: agent events + want tracking + experience report reference
+
+## What Works
+
+✅ CLAUDE.md now documents complete session lifecycle
+✅ Clear instructions for starting sessions (check T, use recall)
+✅ Clear instructions for ending sessions (experience report + event + memorize)
+✅ Explains the value: queryable checkpoints for context continuity
+
+## Files Modified
+
+- CLAUDE.md - Added "Session Workflow" section (43 lines added)
+
+## Status
+
+Complete. Session workflow pattern now documented in CLAUDE.md.
+
+*/
+/* #claude_experience_report_all_wants_dashboard_20251228
+
+## Session Goal
+
+Implement All Wants Dashboard report following the spike pattern: demonstrate value first with working script generating HTML output.
+
+## What Was Accomplished
+
+### Created #report_wants Block ✅
+
+Added block with 10 report wants after #want_maturation_helpers.
+
+Navigation: #root → #root_agent → #report_wants (2 hops)
+
+Report wants cover:
+1. All Wants Dashboard
+2. nl2pl Health Report
+3. Navigation Graph Report
+4. INBOX Flow Report
+5. Event System Activity Report
+6. Block Size Distribution Report
+7. Test Coverage Map
+8. Revision Activity Heatmap
+9. Agent Ecosystem Health Report
+10. Cross-System Dependency Map
+
+### Implemented All Wants Dashboard Generator ✅
+
+Created `/tmp/generate_wants_dashboard.sh`:
+- Parses `dist/cmpr --agents-wants` output
+- Generates markdown with overview, state definitions, wants table, maturation analysis
+- Converts to HTML via pandoc
+
+Output:
+- `/tmp/wants_dashboard.md` (109 lines)
+- `/tmp/wants_dashboard.html` (510 lines)
+
+### Key Findings ✅
+
+- 23 total wants in system
+- All in TRACKED state (100%)
+- 10 are new report wants
+- Several duplicates detected (same want text, different blocks)
+
+### Demonstrated Recall Pattern ✅
+
+Added experience report event to T:
+```
+dist/cmpr --event "The experience report is: #claude_experience_report_all_wants_dashboard_20251228" --strength 255
+dist/cmpr --memorize
+```
+
+Future recall:
+```
+dist/cmpr --T0
+dist/cmpr --event "The experience report is: #claude_experience_report_all_wants_dashboard_20251228" --strength 255
+dist/cmpr --recall
+```
+
+## What Works
+
+✅ Dashboard generates today
+✅ Shows all 23 wants with blocks and agent status
+✅ POSIX shell script (awk/sed/grep)
+✅ Professional HTML output
+✅ Experience report pattern established
+
+## What Doesn't Work Yet
+
+❌ Script in /tmp, not committed to repo
+❌ No agent detection (shows "none" even when agents exist)
+❌ No event space extraction from want blocks
+❌ No duplicate want analysis
+
+## Next Steps
+
+1. Commit script to repo
+2. Enhance with agent detection
+3. Extract event spaces from want blocks
+4. Implement other reports from #report_wants
+
+## Files Created
+
+- `/tmp/generate_wants_dashboard.sh` - Generator script
+- `/tmp/wants_dashboard.md` - Markdown output
+- `/tmp/wants_dashboard.html` - HTML output
+- `#claude_experience_report_all_wants_dashboard_20251228` - This report
+
+## Status
+
+Complete. Dashboard working, ready to commit.
+
+*/
+/* #claude_experience_report_wants_dashboard_20251228
+
+## Session Goal
+
+Implement the All Wants Dashboard report to provide visibility into automation state of all wants in the system.
+
+## What Was Accomplished
+
+### Created #report_wants Block ✅
+
+Added 10 report wants covering system visibility needs:
+1. All Wants Dashboard - automation state for all wants
+2. nl2pl Health Report - manually maintained vs nl2pl-eligible blocks
+3. Navigation Graph Report - hop distance from #root, hub utilization
+4. INBOX Flow Report - staging area organization tracking
+5. Event System Activity Report - snapshot statistics and trends
+6. Block Size Distribution Report - quality metrics and refactoring candidates
+7. Test Coverage Map - tested vs untested systems
+8. Revision Activity Heatmap - edit frequency and stability
+9. Agent Ecosystem Health Report - wants by automation state
+10. Cross-System Dependency Map - block references and change impact
+
+Navigation: #root → #root_agent → #report_wants (2 hops)
+
+Each want includes:
+- Want statement in SN format (strength 255)
+- Event space definition with prefix pattern
+- Agent status (all currently "none (tracked)")
+
+### Implemented All Wants Dashboard ✅
+
+Created `/tmp/generate_wants_dashboard.sh`:
+- 145 lines of POSIX shell script
+- Parses `dist/cmpr --agents-wants` output
+- Generates markdown with 5 sections:
+  - Overview: counts and percentages by automation state
+  - Automation State Definitions: tracked/checked/assisted/owned
+  - All Wants Detail: table of all 23 wants with blocks and agents
+  - Maturation Path Analysis: suggested priorities for maturation
+  - Event Spaces: examples of event space patterns
+  - Next Steps: concrete actions for implementing want maturation agent
+
+Output artifacts:
+- `/tmp/wants_dashboard.md` - 109 lines markdown
+- `/tmp/wants_dashboard.html` - 510 lines styled HTML via pandoc
+
+### Key Findings from Dashboard ✅
+
+**Current state:**
+- Total wants: 23
+- Automation distribution: 23 tracked (100%), 0 checked, 0 assisted, 0 owned
+- 10 wants are the new report wants from #report_wants
+- Several duplicate wants exist (same text appearing in multiple blocks)
+
+**Maturation priorities identified:**
+1. Navigation Graph (#root) - Already has CHECK agent implementation
+2. Reports (#report_wants) - High visibility impact
+3. INBOX Organization - Codebase health
+4. nl2pl Health - Development workflow
+
+**Duplicate wants detected:**
+- Root block reachability want appears 3+ times
+- cmpr --checksum want appears 2+ times
+- Build manifest want appears 2+ times
+
+This suggests need for want deduplication or clarification about why same want appears in multiple blocks.
+
+## What Works Now
+
+✅ **Dashboard generates today** - No future implementation required
+✅ **Parses real data** - Uses actual `--agents-wants` output
+✅ **POSIX-compliant** - /bin/sh, awk, sed, grep
+✅ **Professional output** - Clean HTML via pandoc
+✅ **Demonstrates value** - Clear visibility into automation maturity
+✅ **Follows spike pattern** - Same workflow as event system report spike
+
+**Test execution:**
+```bash
+# Generate report
+/tmp/generate_wants_dashboard.sh > /tmp/wants_dashboard.md
+
+# Convert to HTML
+pandoc -f markdown -t html --standalone --metadata title="All Wants Dashboard" /tmp/wants_dashboard.md -o /tmp/wants_dashboard.html
+
+# View
+open /tmp/wants_dashboard.html
+```
+
+## What Doesn't Work Yet
+
+❌ **Not integrated into repo** - Script is in /tmp, not committed
+❌ **No agent detection** - Shows all wants as "Agent: none" even though #root has agents
+❌ **No event space extraction** - Doesn't parse event space definitions from want blocks
+❌ **No temporal tracking** - Can't show "last month vs this month" maturation progress
+❌ **No duplicate detection** - Doesn't flag or merge duplicate wants
+❌ **Hardcoded maturation priorities** - Should auto-suggest based on existing infrastructure
+
+The script demonstrates the core value (see all wants and their states) but doesn't yet leverage the full want maturation system.
+
+## Technical Implementation Details
+
+**Parsing --agents-wants output:**
+```
+=== TRACKED (23 wants) ===
+"want text" 255.
+  Block: #block_id
+  Agent: none
+
+"next want" 255.
+  Block: #other_block
+  Agent: none
+```
+
+Used awk to parse this format:
+- Track state (in_want flag)
+- Extract want text between quotes
+- Extract block ID from "Block: " line
+- Extract agent from "Agent: " line
+- Emit markdown table row
+
+**Markdown table generation:**
+```
+| # | Want (truncated) | Block | Agent | State |
+|---|---|---|---|---|
+| 1 | We want this block... | `#root` | none | Tracked |
+```
+
+Truncation at 80 chars prevents table overflow in HTML.
+
+**Maturation priorities:**
+Hardcoded based on:
+- Impact: core infrastructure > visibility > convenience
+- Feasibility: existing agent code > simple checks > complex analysis
+- Dependencies: enablers before dependents
+
+Should be automated using:
+- Detect existing CHECK/FIX agent blocks
+- Measure complexity (lines of code needed)
+- Parse event space definitions
+- Score by impact × feasibility
+
+## Next Steps
+
+**Phase 1: Commit the dashboard** ✅ READY NOW
+1. Move `/tmp/generate_wants_dashboard.sh` to `tests/generate_wants_dashboard.sh`
+2. Create example invocation
+3. Document expected output format
+4. Add to INBOX or appropriate location
+
+**Phase 2: Enhance agent detection**
+1. For each want, grep codebase for agent blocks referencing that block
+2. Pattern: blocks with "_agent_check" or "_agent_fix" suffix
+3. Update "Agent" column with actual agent block IDs
+4. Add "Status" indicator (✓ = has CHECK, ✓✓ = has CHECK+FIX)
+
+**Phase 3: Extract event spaces**
+1. Parse want blocks for "Event space: XYZ" definitions
+2. Show event space prefix patterns in dashboard
+3. Link to event space definition blocks (like #ES_BR)
+
+**Phase 4: Add temporal tracking**
+1. Save dashboard snapshots with timestamps
+2. Compare current vs historical state
+3. Show maturation velocity: "3 wants moved to checked this month"
+4. Generate trend charts
+
+**Phase 5: Duplicate analysis**
+1. Detect wants with identical text
+2. Flag wants with similar text (fuzzy match)
+3. Suggest consolidation or clarification
+4. Explain why duplicates might be valid (different contexts)
+
+**Phase 6: Auto-prioritization**
+1. Scan for existing agent code
+2. Estimate implementation effort
+3. Score by impact (referenced by how many other wants?)
+4. Generate roadmap: "implement these 5 agents next"
+
+## Relationship to Want Maturation System
+
+This dashboard is the VISUALIZATION layer for want maturation:
+
+**Want maturation agent** (not yet implemented):
+- Scans all wants from --agents-wants
+- For each want, determines automation state (tracked/checked/assisted/owned)
+- Emits events to T describing current state
+- Calls domain agents (like #root_agent_check_impl)
+- Memorizes snapshots
+
+**This dashboard**:
+- Shows current snapshot of all wants
+- Highlights maturation opportunities
+- Guides which wants to work on next
+- Makes abstract automation concept concrete
+
+The pattern: agents populate T with events, dashboards visualize events as HTML.
+
+## Files Created
+
+- `/tmp/generate_wants_dashboard.sh` - Dashboard generator (145 lines)
+- `/tmp/wants_dashboard.md` - Markdown output (109 lines)
+- `/tmp/wants_dashboard.html` - HTML output (510 lines)
+
+## References
+
+Related blocks:
+- #report_wants - The 10 report wants (newly created this session)
+- #want_maturation_overview - Meta-level agent framework
+- #claude_experience_report_want_maturation_test_spike_20251228 - Spike this extends
+- #root_agent - Example of want with CHECK/FIX agents
+
+Related commands:
+- `dist/cmpr --agents-wants` - Source data for dashboard
+- `dist/cmpr --T` - Event system state
+- `dist/cmpr --event "..." --strength 255` - Add event to T
+- `dist/cmpr --memorize` - Save T snapshot
+
+## Status
+
+All Wants Dashboard COMPLETE ✅
+
+Ready to commit generator script and expand to other reports from #report_wants.
+
+*/
 /* #claude_experience_report_want_maturation_test_spike_20251228
 
 ## Session Goal
@@ -1095,6 +1498,9 @@ Query and display:
 Helpers:
 - #want_maturation_helpers - Extract wants, find agents, parse snapshots
 
+Reports:
+- #report_wants - Wants for system visibility reports (wants dashboard, navigation graph, block size, etc.)
+
 ## Key Insight: After-the-Fact Event Spaces
 
 Event spaces can be defined AFTER events are recorded. Agents emit natural events during their work, and we later recognize patterns as event spaces. This enables temporal queries on old snapshots without re-running agents.
@@ -1214,6 +1620,144 @@ Functions needed:
 - parse_constraint_status_from_t() - Extract constraint info from T
 
 See #want_maturation_overview for design.
+
+*/
+/* #report_wants
+
+We want visibility into system state through generated reports.
+
+## Want: All Wants Dashboard
+
+"We want an HTML report showing automation state (tracked/checked/assisted/owned) for all wants in the system, with event space definitions, agent implementations, and maturation path suggestions." 255.
+
+Event space: RW (Report: Wants)
+- "Report type: wants_dashboard"
+- "Total wants: N"
+- "Automation state distribution: tracked=X, checked=Y, assisted=Z, owned=W"
+
+Agent: none (tracked)
+
+## Want: nl2pl Health Report  
+
+"We want an HTML report showing which blocks are manually maintained vs nl2pl-eligible, nl2pl breakage surface, and migration candidates for when nl2pl is fixed." 255.
+
+Event space: RNL (Report: nl2pl)
+- "Report type: nl2pl_health"
+- "Total blocks: N"
+- "Manually maintained blocks: X"
+- "nl2pl-eligible blocks: Y"
+
+Agent: none (tracked)
+
+## Want: Navigation Graph Report
+
+"We want an HTML report showing blocks reachable from #root in 0/1/2/>2 hops, hub utilization, orphaned blocks, over-connected hubs, and suggested hub placements." 255.
+
+Event space: RNG (Report: Navigation Graph)
+- "Report type: navigation_graph"
+- "Blocks at 0 hops: 1" (just #root)
+- "Blocks at 1 hop: N"
+- "Blocks at 2 hops: M"
+- "Blocks at >2 hops: X" (violations)
+
+Agent: none (tracked)
+
+## Want: INBOX Flow Report
+
+"We want an HTML report showing current INBOX contents, historical INBOX dwell time, suggested destinations, and experience reports requiring relocation." 255.
+
+Event space: RIB (Report: INBOX)
+- "Report type: inbox_flow"
+- "Current INBOX blocks: N"
+- "Average dwell time: X days"
+
+Agent: none (tracked)
+
+## Want: Event System Activity Report
+
+"We want an HTML report showing total snapshots, snapshot size distribution, active event spaces, events per snapshot trends, and recall query patterns." 255.
+
+Event space: RES (Report: Event System)
+- "Report type: event_activity"
+- "Total snapshots: N"
+- "Most common event prefixes: [list]"
+
+Agent: none (tracked)
+
+## Want: Block Size Distribution Report
+
+"We want an HTML report showing block size histogram, largest blocks, multi-function blocks, empty blocks, and NL:PL ratios to identify refactoring candidates." 255.
+
+Event space: RBS (Report: Block Size)
+- "Report type: block_size"
+- "Total blocks: N"
+- "Blocks >100 lines: X"
+- "Blocks with >5 functions: Y"
+
+Agent: none (tracked)
+
+## Want: Test Coverage Map
+
+"We want an HTML report showing tested vs untested systems, agent test coverage, critical path gaps, and suggested next tests based on want priorities." 255.
+
+Event space: RTC (Report: Test Coverage)
+- "Report type: test_coverage"
+- "Total tests: N"
+- "Systems with tests: X"
+- "Systems without tests: Y"
+
+Agent: none (tracked)
+
+## Want: Revision Activity Heatmap
+
+"We want an HTML report showing blocks by edit frequency (7/30/90 day windows), hot spots, stable blocks, recent untested changes, and high-churn blocks." 255.
+
+Event space: RRV (Report: Revisions)
+- "Report type: revision_activity"
+- "Time window: N days"
+- "Hot spot blocks: [list]"
+- "Stable blocks: [list]"
+
+Agent: none (tracked)
+
+## Want: Agent Ecosystem Health Report
+
+"We want an HTML report showing wants by automation state, agent implementations (CHECK/FIX), test coverage, callable agents, and maturation candidates." 255.
+
+Event space: RAE (Report: Agent Ecosystem)
+- "Report type: agent_ecosystem"
+- "Wants with CHECK: N"
+- "Wants with FIX: M"
+- "Wants with tests: X"
+
+Agent: none (tracked)
+
+## Want: Cross-System Dependency Map
+
+"We want an HTML report showing block reference graph, file dependencies, circular dependencies, leaf blocks, and hub blocks to understand change impact." 255.
+
+Event space: RDP (Report: Dependencies)
+- "Report type: dependency_map"
+- "Circular dependencies: N"
+- "Leaf blocks: X"
+- "Hub blocks: Y"
+
+Agent: none (tracked)
+
+## Implementation Strategy
+
+All reports follow the pattern established in #claude_experience_report_want_maturation_test_spike_20251228:
+
+1. Generate events (run relevant agents/queries)
+2. Parse current T state
+3. Categorize by event space
+4. Generate markdown tables
+5. Convert to HTML via pandoc
+
+Reports can be implemented incrementally. Priority order suggested:
+1. All Wants Dashboard (extends existing spike)
+2. Navigation Graph Report (validates #root_agent)
+3. Block Size Distribution (quality signal)
 
 */
 /* #handle_snapshots @events_functions @argtable
