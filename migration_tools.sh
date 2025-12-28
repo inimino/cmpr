@@ -480,7 +480,7 @@ echo >&2
 
 # Step 1: Run CHECK to identify unreferenced blocks
 echo "Step 1: Running CHECK mode to identify issues..." >&2
-check_output=$(cmpr --print-code '#root_agent_check_impl' | bash 2>&1) || true
+check_output=$(dist/cmpr --print-code '#root_agent_check_impl' | bash 2>&1) || true
 echo "$check_output" >&2
 echo >&2
 

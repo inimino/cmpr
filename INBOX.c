@@ -616,6 +616,316 @@ Never be afraid to go back to the root block and look for something else.
 - Can be moved to permanent locations later during review
 - Or left in INBOX as temporal documentation
 Test nl2pl
+/* #claude_experience_report_reachability_20251228_2
+
+Session Goal: Continue reachability work to reduce unreferenced blocks
+
+## What Was Accomplished
+
+### System cmpr Installation
+- Installed cmpr to system at /usr/local/bin/cmpr per user request
+- Verified installation: Version 9 (build: 20251228-091950)
+- All subsequent cmpr commands now use system binary
+
+### Hub Expansion and Creation
+
+Expanded existing hubs that had room:
+1. **#command_handlers_overview**: 14→16 blocks
+   - Added: #print_config, #print_bootstrap
+
+2. **#llm_integration_overview**: 5→15 blocks
+   - Added: #call_llm, #read_openai_key, #read_anthropic_key
+   - Added: #call_gpt, #call_ollama, #call_anthropic
+   - Added: #filename_template, #assoc_spans, #assoc_spans_lookup
+
+Created new navigation hubs:
+3. **#args_cli_hub** (8 blocks)
+   - Argument parsing: #handle_args, #handle_args_2, #handle_args_3, #handle_args_4
+   - Block operations: #print_files_blocks, #block_from_arg, #block_id_arg
+   - Core: #argtable
+
+4. **#core_data_structures** (12 blocks)
+   - Data structures: #rope, #langtable
+   - State: #ui_state, #sbv_state, #network_ret, #partials
+   - Checksums: #checksums, #checksum_setup
+   - Catalogs: #all_functions, #ingest_functions
+   - Misc: #pragmas, #projfiles
+
+5. **#revision_system_hub** (13 blocks)
+   - Core: #get_revs, #get_revs_2, #get_revdir, #new_rev, #pr_revinfo
+   - Caching: #revs_cache_design, #get_revs_cache_get, #get_revs_cache_put, #parse_revfile_cache
+   - Indexing: #block_idx, #block_for_span, #id_for_block, #selected_checksum
+
+6. **#current_block_hub** (6 blocks)
+   - Split from #revision_system_hub to avoid violations
+   - Blocks: #set_current_block, #current_block_checksum, #current_block_language
+   - Also: #current_block_template_vars, #edit_current_block, #block_id_jump
+
+7. **#tui_interaction_hub** (13 blocks)
+   - Display: #clear_display, #sbv_display, #render_empty_project_state, #keyboard_help
+   - Input: #getkey, #handle_jkgG, #start_search, #start_ex
+   - SBV: #sbv_populate, #select_block_version, #SBV_design
+   - Ex: #extable, #start_ex
+
+8. **#parsing_scanning_hub** (14 blocks)
+   - Finding: #find_all_blocks, #find_all_lines, #find_blocks_language, #find_blocks_language_none
+   - Management: #blocks, #index_block_ids
+   - Parsing: #parse_int, #parse_hex, #parse_config, #parse_template
+   - Also: #parse_section_header_line, #parse_blocks_lines, #parse_scs_lines, #parse_ids_lines
+
+9. **#scanning_search_hub** (7 blocks)
+   - Split from #parsing_scanning_hub to avoid violations
+   - Scanning: #scan_int, #scan_hex, #scan_checksum
+   - Search: #content_index, #grep_blocks
+   - Parsing: #parse_block_map_entry, #parse_compiler_error_line
+
+### Hub Violations Fixed
+
+Initial CHECK showed 2 hub violations:
+- #revision_system_hub: 18 blocks (exceeded 16 limit)
+- #parsing_scanning_hub: 21 blocks (exceeded 16 limit)
+
+Fixed by splitting:
+- #revision_system_hub (18) → #revision_system_hub (13) + #current_block_hub (6)
+- #parsing_scanning_hub (21) → #parsing_scanning_hub (14) + #scanning_search_hub (7)
+
+All hubs now satisfy 2-16 constraint.
+
+## Metrics
+
+Starting state:
+- Hub blocks: 12
+- Hub violations: 0
+- Unreferenced blocks: 293
+- Total blocks: 398
+
+Final state:
+- Hub blocks: 19 (+7 new hubs)
+- Hub violations: 0
+- Unreferenced blocks: 220
+- Total blocks: 405
+
+Progress: 73 blocks made reachable (24.9% improvement)
+
+## Unreferenced Blocks Breakdown
+
+Remaining 220 unreferenced blocks:
+- INBOX.c: 67 blocks (mostly experience reports - correct to leave unreferenced)
+- Other files: 153 blocks (need categorization)
+
+The 67 INBOX blocks are primarily experience reports and experimental blocks. Per CLAUDE.md, these should remain in INBOX staging area.
+
+## Files Modified
+
+- #root: Updated 5 times to add new hubs
+- #command_handlers_overview: Expanded with 2 blocks
+- #llm_integration_overview: Expanded with 10 blocks
+- Created: #args_cli_hub, #core_data_structures, #revision_system_hub
+- Created: #current_block_hub, #tui_interaction_hub
+- Created: #parsing_scanning_hub, #scanning_search_hub
+
+Total revisions: 15 new revisions in .cmpr/revs/
+
+## Next Steps
+
+To continue improving reachability:
+
+1. **Categorize remaining 153 non-INBOX unreferenced blocks**
+   - Many are curl implementations
+   - Some are utility functions
+
+2. **Create additional hubs as needed**
+   - Network/curl operations hub
+   - File I/O operations hub  
+   - Span utilities hub
+
+3. **Consider INBOX cleanup**
+   - Identify blocks ready for permanent homes
+
+4. **Address hop-2+ hub violations**
+   - #parsing_io_overview has 47 blocks (over limit)
+   - Move to hop-1 or split into smaller hubs
+
+## Lessons Learned
+
+1. **Hub size discipline**: Always check block count to ensure 2-16 constraint
+2. **Split early**: Plan for splitting when approaching 16 blocks
+3. **System cmpr**: Using system-installed cmpr simplifies workflow
+4. **INBOX pattern**: Experience reports belong in INBOX
+5. **Categorization matters**: Logical grouping makes navigation intuitive
+
+*/
+/* #scanning_search_hub
+
+Scanning and search utilities.
+
+## Scanning Functions
+
+#scan_int - Scan integer from buffer
+#scan_hex - Scan hex value
+#scan_checksum - Scan checksum value
+
+## Search and Indexing
+
+#content_index - Content indexing
+#grep_blocks - Grep through blocks
+
+## Additional Parsing
+
+#parse_block_map_entry - Parse block map entry
+#parse_compiler_error_line - Parse compiler error line
+
+*/
+/* #current_block_hub
+
+Current block tracking and management.
+
+## Current Block State
+
+#set_current_block - Set the current block
+#current_block_checksum - Get current block checksum
+#current_block_language - Get current block language
+#current_block_template_vars - Get template variables for current block
+#edit_current_block - Edit current block
+#block_id_jump - Jump to block by ID
+
+*/
+/* #parsing_scanning_hub
+
+Parsing and scanning utilities for blocks and project files.
+
+## Block Finding
+
+#find_all_blocks - Find all blocks in project
+#find_all_lines - Find all lines matching pattern
+#find_blocks_language - Find blocks by language
+#find_blocks_language_none - Handle files without blocks
+#blocks - Block list management
+#index_block_ids - Index block IDs
+
+## Parsing Functions
+
+#parse_int - Parse integer from string
+#parse_hex - Parse hexadecimal value
+#parse_config - Parse configuration file
+#parse_template - Parse prompt template
+#parse_section_header_line - Parse section headers
+#parse_blocks_lines - Parse blocks lines output
+#parse_scs_lines - Parse SCS lines
+#parse_ids_lines - Parse ID lines
+
+*/
+/* #tui_interaction_hub
+
+Terminal UI interaction and display functions.
+
+## Display Functions
+
+#clear_display - Clear the display
+#sbv_display - Select Block Version display
+#render_empty_project_state - Render empty project state
+#keyboard_help - Display keyboard help
+
+## Input Handling
+
+#getkey - Get keyboard input
+#handle_jkgG - Handle j/k/g/G navigation keys
+#start_search - Start search mode
+#start_ex - Start ex command mode
+
+## SBV (Select Block Version)
+
+#sbv_populate - Populate SBV data
+#select_block_version - Select block version UI
+#SBV_design - SBV design documentation
+
+## Ex Command System
+
+#extable - Ex command table
+#start_ex - Start ex mode
+
+*/
+/* #revision_system_hub
+
+Revision system implementation for tracking block history.
+
+## Core Revision Functions
+
+#get_revs - Get revisions for current block
+#get_revs_2 - Get revisions (extended)
+#get_revdir - Get revision directory path
+#new_rev - Create new revision
+#pr_revinfo - Print revision info
+
+## Revision Caching
+
+#revs_cache_design - Revision cache design
+#get_revs_cache_get - Get from revision cache
+#get_revs_cache_put - Put to revision cache
+#parse_revfile_cache - Parse revision file cache
+
+## Block Indexing
+
+#block_idx - Block index operations
+#block_for_span - Get block for span
+#id_for_block - Get ID for block
+#selected_checksum - Get selected checksum
+
+*/
+/* #core_data_structures
+
+Core data structures and system state.
+
+## Data Structures
+
+#rope - Rope data structure for efficient string operations
+#langtable - Language detection table
+
+## System State
+
+#ui_state - UI and TUI state variables
+#sbv_state - Select Block Version state
+#network_ret - Network/API return types
+#partials - Partial match tracking
+
+## Checksums
+
+#checksums - Checksum computation and utilities
+#checksum_setup - Initialize checksum system
+
+## Function Catalogs
+
+#all_functions - Catalog of all functions
+#ingest_functions - Function ingestion for parsing
+
+## Miscellaneous
+
+#pragmas - Pragma handling
+#projfiles - Project file tracking
+
+*/
+/* #args_cli_hub
+
+Argument parsing and command-line interface implementation.
+
+## Argument Table
+
+#argtable - CLI argument definitions and parsing
+
+## Argument Handlers
+
+#handle_args - Main argument handler
+#handle_args_2 - Argument handler (part 2)
+#handle_args_3 - Argument handler (part 3)
+#handle_args_4 - Argument handler (part 4)
+
+## File and Block Operations
+
+#print_files_blocks - Print all files and blocks
+#block_from_arg - Resolve block from argument
+#block_id_arg - Parse block ID argument
+
+*/
 /* #claude_experience_report_reachability_20251228
 
 Session Goal: Work on block reachability to satisfy #root want
