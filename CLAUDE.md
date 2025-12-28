@@ -13,19 +13,42 @@ cmpr provides code block database features.
 
 ## Building and Testing
 
+**Standard workflow for source changes**:
+
 ```bash
-# Production build
+# Build and test
+make
+dist/cmpr --version  # Verify it built
+
+# Test your changes
+dist/cmpr [commands to test]
+
+# When satisfied, install
+sudo make install
+```
+
+**Key insight**: The mistake to avoid is running `make` without eventually running `sudo make install`, then continuing to use the old installed `cmpr`.
+
+**Build commands**:
+```bash
+# Build only
 make
 
-# Install
+# Test the build
+dist/cmpr --version
+dist/cmpr [test commands]
+
+# Install once satisfied
 sudo make install
 
-# Run the installed binary
-cmpr
-
-# Run the build that `make` generates without installing it
-dist/cmpr
+# Check what's installed
+cmpr --version
 ```
+
+**When to use which binary**:
+- `dist/cmpr` - For testing changes immediately after `make`
+- `cmpr` - For normal operations with the installed version
+- After you're happy with `dist/cmpr` testing, install it with `sudo make install`
 
 The cmpr --help output and build system details are documented in blocks accessible from the root block.
 
@@ -177,9 +200,10 @@ All navigation MUST start from the root block and follow block references:
 - If the generated PL is wrong, the NL was probably ambiguous - fix the NL, not the PL
 
 **Important Notes**:
-- `cmpr` (usually `/usr/local/bin/cmpr`) is the installed system version - use for reading/inspecting
-- `dist/cmpr` is the locally built binary from `make` - use for testing your changes
-- After modifying source code, always test with `dist/cmpr`, not the system `cmpr`
+- `cmpr` (at `/usr/local/bin/cmpr`) is the installed system version
+- `dist/cmpr` is the locally built binary from `make` - use for testing changes
+- After modifying source code, run `make` to rebuild, then test with `dist/cmpr`
+- When satisfied with changes, run `sudo make install` to update the installed binary
 - The interactive `r` command in the TUI does the same as `--rewritepl`
 
 ### Testing Changes
@@ -189,10 +213,12 @@ All navigation MUST start from the root block and follow block references:
 - Check build timestamp: `dist/cmpr --version`
 - The Makefile will compile changed source files and link the binary
 
-**Testing Binary**:
-- Always test with `dist/cmpr`, not the system `cmpr` command
-- The system `cmpr` at `/usr/local/bin/cmpr` will be older
-- After code changes, run `make` to rebuild before testing
+**Testing Workflow**:
+1. Modify source code using cmpr commands
+2. Run `make` to rebuild
+3. Test with `dist/cmpr` to verify changes work
+4. Once satisfied, run `sudo make install`
+5. Now the installed `cmpr` has your changes
 
 ### Code Conventions
 
@@ -412,6 +438,72 @@ When designing solutions:
 - Pay attention to what system commands exist - they reveal design intent
 - The existence of --T0 means T is MEANT to be cleared regularly
 
+**Event System Visualizations**:
+
+The event system includes visualization tools for analyzing temporal data:
+
+**Timeline Visualization**:
+```bash
+# Generate interactive timeline of all event snapshots
+cmpr --print-code '#generate_timeline_html' | bash > public_html/event_timeline.html
+```
+Creates scatter plot showing agent runs, work sessions, and metrics over time.
+
+**Metric Plotting**:
+```bash
+# Plot specific metrics over time
+cmpr --print-code '#generate_metric_plot' | bash -s unreferenced > public_html/metric_unreferenced.html
+cmpr --print-code '#generate_metric_plot' | bash -s hubs > public_html/metric_hubs.html
+cmpr --print-code '#generate_metric_plot' | bash -s events > public_html/metric_events.html
+```
+Generates line charts tracking metrics extracted from event snapshots.
+
+**Snapshot Statistics**:
+```bash
+# Generate statistical analysis of all snapshots
+cmpr --print-code '#generate_snapshot_stats' | bash > public_html/snapshot_stats.html
+```
+Shows event pattern distributions, agent activity, and snapshot analysis.
+
+**Visualization Index**:
+```bash
+# Generate navigation page for all visualizations
+cmpr --print-code '#generate_visualization_index' | bash > public_html/index.html
+```
+
+All visualizations are self-contained HTML files using Chart.js, viewable in any browser.
+Navigate from root → #cmpr_events → #event_visualization_overview to find these blocks.
+
+**Practical Event System Examples**:
+
+Example 1 - Recording agent execution:
+```bash
+cmpr --T0
+cmpr --event "Agent: root_agent" --strength 255
+cmpr --event "Mode: CHECK" --strength 255
+cmpr --event "Unreferenced blocks: 52" --strength 255
+cmpr --event "Status: constraint satisfied" --strength 255
+cmpr --memorize
+```
+
+Example 2 - Finding previous work on a specific block:
+```bash
+cmpr --T0
+cmpr --event "The block id is: #foo" --strength 255
+cmpr --recall  # Loads all events from last time we worked on #foo
+cmpr --T      # View the restored context
+```
+
+Example 3 - Session end workflow:
+```bash
+# After completing work, record experience report
+cmpr --T0
+cmpr --event "The experience report is: #claude_experience_report_topic_20251228" --strength 255
+cmpr --event "Implemented feature X" --strength 255
+cmpr --event "Created 5 new blocks" --strength 255
+cmpr --memorize
+```
+
 ## File Structure
 
 - **Core Application**: `cmpr.c` (main application with CLI and TUI, includes hardcoded prompt templates)
@@ -436,6 +528,7 @@ After exiting planning mode or when context-switching, it's easy to forget cmpr 
 3. NEVER use Write/Edit tools on block-managed files
 
 **Common mistakes**:
+- ❌ Testing with old installed `cmpr` after making changes → ✅ Use `dist/cmpr` to test, then `sudo make install`
 - ❌ Using Task tool with Explore subagent to "explore the codebase" → ✅ Start at root block and navigate
 - ❌ Using `Write` to create new blocks → ✅ Use `cmpr --after <block_id>`
 - ❌ Using `Edit` to modify existing blocks → ✅ Use `cmpr --replace '#block_id'`
@@ -496,7 +589,7 @@ Never be afraid to go back to the root block and look for something else.
 
 Check current T state to see recent work:
 ```bash
-dist/cmpr --T
+cmpr --T
 ```
 
 T contains events from recent work sessions. Check for:
@@ -506,10 +599,10 @@ T contains events from recent work sessions. Check for:
 
 To load context from a previous session:
 ```bash
-dist/cmpr --T0  # Clear current T
-dist/cmpr --event "The experience report is: #blockid" --strength 255
-dist/cmpr --recall  # Loads all events from that session
-dist/cmpr --T  # View loaded context
+cmpr --T0  # Clear current T
+cmpr --event "The experience report is: #blockid" --strength 255
+cmpr --recall  # Loads all events from that session
+cmpr --T  # View loaded context
 ```
 
 **Ending a session:**
@@ -518,11 +611,11 @@ dist/cmpr --T  # View loaded context
 2. Add experience report to INBOX: `cat report.txt | cmpr --after <inbox_block_id>`
 3. Add event to T with block ID:
    ```bash
-   dist/cmpr --event "The experience report is: #experience_report_block_id" --strength 255
+   cmpr --event "The experience report is: #experience_report_block_id" --strength 255
    ```
 4. Save snapshot:
    ```bash
-   dist/cmpr --memorize
+   cmpr --memorize
    ```
 
 This creates a queryable checkpoint. Future sessions can use `--recall` to load all events from this session, providing full context about what was done, which agents ran, what state was observed, etc.
