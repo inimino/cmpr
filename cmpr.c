@@ -4007,7 +4007,7 @@ We present the supported arguments and flags in a tabular form (as with langtabl
 
 Command syntax summary:
 
-cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--agents-wants] [--wants-dashboard] [--event-report]
+cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs]
 
 Command argument and flag table:
 
@@ -4050,6 +4050,7 @@ Command argument and flag table:
 --agents-wants
 --wants-dashboard
 --event-report
+--export-docs
 
 2. Behavior of arguments and flags:
 
@@ -4276,6 +4277,17 @@ event-report:
     - Pipes output (markdown) to pandoc for HTML conversion
     - Saves result to public_html/event_activity.html
   Outputs the path to the generated HTML file.
+  Requires code to be loaded (for executing generator block).
+
+export-docs:
+  Generate markdown reports in docs/ directory for GitHub visibility.
+  Creates or updates:
+    - docs/wants_dashboard.md - All wants and automation states
+    - docs/event_activity.md - Event system activity report
+    - docs/README.md - Documentation for the docs/ directory
+  These markdown files can be committed to GitHub to provide project visibility.
+  Reports contain only project metadata (wants, goals, event patterns) - no secrets or sensitive data.
+  Does not check staleness - always regenerates.
   Requires code to be loaded (for executing generator block).
   Requires pandoc to be installed for HTML conversion.
 
@@ -4529,6 +4541,17 @@ event-report:
   print "Generated: public_html/event_activity.html" or "Current: public_html/event_activity.html" (if not regenerated)
   flush and exit successfully
 
+
+export-docs:
+  requires code be loaded, so call get_code() first
+  find #generate_export_docs block
+  extract PL code from block
+  write PL to temporary file
+  make executable (chmod +x)
+  execute the temp script (no piping - script handles all output directly to docs/ directory)
+  check for errors
+  clean up temp file
+  flush and exit successfully
 4. Help strings:
 
 conf:
@@ -4636,7 +4659,10 @@ wants-dashboard:
 event-report:
   Generate Event System Activity HTML report. Checks staleness and regenerates if needed. Outputs path to public_html/event_activity.html.
 
+export-docs:
+  Generate markdown reports in docs/ directory for GitHub visibility.
 */
+
 
 
 /* #handle_args @argtable @gcb
@@ -4724,6 +4750,7 @@ Manually maintained.
 	int ind_agents_wants = 0;
 	int ind_wants_dashboard = 0;
 	int ind_event_report = 0;
+	int ind_export_docs = 0;
 
 	char *conf_filepath = NULL;
 	char *content_index_search = NULL;
@@ -4743,6 +4770,7 @@ Manually maintained.
 	char *event_strength_str = NULL;
 	
 	int action_arg = 0;
+
 
 /* #handle_args_3 @handle_args_2:all @block_from_arg
 
@@ -4881,11 +4909,15 @@ Manually maintained.
 			ind_wants_dashboard = 1;
 		} else if (strcmp(arg, "--event-report") == 0) {
 			ind_event_report = 1;
+		} else if (strcmp(arg, "--export-docs") == 0) {
+			ind_export_docs = 1;
 		} else if (arg[0] == '-' && arg[1] == '-') {
 			prt("Unknown flag: "); prt(arg); prt("\n");
 			flush_exit(1);
 		}
 	}
+
+
 
 /* #handle_args_4 @handle_args_3:all @blocks
 
@@ -4974,7 +5006,8 @@ Manually maintained.
 	             ind_wants +
 	             ind_agents_wants +
 	             ind_wants_dashboard +
-	             ind_event_report;
+	             ind_event_report +
+	             ind_export_docs;
 	
 	if (action_arg > 1) {
 		prt("Error: Only one action argument may be used at a time.\n");
@@ -5024,6 +5057,11 @@ Manually maintained.
 			flush_exit(1);
 		}
 		expand_block(idx);
+
+	if (ind_export_docs) {
+		handle_export_docs();
+		flush_exit(0);
+	}
 		flush_exit(0);
 	}
 	
@@ -5180,6 +5218,11 @@ Manually maintained.
 		flush_exit(0);
 	}
 
+	if (ind_export_docs) {
+		handle_export_docs();
+		flush_exit(0);
+	}
+
 	if (ind_event_report) {
 		handle_event_report();
 		flush_exit(0);
@@ -5187,6 +5230,7 @@ Manually maintained.
 
 	// No action arg - return to enter interactive mode
 }
+
 
 /* #print_files_blocks @gcb @ids_for_block
 
@@ -12127,6 +12171,50 @@ void handle_event_report() {
     } else {
         prt("Current: public_html/event_activity.html\n");
     }
+}
+
+void handle_export_docs() {
+    int block_idx = block_by_id(S("generate_export_docs"));
+    if (block_idx == -1) {
+        prt("Error: Block #generate_export_docs not found\n");
+        flush_exit(1);
+    }
+    
+    span block = state->blocks.a[block_idx];
+    span comment_part = block_comment_part(block);
+    span code_part = block;
+    code_part.buf = comment_part.end;
+    
+    if (code_part.buf == code_part.end) {
+        prt("Error: #generate_export_docs has no code part\n");
+        flush_exit(1);
+    }
+    
+    // Write code to temp file
+    char temp_file[256];
+    snprintf(temp_file, sizeof(temp_file), "/tmp/export_docs_%d.sh", getpid());
+    FILE* f = fopen(temp_file, "w");
+    if (!f) {
+        prt("Error: failed to create temp file\n");
+        flush_exit(1);
+    }
+    fwrite(code_part.buf, 1, len(code_part), f);
+    fclose(f);
+    
+    // Make executable and execute
+    char chmod_cmd[512];
+    snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod +x %s", temp_file);
+    system(chmod_cmd);
+    
+    int result = system(temp_file);
+    unlink(temp_file);
+    
+    if (result != 0) {
+        prt("Error: export docs generator failed\n");
+        flush_exit(1);
+    }
+    
+    flush();
 }
 
 /* #grep_blocks
