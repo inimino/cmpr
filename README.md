@@ -1,253 +1,287 @@
-# CMPr
+# cmpr: AI-Native Programming Environment
 
-## Accelerating AI-assisted Programming
+## Accelerating AI-Assisted Programming
 
-Cmpr a platform for managing your code using AI assistance.
+**cmpr makes AI-assisted programming 10-50x more efficient.**
 
-This repository is cmpr1, the open-source foundational building block behind cmpr.ai, which is our SaaS AI-assisted programming UI (currently in beta).
+If you're using Claude Code, Cursor, Codex, or similar AI coding tools, cmpr will:
+- **Cut token costs by 80-98%** through precise block-based navigation
+- **Speed up development** by eliminating context-finding overhead
+- **Improve code quality** with natural language specifications as source of truth
+- **Enable higher abstraction thinking** - focus on "what", let AI handle "how"
 
-## Features
+## What is cmpr?
 
-- a block database for your code
-- natural language programming: cmpr supports writing NL code in each block and letting the system maintain the PL code.
-- cmpr1 maintains a revstore, which gives you finer resolution in the time axis than git with no extra effort except adding files to the cmpr project and running a process to watch the files and automatically store revs.
+cmpr is a block-based code organization system designed from the ground up for AI-assisted programming.
 
-## Why use it?
+Instead of forcing AI to navigate code like humans (files, folders, grep), cmpr provides:
+- **Block-addressable code** - every function/feature is a discrete, uniquely-identified block
+- **Explicit navigation** - reach any code in 2 hops from root via block references
+- **Natural language programming** - NL comments are specification, PL code is generated
+- **Built-in context management** - block references create explicit dependency graphs
 
-If you currently use Claude Code, you can perform the same tasks with 80% to 98% fewer tokens.
-This means it is cheaper, faster, and you will get a better result.
+**Result**: AI agents get exactly the context they need, nothing more. No wasted tokens, no lost context.
 
-## Onboarding
+## Quick Start
 
-Install cmpr1 and use the provided AGENTS.md file to bring your codebase in line with the cmpr conventions.
+### Installation
 
-This step does not make any code changes, but it does edit all your code files.
-Basically, we use block comments (e.g. "/* ... */") to impose a structure on your codebase, and then everything else is built on top of this.
-Every block gets an ID, like "#example_block", and then you can use cmpr commands to read, write, and see historical revisions of each block.
-You can use the system directly or just let your coding agent (Claude Code, Codex, etc) make use of it and you will see efficiency and correctness improvements immediately.
-You can either blockize as you go, or you can blockize a whole project at once, depending on the size of your codebase or your editing patterns.
+```bash
+# Build and install (requires gcc)
+git clone https://github.com/yourusername/cmpr
+cd cmpr
+make
+sudo make install
 
-There are levels of use of cmpr, from just using it to organize your codebase to letting it manage all your PL code automatically, and everything in between.
-Whatever coding agent you use will interact with cmpr during the onboarding process and then you can ask the coding agent to explain to you more about these levels as they apply to your own codebase.
-
-## Project history
-
-March 2024: cmpr1 began as a prototype TUI to prove out the ideas of blocks, block references, and context management.
-April 2025: cmpr2 work began as a Web-based SaaS IDE product, similar in scope to Cursor or Codex but with a different UX.
-August 2025: cmpr2 goes into private beta.
-December 2025: cmpr1 gets its first major update as a standalone open-source tool for accelerating agent-assisted programming.
-
-## Language support
-
-This is mostly about how files get broken into blocks.
-Languages that support C-style block comments /* ... */ are supported.
-This includes most popular programming languages: Java, JavaScript, Rust, C++, CSS, etc.
-Python is also supported with """...""" style.
-
-Languages that don't support either of these (e.g. shell scripts, TeX/LaTeX, ...) are not supported directly.
-That means if you have files like this in your project, you can't use cmpr directly to manage the code in them, because only blocks are addressable within our system.
-However, you can do things like store a shell script in a block and then have some kind of build step that puts it into a file when you need to; this is how we manage our own build scripts and shell scripts in the project.
-You can still add those files to your project manifest and you'll get revision control applied to them; the revisions just won't be addressable by block id.
-
-## Blocks
-
-The block is the basic unit of interaction with the LLM, and the basic unit of addressing your code.
-The size of a block is generally one function or a few dozen lines at most.
-The block size should be determined by the amount of code that the LLM can write correctly and smaller blocks (like smaller functions) are easier to get right.
-
-- Every file in your project (code files) will be "covered" by blocks, i.e. one block ends where the next begins, and the concatenation of the blocks is the entire file.
-- Each block has a comment (this is what creates the block) and then (optionally) some code.
-- Generally, the human focuses on the NL part (e.g. the English comment) and the LLM focuses on the PL part.
-- When writing new code, you generally iterate on the NL part until the PL part works and meets your standard.
-- Decisions made, even when editing the PL part, are ultimately folded back into the NL part, which remains the source of truth.
-
-The above describes the nl2pl flow, which is an optional cmpr feature, but recommended.
-In this workflow you use any editor you like to maintain the NL (or let your coding agent edit it) and then you use --rewritepl to keep the PL up to date.
-
-## Block references
-
-Block references are a powerful way to simplify your NL code.
-References allow you to define concepts in one place and then refer to them by inclusion in multiple places.
-The references will then be expanded by cmpr before sending the NL code to the LLM.
-
-The references of a block provide the context that is necessary to understand the block.
-They are useful for human programmers too.
-Setting up block references across your codebase makes the key ideas and their relationships explicitly visible.
-
-## Codebase navigation
-
-We start with a "root project block" that includes basic information about our codebase, libraries we're using, and so on (the stuff that a human programmer would learn from a readme file or onboarding resources).
-This block then mentions other blocks, and in this way you can get anywhere in the codebase in a few hops.
-
-## Installation
-
-1. Get the code and build; assuming git repo at ~/cmpr and you have gcc, `cd cmpr && make && sudo make install` should do.
-   - Developed on Linux; should work on Mac or Windows with WSL2.
-2. Go to (or create) the directory for your project and run `cmpr --init`, this creates a `.cmpr/` directory and makes this a cmpr project.
-
-## Agentic usage
-
-Copy our AGENTS.md into your own top-level project directory, and then go through the cmpr onboarding process with whatever coding agent you use.
-Your agent will use the cmpr CLI directly, and should figure out how to build and install it if you haven't already.
-
-**Important for containerized agents (e.g. Codex Web):**
-
-If you encounter any problems building, installing, or running cmpr:
-1. DO NOT try to fix the problem yourself
-2. CREATE a bug report in `.cmpr/bugs/` with all error details
-3. SUBMIT your PR with the bug report
-4. This helps us improve cmpr's onboarding experience
-
-Note: if cmpr is not installed, you DO need to install it before doing anything else.
-These instructions are about what happens if following the build instructions fails, not an excuse to not build cmpr in the container.
-
-## CLI usage
-
-Run `cmpr --help` to get started; this is how the agent uses cmpr.
-
-## TUI usage
-
-The classic cmpr1 TUI is still available.
-Install cmpr as described above, then:
-
-1. Run `export EDITOR=emacs` or `nano` or whatever editor you want to use, otherwise `vi` will be run by default.
-2. Run `cmpr` in your project directory, and it will ask you some configuration questions.
-   If you want to change the answers later, you can edit the .cmpr/conf file.
-3. Stop by the discord if you hit any roadblocks.
-
-It's early days and there <s>may be</s> <ins>are</ins> bugs!
-
-## More
-
-Join [our discord](https://discord.gg/ekEq6jcEQ2).
-    /* #example_block
-
-    Add two integers.
-
-    int add(int a, int b)
-
-    Algorithm:
-    - Return the sum of the arguments.
-    */
-
-    int add(int a, int b) {
-        return a + b;
-    }
-/home/me $ cmpr --print-comment '#example_block' && cmpr --print-code '#example_block'
-
-...prints to stdout exactly what you expect...
-
-/home/me $ cmpr --replace #example_block <<'EOF'
-
-...read in a heredoc and replace the example block (both code and comment) with the given contents.
-
-/home/me $ cmpr --stale --rewritepl
-
-...generate and consume a list of blocks with stale code parts, using the configured nl2pl implementation.
+# Initialize a project
+cd your-project
+cmpr --init
 ```
 
-See --help for all supported flags.
+### For AI Agent Users
 
+Copy our `AGENTS.md` into your project directory and let your AI coding agent (Claude Code, Cursor, etc.) onboard your codebase:
 
+```bash
+cp path/to/cmpr/AGENTS.md your-project/
+# Then ask your AI agent: "Please onboard this project to cmpr using AGENTS.md"
 ```
 
-## Onboarding
+Your agent will:
+1. Add block IDs to your code using comments
+2. Set up the `.cmpr/` directory
+3. Configure the project for cmpr workflow
 
-Install cmpr1 and use the provided AGENTS.md file to bring your codebase in line with the cmpr conventions.
+**No code changes** - just structural annotations via comments.
 
-This step does not make any code changes, but it does edit all your code files.
-Basically, we use block comments (e.g. "/* ... */") to impose a structure on your codebase, and then everything else is built on top of this.
-Every block gets an ID, like "#example_block", and then you can use cmpr commands to read, write, and see historical revisions of each block.
-You can use the system directly or just let your coding agent (Claude Code, Codex, etc) make use of it and you will see efficiency and correctness improvements immediately.
-You can either blockize as you go, or you can blockize a whole project at once, depending on the size of your codebase or your editing patterns.
+### Basic Usage
 
-There are levels of use of cmpr, from just using it to organize your codebase to letting it manage all your PL code automatically, and everything in between.
-Whatever coding agent you use will interact with cmpr during the onboarding process and then you can ask the coding agent to explain to you more about these levels as they apply to your own codebase.
+```bash
+# Navigate from root to any block
+cmpr --print-comment '#root'        # See navigation hubs
+cmpr --print-comment '#specific_block'  # Read a specific block
 
-## Project history
+# Search across blocks
+cmpr --grep 'pattern'
 
-March 2024: cmpr1 began as a prototype TUI to prove out the ideas of blocks, block references, and context management.
-April 2025: cmpr2 work began as a Web-based SaaS IDE product, similar in scope to Cursor or Codex but with a different UX.
-August 2025: cmpr2 goes into private beta.
-December 2025: cmpr1 gets its first major update as a standalone open-source tool for accelerating agent-assisted programming.
+# Edit natural language spec
+cmpr --replace-comment '#block_id' < new_spec.txt
 
-## Language support
+# Regenerate code from spec
+cmpr --rewritepl '#block_id'
 
-This is mostly about how files get broken into blocks.
-Languages that support C-style block comments /* ... */ are supported.
-This includes most popular programming languages: Java, JavaScript, Rust, C++, CSS, etc.
-Python is also supported with """...""" style.
+# See all blocks in project
+cmpr --files-blocks
+```
 
-Languages that don't support either of these (e.g. shell scripts, TeX/LaTeX, ...) are not supported directly.
-That means if you have files like this in your project, you can't use cmpr directly to manage the code in them, because only blocks are addressable within our system.
-However, you can do things like store a shell script in a block and then have some kind of build step that puts it into a file when you need to; this is how we manage our own build scripts and shell scripts in the project.
-You can still add those files to your project manifest and you'll get revision control applied to them; the revisions just won't be addressable by block id.
+### Example Block
 
-## Blocks
+```c
+/* #example_add
 
-The block is the basic unit of interaction with the LLM, and the basic unit of addressing your code.
-The size of a block is generally one function or a few dozen lines at most.
-The block size should be determined by the amount of code that the LLM can write correctly and smaller blocks (like smaller functions) are easier to get right.
+Add two integers and return the sum.
 
-- Every file in your project (code files) will be "covered" by blocks, i.e. one block ends where the next begins, and the concatenation of the blocks is the entire file.
-- Each block has a comment (this is what creates the block) and then (optionally) some code.
-- Generally, the human focuses on the NL part (e.g. the English comment) and the LLM focuses on the PL part.
-- When writing new code, you generally iterate on the NL part until the PL part works and meets your standard.
-- Decisions made, even when editing the PL part, are ultimately folded back into the NL part, which remains the source of truth.
+Parameters:
+  a: first integer
+  b: second integer
 
-The above describes the nl2pl flow, which is an optional cmpr feature, but recommended.
-In this workflow you use any editor you like to maintain the NL (or let your coding agent edit it) and then you use --rewritepl to keep the PL up to date.
+Returns: sum of a and b
+*/
 
-## Block references
+int add(int a, int b) {
+    return a + b;
+}
+```
 
-Block references are a powerful way to simplify your NL code.
-References allow you to define concepts in one place and then refer to them by inclusion in multiple places.
-The references will then be expanded by cmpr before sending the NL code to the LLM.
+The comment is the **source of truth**. The code can be regenerated from it.
 
-The references of a block provide the context that is necessary to understand the block.
-They are useful for human programmers too.
-Setting up block references across your codebase makes the key ideas and their relationships explicitly visible.
+## Core Concepts
 
-## Codebase navigation
+### Blocks
 
-We start with a "root project block" that includes basic information about our codebase, libraries we're using, and so on (the stuff that a human programmer would learn from a readme file or onboarding resources).
-This block then mentions other blocks, and in this way you can get anywhere in the codebase in a few hops.
+The block is the fundamental unit:
+- One block = one function/feature (typically)
+- Size determined by "what AI can write correctly in one go"
+- Each block has a Natural Language (NL) part and optional Programming Language (PL) part
+- Blocks have unique IDs like `#block_name`
 
-## Installation
+### Navigation
 
-1. Get the code and build; assuming git repo at ~/cmpr and you have gcc, `cd cmpr && make && sudo make install` should do.
-   - Developed on Linux; should work on Mac or Windows with WSL2.
-2. Go to (or create) the directory for your project and run `cmpr --init`, this creates a `.cmpr/` directory and makes this a cmpr project.
+Start at `#root` block → follow references → reach anywhere in 2 hops:
 
-## Agentic usage
+```bash
+cmpr --print-comment '#root'           # See navigation hubs
+cmpr --print-comment '#auth_hub'       # Navigate to auth subsystem
+cmpr --print-comment '#auth_login'     # Read specific function
+```
 
-Copy our AGENTS.md into your own top-level project directory, and then go through the cmpr onboarding process with whatever coding agent you use.
-Your agent will use the cmpr CLI directly, and should figure out how to build and install it if you haven't already.
+No grep needed. Navigation is explicit.
 
-**Important for containerized agents that submit PRs (Codex Web, e.g.):**
+### Block References
 
-If you encounter any problems building, installing, or running cmpr:
-1. DO NOT try to fix the problem yourself
-2. CREATE a bug report in `.cmpr/bugs/` with all error details
-3. SUBMIT your PR with the bug report
-4. This helps us improve cmpr's onboarding experience
+Blocks reference other blocks to establish context:
 
-## CLI usage
+```
+@auth_config - Authentication configuration
+@jwt_utils - JWT token utilities
 
-Run `cmpr --help` to get started; this is how the agent uses cmpr.
+Uses @auth_config to validate credentials and @jwt_utils to generate tokens.
+```
 
-## TUI usage
+cmpr automatically expands references before sending to AI.
 
-The classic cmpr1 TUI is still available.
-Install cmpr as described above, then:
+### Natural Language Programming
 
-1. Run `export EDITOR=emacs` or `nano` or whatever editor you want to use, otherwise `vi` will be run by default.
-2. Run `cmpr` in your project directory, and it will ask you some configuration questions.
-   If you want to change the answers later, you can edit the .cmpr/conf file.
-3. Stop by the discord if you hit any roadblocks.
+The NL comment is source of truth. Standard workflow:
 
-It's early days and there <s>may be</s> <ins>are</ins> bugs!
+1. **Edit NL spec**: `cmpr --replace-comment '#block_id' < spec.txt`
+2. **Generate PL code**: `cmpr --rewritepl '#block_id'`
+3. **Test**: Run your tests
+4. **Iterate**: If code wrong, improve spec and regenerate
 
-## More
+Focus on specification, not implementation.
 
-Join [our discord](https://discord.gg/ekEq6jcEQ2).
+## Why Use cmpr?
+
+### Token Efficiency
+
+**Traditional approach:**
+```bash
+# AI reads entire file to find one function
+Read src/auth.js (2400 tokens) → Find login → Modify
+```
+
+**cmpr approach:**
+```bash
+# AI reads exactly what it needs
+cmpr --print-comment '#auth_login' (120 tokens) → Modify
+```
+
+**Result: 20x fewer tokens** for typical operations. 50x is possible for large files.
+
+### Built By AI, For AI
+
+The entire cmpr codebase (~360KB C, 330+ blocks) was **written by AI from English descriptions**:
+- Custom span-based I/O library
+- Revision system with cryptographic checksums
+- Terminal UI with vim-like interaction
+- Block expansion and LLM integration
+
+Not templates. Not copied. **Generated from natural language.**
+
+cmpr proves its own value proposition: it was built using itself.
+
+### Self-Maintaining
+
+cmpr includes an "agent system" - agents maintain wants (invariants):
+- "Every block reachable from root in ≤2 hops"
+- "NL and PL parts stay synchronized"
+- Auto-rebuild on source changes
+
+The system maintains itself.
+
+## Levels of Adoption
+
+You can adopt cmpr incrementally:
+
+1. **Level 1: Organization** - Just use block IDs for navigation
+2. **Level 2: Hybrid** - Let AI generate some blocks, manually maintain others
+3. **Level 3: NL-first** - AI generates all PL from NL specs
+4. **Level 4: Agent-maintained** - Agents enforce invariants automatically
+
+Start where you're comfortable.
+
+## Language Support
+
+**Supported:**
+- Any language with `/* */` block comments (C, C++, Java, JavaScript, Rust, CSS, etc.)
+- Python (using `"""..."""` docstrings)
+
+**Workarounds for unsupported languages:**
+- Store scripts in blocks, export to files during build
+- Use cmpr revision tracking on files (but not block-addressable)
+
+## Additional Features
+
+### Revision System
+
+Fine-grained automatic versioning:
+- Every block change saved to `.cmpr/revs/`
+- SipHash checksums for integrity
+- Complements git with block-level history
+
+### TUI (Terminal UI)
+
+Classic interactive mode:
+```bash
+export EDITOR=vim  # or emacs, nano, etc.
+cmpr  # Interactive mode
+```
+
+Vim-like navigation: `j/k` move, `/` search, `r` regenerate, `B` build.
+
+### Event System
+
+Track what's happening in your codebase:
+- Agent executions
+- Want satisfaction tracking
+- Temporal reasoning about code state
+
+## Project Status
+
+- **March 2024**: cmpr1 prototype - blocks, references, context management
+- **April 2025**: cmpr2 web-based IDE begins development
+- **August 2025**: cmpr2 private beta
+- **December 2025**: cmpr1 major update - standalone open-source tool
+
+This is **cmpr1** - the open-source foundation. The cmpr2 SaaS product builds on these concepts.
+
+## Resources
+
+- **[VALUE_PROPOSITION.md](docs/VALUE_PROPOSITION.md)** - Detailed value analysis
+- **[CLAUDE.md](CLAUDE.md)** - How to work with cmpr (for AI agents)
+- **[AGENTS.md](AGENTS.md)** - Agent integration guide
+- **[Discord](https://discord.gg/ekEq6jcEQ2)** - Community support
+- **CLI Help**: `cmpr --help`
+
+## The Paradigm Shift
+
+**Traditional programming:**
+Human writes code → AI assists → Human reviews code
+
+**cmpr programming:**
+Human writes specification → AI writes code → Human reviews specification
+
+You think at a higher abstraction level. AI handles the details.
+
+This is what programming looks like when you design FOR AI, not despite it.
+
+## Contributing
+
+cmpr is open source and under active development. We welcome:
+- Bug reports
+- Feature requests
+- Documentation improvements
+- Code contributions
+
+**For containerized agents (Codex Web, etc.):**
+If you encounter build/install issues:
+1. Create bug report in `.cmpr/bugs/`
+2. Submit PR with bug report
+3. This helps us improve onboarding
+
+## License
+
+See [LICENSE](LICENSE) file.
+
+## Get Help
+
+- **Discord**: [Join our community](https://discord.gg/ekEq6jcEQ2)
+- **GitHub Issues**: Report bugs and request features
+- **Documentation**: Start with `cmpr --help`
+
+---
+
+**The bottom line**: If you're using AI coding assistants, cmpr makes you 10-50x more efficient.
+
+Try it. You won't go back.
