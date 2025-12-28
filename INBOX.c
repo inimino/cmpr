@@ -19,6 +19,24 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 
 
 
+/* #codex_experience_report_agent_docs_refresh_followup_20251228_1
+
+Goal: address feedback on the agent quick-start and keep the repo aligned.
+
+What changed:
+- Rebuilt cmpr and added the missing .cmpr/revs directory so block edits can record revisions.
+- Updated the README "Running agents" steps to clarify how to call ./dist/cmpr, inspect agent wants/impls, and what --agent-run executes.
+
+What works:
+- dist/cmpr builds successfully after make.
+
+Known issues:
+- git pull --rebase could not run because no remote tracking branch is configured.
+
+Next steps:
+- Set an upstream remote if pull/rebase is needed.
+- Revisit the agent docs if further inline review comments surface.
+*/
 /* #codex_experience_report_agents_docs_20251227_1
 
 Goal: document how to run agents from the README and surface the visualization/blog reference for the cmpr workflow.

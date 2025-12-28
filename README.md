@@ -158,13 +158,17 @@ If you use the clipboard model with the palette, it will similarly just put the 
 
 ## Running agents
 
-cmpr ships agent implementations as blocks, so you can run them directly from the built binary without extra installation steps.
+cmpr ships agent implementations as blocks, so you can run them directly from the built binary.
 
-1. Build cmpr (`make`) so you have `dist/cmpr` on your PATH (or install system-wide with `sudo make install`).
-2. Discover what's available: `dist/cmpr --agents` lists agent names like `root_agent` and `migration_agent`.
-3. See what an agent does before running it: `dist/cmpr --print-comment '#root_agent'` shows the want it enforces, and `dist/cmpr --print-comment '#root_agent_check_impl'` shows the CHECK implementation it will run.
-4. Run an agent in CHECK or FIX mode with `dist/cmpr --agent-run <agent_name> CHECK` or `dist/cmpr --agent-run <agent_name> FIX`. Example: `dist/cmpr --agent-run root_agent CHECK` verifies the hub coverage want from `#root` and reports gaps; `FIX` attempts the corresponding repair when available.
-5. The `--agent-run` command extracts the shell script from the `<agent_name>_check_impl` or `<agent_name>_fix_impl` block, writes it to a temp file, and executes it, so updating your repo keeps agents current.
+1. Build cmpr (`make`) to produce `dist/cmpr`. Use `./dist/cmpr` in the repo root, or `sudo make install` to add `cmpr` to your PATH.
+2. Discover agents: `./dist/cmpr --agents` lists names such as `root_agent` and `migration_agent`.
+3. Inspect what an agent does before executing it:
+   - `./dist/cmpr --print-comment '#root_agent'` shows the want it enforces.
+   - `./dist/cmpr --print-comment '#root_agent_check_impl'` shows the CHECK script it will run (and similarly `_fix_impl`).
+4. Run the agent in CHECK or FIX mode: `./dist/cmpr --agent-run <agent_name> CHECK` or `./dist/cmpr --agent-run <agent_name> FIX`.
+   - Example: `./dist/cmpr --agent-run root_agent CHECK` verifies the hub coverage want from `#root`.
+   - If a FIX implementation exists, `./dist/cmpr --agent-run root_agent FIX` attempts the repair.
+5. `--agent-run` extracts the shell script from the `<agent_name>_check_impl` or `<agent_name>_fix_impl` block, writes it to a temp file, makes it executable, and runs it, so updating your repo keeps agents current.
 ### Bonus: cmpr in cmpr
 
 1. We ship our own cmpr conf file, so run cmpr in the cmpr repo to see the code the way we do while building it.
