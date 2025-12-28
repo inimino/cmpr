@@ -616,6 +616,17 @@ Never be afraid to go back to the root block and look for something else.
 - Can be moved to permanent locations later during review
 - Or left in INBOX as temporal documentation
 Test nl2pl
+/* #codex_experience_report_agent_event_navigation_20251228_1
+
+Summary:
+- Generated bootstrap_content.c directly from CLAUDE.md so cmpr builds without an existing binary.
+- Fixed handle_event_report to use span-based code extraction and write the generated script correctly.
+- Created .cmpr/revs and added #agent_event_navigation hub plus root link for faster access to agent/event docs.
+
+Next steps:
+- Restore the bootstrap pipeline to use #claude_md_bootstrap when cmpr is available during build.
+- Address compiler warnings around handle_wants_dashboard and handle_event_report declarations.
+*/
 /* #claude_experience_report_claudemd_principle_20251228
 
 ## Session Goal
