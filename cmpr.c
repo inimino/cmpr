@@ -49,6 +49,13 @@ The following blocks serve as navigation hubs to reach different parts of the co
 #root_agent
 #cmpr_events
 #wants_events_commands
+#args_cli_hub
+#core_data_structures
+#revision_system_hub
+#current_block_hub
+#tui_interaction_hub
+#parsing_scanning_hub
+#scanning_search_hub
 
 ## Build System
 
@@ -373,14 +380,32 @@ LLM integration for code generation and rewriting.
 
 ## Core LLM Functions
 
+#call_llm - Main LLM API caller
 #gpt_message - Message formatting for LLMs
 #send_to_llm - Send requests to LLM APIs
+
+## API Key Management
+
+#read_openai_key - Read OpenAI API key from file
+#read_anthropic_key - Read Anthropic API key from file
+
+## Provider-Specific Callers
+
+#call_gpt - Call GPT models
+#call_ollama - Call Ollama models  
+#call_anthropic - Call Anthropic models
 
 ## Response Handlers
 
 #handle_openai_response - Process OpenAI API responses
 #handle_ollama_response - Process Ollama API responses
 #handle_anthropic_response - Process Anthropic API responses
+
+## Utilities
+
+#filename_template - Template processing for filenames
+#assoc_spans - Association span utilities
+#assoc_spans_lookup - Look up associated spans
 
 */
 /* #prompt_system_overview
@@ -479,6 +504,8 @@ Command-line and TUI command handlers.
 #ensure_conf_var - Ensure config variable exists
 #update_projfile - Update project files
 #new_rev - Create new revision
+#print_config - Print configuration settings
+#print_bootstrap - Print bootstrap content
 
 */
 /* #claude_exploration_report
