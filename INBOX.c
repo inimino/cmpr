@@ -616,6 +616,150 @@ Never be afraid to go back to the root block and look for something else.
 - Can be moved to permanent locations later during review
 - Or left in INBOX as temporal documentation
 Test nl2pl
+/* #claude_experience_report_reachability_20251228
+
+Session Goal: Work on block reachability to satisfy #root want
+
+What Was Accomplished:
+
+## Build System Bootstrap
+- Fixed bootstrap_content.c to allow building dist/cmpr
+- Created minimal stub (empty bootstrap data) to break circular dependency
+- Successfully built cmpr binary
+
+## Root Agent Fixes
+- Fixed root_agent_check_impl block counting bug
+- Changed from `grep -c .` to `wc -w` for reliable counting
+- Prevented double-counting with `|| echo 0` causing "0\n0" output
+- Agent now correctly identifies hub violations
+
+## Navigation Structure Improvements
+
+1. **#glossary Hub Expansion**
+   - Problem: #glossary had 0 child blocks (hub violation)
+   - Solution: Expanded from single-term leaf to proper hub
+   - Created: #glossary_agent, #glossary_event_space, #glossary_block
+   - Referenced existing: #want_definition
+   - Result: 4 blocks (satisfies 2-16 constraint)
+
+2. **#cat_core Integration**
+   - Found existing hub with 14 blocks (core system organization)
+   - Added to #root navigation hubs
+   - Brought 9 additional blocks into reachability (main, init, etc.)
+
+3. **#wants_events_commands Hub**
+   - Created new hub for wants/events/agents command handlers
+   - Initial mistake: added to #cmpr_implementation (would be hop 3)
+   - Fix: moved to top-level #root navigation (proper 2-hop structure)
+   - References: 9 handle_ blocks (handle_wants, handle_agents, etc.)
+
+## Understanding the 2-Hop Constraint
+
+Key insight: The want specifies 2-hop maximum reachability:
+- Hop 0: #root
+- Hop 1: Hub blocks (directly referenced by #root)  
+- Hop 2: Leaf blocks (referenced by hubs)
+
+Hubs cannot reference other hubs - that creates hop 3 violations.
+All "overview" or "hub" blocks must be directly at hop 1 from #root.
+
+## Metrics
+
+Starting state:
+- Hub blocks: 10
+- Hub violations: 1 (#glossary with 0 blocks)
+- Unreferenced blocks: 312
+- Total blocks: 393
+
+Final state:
+- Hub blocks: 12
+- Hub violations: 0 ✓
+- Unreferenced blocks: 292
+- Total blocks: 397
+
+Progress: 20 blocks made reachable (6.4% improvement)
+
+## File Distribution of Remaining Unreferenced Blocks
+
+- INBOX.c: 73 blocks (staging area - many are experience reports)
+- cmpr.c: ~50 blocks (implementation details)
+- spanio.c: 10 blocks (library implementation)
+- migration_tools.sh: 1 block
+- ~169 blocks with unclear file association
+
+## Known Issues
+
+1. **Experience Reports in Navigation**
+   - Many experience reports are unreferenced
+   - Per CLAUDE.md: these belong in INBOX as staging
+   - Should NOT integrate into permanent navigation
+   - This is correct behavior
+
+2. **Duplicate #root_agent Reference**
+   - #root_agent appears twice in #root (once in prose, once in hub list)
+   - This is allowed per CLAUDE.md: "Duplicate references are fine"
+   - Agent counts it as 2 separate entries but coverage is correct
+
+3. **Many Implementation Blocks Remain Unreferenced**
+   - ~50 cmpr.c blocks need categorization
+   - Need to create more hubs or expand existing ones
+   - Categories needed: parsing, I/O, specific command handlers, etc.
+
+## Next Steps
+
+To reach full reachability (292 → 0 unreferenced):
+
+1. **Review INBOX blocks**: Identify which are permanent vs. temporary
+   - Keep experience reports in INBOX (correct)
+   - Identify feature blocks that need permanent homes
+   
+2. **Create implementation hubs**: Group remaining cmpr.c blocks
+   - Parsing/scanning functions
+   - I/O and file operations  
+   - LLM/network functions
+   - TUI-specific functions
+   - Handle arguments blocks
+
+3. **Expand existing hubs**: Some hubs have room (2-16 constraint)
+   - #cmpr_c_overview: 16/16 (FULL)
+   - #cmpr_implementation: 10/16 (room for 6)
+   - #command_handlers_overview: 14/16 (room for 2)
+   - #libraryintro: 16/16 (FULL)
+   - #root_agent: 16/16 (FULL)
+
+4. **spanio.c blocks**: Check if #libraryintro should reference them
+
+5. **Verify final state**: Run agent CHECK to confirm 0 violations
+
+## Code Changes
+
+Files modified:
+- cmpr.c: #root, #glossary, #root_agent_check_impl
+- INBOX.c: #glossary_agent, #glossary_event_space, #glossary_block, #wants_events_commands  
+- bootstrap_content.c: minimal stub for building
+
+Blocks created: 4
+Blocks modified: 5
+Revisions: 11 new revisions in .cmpr/revs/
+
+## Commands Used
+
+Key cmpr commands leveraged:
+- `dist/cmpr --print-comment '#blockid'` - read block NL
+- `dist/cmpr --print-code '#blockid'` - read block PL
+- `dist/cmpr --replace '#blockid'` - replace entire block
+- `dist/cmpr --after '#blockid'` - create new block
+- `dist/cmpr --files-blocks` - list all blocks
+- Root agent: `dist/cmpr --print-code '#root_agent_check_impl' | bash`
+
+## Lessons Learned
+
+1. Hub structure is strict: 2-hop maximum means hubs at hop 1 only
+2. Block counting in bash needs care: `wc -w` safer than `grep -c .`  
+3. Glossary should be hub with term blocks, not single definition leaf
+4. #cat_core shows pattern: organizational hubs can reference diverse blocks
+5. Experience reports belong in INBOX, not permanent navigation
+
 /* #wants_events_commands
 
 Command handlers for wants, events, and agent systems.
