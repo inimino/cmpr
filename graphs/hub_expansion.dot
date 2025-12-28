@@ -1,0 +1,153 @@
+digraph hub_expansion {
+  rankdir=LR;
+  node [shape=box, style=rounded, fontsize=10];
+  
+  root [label="#root", shape=ellipse, style=filled, fillcolor=lightblue];
+  
+  // Hub: #agent_event_navigation
+  agent_event_navigation [label="#agent_event_navigation\n(8 blocks)", style=filled, fillcolor=lightyellow];
+  root -> agent_event_navigation;
+  agent_event_navigation [label="#agent_event_navigation", style=filled, fillcolor=lightgreen, fontsize=9];
+  agent_event_navigation -> agent_event_navigation;
+  agent_infrastructure [label="#agent_infrastructure", style=filled, fillcolor=lightgreen, fontsize=9];
+  agent_event_navigation -> agent_infrastructure;
+  cmpr_agents [label="#cmpr_agents", style=filled, fillcolor=lightgreen, fontsize=9];
+  agent_event_navigation -> cmpr_agents;
+  cmpr_events [label="#cmpr_events", style=filled, fillcolor=lightgreen, fontsize=9];
+  agent_event_navigation -> cmpr_events;
+  event_system_guide [label="#event_system_guide", style=filled, fillcolor=lightgreen, fontsize=9];
+  agent_event_navigation -> event_system_guide;
+  events_functions [label="#events_functions", style=filled, fillcolor=lightgreen, fontsize=9];
+  agent_event_navigation -> events_functions;
+  events_types [label="#events_types", style=filled, fillcolor=lightgreen, fontsize=9];
+  agent_event_navigation -> events_types;
+  root_agent [label="#root_agent", style=filled, fillcolor=lightgreen, fontsize=9];
+  agent_event_navigation -> root_agent;
+  
+  // Hub: #tui_interaction_hub
+  tui_interaction_hub [label="#tui_interaction_hub\n(16 blocks)", style=filled, fillcolor=lightyellow];
+  root -> tui_interaction_hub;
+  SBV_design [label="#SBV_design", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> SBV_design;
+  clear_display [label="#clear_display", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> clear_display;
+  ex_expand [label="#ex_expand", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> ex_expand;
+  ex_help [label="#ex_help", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> ex_help;
+  extable [label="#extable", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> extable;
+  getkey [label="#getkey", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> getkey;
+  handle_ex_command [label="#handle_ex_command", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> handle_ex_command;
+  handle_jkgG [label="#handle_jkgG", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> handle_jkgG;
+  keyboard_help [label="#keyboard_help", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> keyboard_help;
+  render_empty_project_state [label="#render_empty_project_state", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> render_empty_project_state;
+  sbv_display [label="#sbv_display", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> sbv_display;
+  sbv_populate [label="#sbv_populate", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> sbv_populate;
+  select_block_version [label="#select_block_version", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> select_block_version;
+  start_ex [label="#start_ex", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> start_ex;
+  start_search [label="#start_search", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> start_search;
+  tui_interaction_hub [label="#tui_interaction_hub", style=filled, fillcolor=lightgreen, fontsize=9];
+  tui_interaction_hub -> tui_interaction_hub;
+  
+  // Hub: #ui_search_nav_hub
+  ui_search_nav_hub [label="#ui_search_nav_hub\n(17 blocks)", style=filled, fillcolor=lightyellow];
+  root -> ui_search_nav_hub;
+  finalize_search [label="#finalize_search", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> finalize_search;
+  first_block_in_file [label="#first_block_in_file", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> first_block_in_file;
+  jk_implementation [label="#jk_implementation", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> jk_implementation;
+  jk_order [label="#jk_order", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> jk_order;
+  perform_search [label="#perform_search", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> perform_search;
+  press_any_key [label="#press_any_key", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> press_any_key;
+  print_menu [label="#print_menu", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> print_menu;
+  print_ruler [label="#print_ruler", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> print_ruler;
+  print_single_block_with_skipping [label="#print_single_block_with_skipping", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> print_single_block_with_skipping;
+  search_forward [label="#search_forward", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> search_forward;
+  select_menu [label="#select_menu", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> select_menu;
+  select_model [label="#select_model", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> select_model;
+  set_highlight [label="#set_highlight", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> set_highlight;
+  start_search [label="#start_search", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> start_search;
+  tui_interaction_hub [label="#tui_interaction_hub", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> tui_interaction_hub;
+  ui_navigation [label="#ui_navigation", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> ui_navigation;
+  ui_search_nav_hub [label="#ui_search_nav_hub", style=filled, fillcolor=lightgreen, fontsize=9];
+  ui_search_nav_hub -> ui_search_nav_hub;
+  
+  // Hub: #llm_integration_overview
+  llm_integration_overview [label="#llm_integration_overview\n(17 blocks)", style=filled, fillcolor=lightyellow];
+  root -> llm_integration_overview;
+  assoc_spans [label="#assoc_spans", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> assoc_spans;
+  assoc_spans_lookup [label="#assoc_spans_lookup", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> assoc_spans_lookup;
+  call_anthropic [label="#call_anthropic", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> call_anthropic;
+  call_gpt [label="#call_gpt", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> call_gpt;
+  call_gpt_curl [label="#call_gpt_curl", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> call_gpt_curl;
+  call_llm [label="#call_llm", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> call_llm;
+  call_ollama [label="#call_ollama", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> call_ollama;
+  call_ollama_curl [label="#call_ollama_curl", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> call_ollama_curl;
+  filename_template [label="#filename_template", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> filename_template;
+  gpt_message [label="#gpt_message", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> gpt_message;
+  handle_anthropic_response [label="#handle_anthropic_response", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> handle_anthropic_response;
+  handle_ollama_response [label="#handle_ollama_response", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> handle_ollama_response;
+  handle_openai_response [label="#handle_openai_response", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> handle_openai_response;
+  llm_integration_overview [label="#llm_integration_overview", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> llm_integration_overview;
+  read_anthropic_key [label="#read_anthropic_key", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> read_anthropic_key;
+  read_openai_key [label="#read_openai_key", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> read_openai_key;
+  send_to_llm [label="#send_to_llm", style=filled, fillcolor=lightgreen, fontsize=9];
+  llm_integration_overview -> send_to_llm;
+  
+  // Hub: #export_reporting_hub
+  export_reporting_hub [label="#export_reporting_hub\n(5 blocks)", style=filled, fillcolor=lightyellow];
+  root -> export_reporting_hub;
+  export_reporting_hub [label="#export_reporting_hub", style=filled, fillcolor=lightgreen, fontsize=9];
+  export_reporting_hub -> export_reporting_hub;
+  generate_event_report [label="#generate_event_report", style=filled, fillcolor=lightgreen, fontsize=9];
+  export_reporting_hub -> generate_event_report;
+  generate_export_docs [label="#generate_export_docs", style=filled, fillcolor=lightgreen, fontsize=9];
+  export_reporting_hub -> generate_export_docs;
+  generate_wants_dashboard [label="#generate_wants_dashboard", style=filled, fillcolor=lightgreen, fontsize=9];
+  export_reporting_hub -> generate_wants_dashboard;
+  handle_export_docs [label="#handle_export_docs", style=filled, fillcolor=lightgreen, fontsize=9];
+  export_reporting_hub -> handle_export_docs;
+  
+}
