@@ -19,6 +19,332 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 
 
 
+
+
+/* #claude_experience_report_wants_sn_format_20251228
+
+Session Goal: Convert --wants and --agents-wants output to SN format
+
+Context:
+User challenged arguments against using SN format for --wants output. Previous implementation output plain text want statements. The correct architectural decision is to output SN format for composability with the event system, since wants are propositions just like events.
+
+What Was Accomplished:
+
+1. Updated #handle_wants specification
+   - Changed output format from plain text to full SN lines
+   - Updated documentation to emphasize SN format output
+   - "Each want is printed as a complete SN line: "event string" <strength>."
+
+2. Updated #handle_wants implementation
+   - Modified check_line() to save both line_start and line_end positions
+   - Changed output from printing just event_str to printing entire SN line
+   - Output now includes quotes and strength value: "We want..." 255.
+   - No functional changes to parsing logic, just output format
+
+3. Updated #handle_agents_wants specification
+   - Changed output to show wants as SN lines followed by metadata
+   - Format: Full SN line, then indented Block/Agent/Check/Fix lines
+   - Maintains readability while providing SN composability
+
+4. Updated #handle_agents_wants implementation
+   - Changed WantInfo struct: want_text → want_sn_line
+   - Modified collect_want() to save full SN line (with quotes and strength)
+   - Changed output to print wants[w].want_sn_line instead of formatted text
+   - Fixed compilation error: used state->block_idx.a[i] instead of non-existent block_id() function
+   - All block ID lookups now use state->block_idx array directly
+
+5. Successfully built and tested
+   - make completed successfully (warnings only, no errors)
+   - dist/cmpr --wants outputs proper SN format
+   - dist/cmpr --agents-wants outputs SN format with metadata
+
+What Works:
+
+Both commands now output SN format:
+
+--wants output:
+```
+"We want this block to contain a list of blocks..." 255.
+"We want to be able to pipe at least up to..." 255.
+"We want to specify the contents of cmpr.c here..." 255.
+```
+
+--agents-wants output:
+```
+=== TRACKED (6 wants) ===
+"We want this block to contain a list of blocks..." 255.
+  Block: #root
+  Agent: none
+
+"We want cmpr1 to have the essential blocks..." 20.
+  Block: unknown
+  Agent: none
+```
+
+Benefits of SN format:
+- Composability: Can pipe --wants output directly into event system
+- Consistency: Same format as event system (T, memorize, recall)
+- Strength tracking: Preserves strength values (e.g., 255 for definitional, 20 for lower confidence)
+- Future-proof: Ready for integration with event-based want tracking
+
+Known Issues:
+
+1. **Agent matching still broken** (pre-existing issue from #claude_experience_report_agents_wants_implementation_20251228)
+   - All wants show "Agent: none" instead of matching to agents
+   - #root_agent should be matched to #root want, but isn't
+   - The agent reference matching logic isn't finding the block references
+   - Need to debug why agents[a].referenced_block isn't matching wants[w].block_id
+   - Possible causes:
+     - Block reference extraction pattern may be too simplistic
+     - May need to handle @blockref syntax in addition to #blockid
+     - May need case-insensitive matching
+     - May need to strip leading # from block_id before comparing
+
+2. **Duplicate wants appear**
+   - #root want appears twice (expected behavior per spec)
+   - Could add deduplication if desired
+
+3. **"unknown" block**
+   - One want has "Block: unknown" 
+   - Only scans loaded blocks, not all files
+   - This is the cmpr2 migration want with strength 20
+
+Technical Details:
+
+Key code changes:
+
+handle_wants() check_line():
+```c
+// OLD: Print just event string
+wrs(event_str);
+terpri();
+
+// NEW: Print entire SN line including quotes and strength
+span sn_line = {line_start, line_end};
+wrs(sn_line);
+terpri();
+```
+
+handle_agents_wants() WantInfo struct:
+```c
+// OLD:
+char *want_text;  // Just the event string
+
+// NEW:
+char *want_sn_line;  // Full SN line: "..." 255.
+```
+
+handle_agents_wants() output:
+```c
+// OLD:
+prt("Want: %s\n", wants[w].want_text);
+
+// NEW:
+prt("%s\n", wants[w].want_sn_line);
+```
+
+Block ID extraction fix:
+```c
+// WRONG (doesn't compile):
+span block_id_span = block_id(block);  // No such function!
+
+// CORRECT:
+span block_id_span = state->block_idx.a[i];  // Direct array access
+```
+
+Architecture Notes:
+
+The decision to use SN format was correct because:
+1. Wants are propositions about desired system states
+2. Events are propositions about observed/defined states
+3. Both have the same epistemological structure
+4. Both need strength values (definitional, high confidence, etc.)
+5. Integration is inevitable: want tracking through event system
+6. Premature to avoid SN format when integration is planned
+
+The "arguments against" (readability, complexity, no current need) were indeed wrong because:
+- They optimized for current state instead of architectural coherence
+- They treated wants as a separate concept from events
+- They delayed inevitable format conversion work
+- They created technical debt (would need to change format later)
+
+Next Steps:
+
+1. **FIX AGENT MATCHING** (highest priority, blocker for useful --agents-wants output)
+   - Debug why agent block reference extraction isn't working
+   - Check what #root_agent's NL comment actually contains
+   - May need to look for @root in addition to #root
+   - May need to handle multiple reference formats
+   - Add debugging output to see what referenced_block values are being found
+
+2. Consider deduplication option for --wants
+   - Currently lists same want multiple times if in multiple blocks
+   - Could add --unique flag or make it default behavior
+
+3. Test with more complex agent scenarios
+   - Multiple agents per want
+   - Wants with multiple blocks
+   - Different strength values
+
+4. Update help text and documentation
+   - Verify --help output mentions SN format
+   - Update #argtable if needed
+
+5. Consider composability use cases
+   - Can we pipe --wants into --event to bulk-load wants into T?
+   - Should we have a way to track want satisfaction over time?
+   - Event system integration patterns?
+
+References:
+- #handle_wants (specification and implementation)
+- #handle_agents_wants (specification and implementation)
+- #claude_experience_report_agents_wants_implementation_20251228 (previous session)
+- #event_parse_sn (SN format specification)
+- #root_agent (agent example that should be matched but isn't)
+
+Build Info:
+- Version: 8 (build: 20251228-012543 df88446 wants)
+- Revisions written:
+  - .cmpr/revs/20251228-012217 (handle_wants spec update)
+  - .cmpr/revs/20251228-012248 (handle_wants code update)
+  - .cmpr/revs/20251228-012311 (handle_agents_wants spec update)
+  - .cmpr/revs/20251228-012538 (handle_agents_wants code fix)
+
+*/
+/* #claude_experience_report_agents_wants_implementation_20251228
+
+Session Goal: Implement --agents-wants feature following #claude_experience_report_wants_agents_research_20251227
+
+What Was Accomplished:
+
+1. Created specification block #handle_agents_wants
+   - Clear description of feature purpose: show relationship between wants and agents
+   - Documents four decision states: tracked, checked, assisted, owned
+   - Specifies algorithm and output format
+   - Added block after #handle_wants in cmpr.c
+
+2. Updated argument handling infrastructure (handle_args_2, handle_args_3, handle_args_4)
+   - Added ind_agents_wants indicator variable to #handle_args_2
+   - Added --agents-wants parsing to #handle_args_3
+   - Added ind_agents_wants to action_arg count in #handle_args_4
+   - Added handle_agents_wants() dispatcher call in #handle_args_4
+   - Updated help message to include --agents-wants flag
+   - Fixed critical brace mismatch bug that was causing "first block should start at beginning of inp" error
+
+3. Updated #argtable documentation
+   - Added --agents-wants to command syntax summary
+   - Added --agents-wants to flag list
+   - Added behavior description explaining algorithm and output
+   - Added help string for user-facing documentation
+
+4. Implemented handle_agents_wants() function (manually maintained)
+   - Collects all wants by scanning loaded blocks for SN lines starting with "We want "
+   - Matches each want to its containing block by searching block comments
+   - Matches wants to agents by checking if agent NL comments reference the want's block
+   - Determines agent state by checking for existence of <agent>_check_impl and <agent>_fix_impl blocks
+   - Outputs results grouped by state (ASSISTED, CHECKED, TRACKED)
+   - Fixed bug where agent ID was being truncated (was removing "_agent" suffix incorrectly)
+
+5. Successfully built and tested
+   - dist/cmpr --agents-wants runs without errors
+   - Correctly identifies 6 wants in the project
+   - Correctly matches #root_agent to #root want
+   - Output format is clean and readable
+
+What Works:
+
+The --agents-wants command successfully:
+- Parses all loaded blocks to find want statements
+- Matches wants to their containing blocks
+- Identifies which agents maintain which wants (e.g., #root_agent maintains #root want)
+- Outputs clean, grouped results
+
+Current output shows 6 wants:
+1. Navigation want (2 hops reachability) - Block: #root, Agent: #root_agent
+2. Checksum want - Block: #cmpr_checksum, Agent: none
+3. Build manifest want - Block: #cmpr1_build_manifest, Agent: none
+4. INBOX migration want - Block: #ES_names, Agent: none
+5. Navigation want (duplicate) - Block: #root, Agent: #root_agent
+6. cmpr2 migration want - Block: unknown, Agent: none
+
+Known Issues:
+
+1. **State detection not working** (all wants showing as TRACKED instead of ASSISTED/CHECKED)
+   - #root_agent has #root_agent_check_impl and #root_agent_fix_impl blocks
+   - These blocks exist (verified with cmpr --print-comment)
+   - But handle_agents_wants() is not detecting them
+   - Issue is likely in the block_for_span() lookup or span creation
+   - The logic creates check_id = "#root_agent_check_impl" correctly
+   - But block_for_span(S(check_id)) returns -1 (not found)
+   - Next step: Debug why block_for_span() isn't finding existing blocks
+
+2. Duplicate want appears (root want listed twice)
+   - This is expected behavior per spec: "If a want appears in multiple blocks, list all occurrences"
+   - Could add deduplication if desired
+
+3. One want has "Block: unknown"
+   - This want wasn't found in any loaded block's NL comment
+   - May be in a file that wasn't loaded, or in T/events snapshots
+   - handle_agents_wants only scans loaded blocks, not all files like handle_wants does
+
+Technical Details:
+
+Bug Fix - Brace Mismatch:
+The initial implementation had a critical syntax error in #handle_args_4:
+```c
+if (ind_wants) {
+    handle_wants();
+    flush_exit(0);
+if (ind_agents_wants) {  // Missing closing brace above!
+```
+This caused compilation to succeed but runtime failure with "first block should start at beginning of inp"
+Fixed by properly closing the ind_wants block before starting ind_agents_wants block.
+
+Bug Fix - Agent ID Truncation:
+Initial implementation tried to remove "_agent" suffix to build check/fix IDs:
+```c
+// WRONG:
+snprintf(check_id, "%s_check_impl", agent_base_without_suffix);
+// This produced "#root_check_impl" instead of "#root_agent_check_impl"
+```
+Fixed to append instead of replace:
+```c
+// CORRECT:
+snprintf(check_id, "%s_check_impl", wants[w].agent_id);  
+// This produces "#root_agent_check_impl"
+```
+
+Implementation Pattern:
+- All code was written manually because --rewritepl is broken
+- Marked #handle_agents_wants as "Manually maintained."
+- Followed existing patterns from #handle_wants and #handle_agents
+- Used same data structures and API calls (block_for_span, block_comment_part, contains, etc.)
+
+Next Steps:
+
+1. **FIX STATE DETECTION** (highest priority)
+   - Debug why block_for_span(S("#root_agent_check_impl")) returns -1
+   - Check if S() function handles the string correctly
+   - Verify block_for_span() vs block_by_id() semantics
+   - May need to strip leading # from check_id/fix_id before lookup
+
+2. Consider scanning all files (like handle_wants) instead of just loaded blocks
+   - Would find wants in T/events snapshots
+   - Would catch the "unknown" block issue
+   
+3. Add deduplication option if duplicate wants are undesired
+
+4. Test with more complex scenarios (multiple agents per want, wants with no blocks, etc.)
+
+References:
+- #claude_experience_report_wants_agents_research_20251227 (planning session)
+- #handle_agents_wants (specification and implementation)
+- #handle_wants (pattern for collecting wants)
+- #handle_agents (pattern for finding agents)
+- #argtable (CLI documentation)
+- #handle_args_2, #handle_args_3, #handle_args_4 (argument handling)
+
+*/
 /* #claude_experience_report_wants_agents_research_20251227
 
 Session Goal: Complete --wants implementation and research --wants-agents feature

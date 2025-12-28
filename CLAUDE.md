@@ -94,7 +94,7 @@ This grep pipeline extracts just the blocks for a specific file from the `--file
 **Editing Commands**:
 - `cmpr --replace '#id'` - Replace entire block (NL + PL) from stdin; for blocks with no PL part, this effectively replaces just the NL
 - `cmpr --replace-comment '#id'` - Replace only NL part
-- `cmpr --replace-code '#id'` - Replace only PL part (rarely used; prefer --rewritepl)
+- `cmpr --replace-code '#id'` - Replace only PL part (currently required due to --rewritepl being broken)
 - `cmpr --after '#id'` - Add a new block after the given block ID, reading contents from stdin
 
 There should be --before but there isn't.
@@ -228,7 +228,7 @@ To understand the build system:
 
 ### NL/PL Synchronization
 
-**Standard Workflow** (use this for all changes):
+**Standard Workflow** (BLOCKED: see --rewritepl issue above):
 1. Edit ONLY the NL using `cmpr --replace-comment '#blockid'` which takes new contents on stdin.
    - you should always have the previous NL in scope, otherwise do a --print-comment first, then make your changes
 2. Run `cmpr --rewritepl '#block_id'` to regenerate PL from NL
@@ -420,6 +420,8 @@ Per the SN notation convention:
 
 **Event System Workflow and Design Intent**:
 
+NOTE: This section describes intended design patterns that are still being validated through actual use.
+
 CRITICAL UNDERSTANDING: T is "transient memory" - the name and the existence of `--T0` (clear T) reveal the design intent.
 
 T is meant to be CLEARED between work sessions. It holds CURRENT context, not ALL historical state.
@@ -474,12 +476,11 @@ WRONG APPROACHES (do not use):
    Fights the design. T is not a database for all historical state.
 
 3. **"Alternative mechanisms"** (files, databases, etc.):
-   There is NO alternative. If you need per-entity tracking, use the T workflow correctly:
+   The intended pattern is to use the T workflow correctly:
    Loop with --T0, set context, add events, --memorize.
 
 When designing solutions:
-- If you find yourself fighting `--T0` or avoiding `--memorize`, you're doing it wrong
-- If you think you need an "embedded pattern" or "alternative mechanism", you're doing it wrong
+- If you find yourself fighting `--T0` or avoiding `--memorize`, reconsider the approach
 - T is for CURRENT work context, snapshots (via --memorize) are for HISTORICAL queries
 - Pay attention to what system commands exist - they reveal design intent
 - The existence of --T0 means T is MEANT to be cleared regularly

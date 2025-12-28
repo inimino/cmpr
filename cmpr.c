@@ -3840,7 +3840,7 @@ We present the supported arguments and flags in a tabular form (as with langtabl
 
 Command syntax summary:
 
-cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--wants]
+cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--wants] [--agents-wants]
 
 Command argument and flag table:
 
@@ -3877,6 +3877,7 @@ Command argument and flag table:
 --recall
 --T
 --wants
+--agents-wants
 
 2. Behavior of arguments and flags:
 
@@ -4027,6 +4028,17 @@ wants:
   Output is one want per line.
   Does not require code to be loaded.
 
+
+agents-wants:
+  Combine --wants and --agents to show which wants are in which decision states.
+  For each want found in the project (via --wants logic):
+    - Find which block(s) contain it by searching through loaded blocks
+    - Match to agent by reading each agent's NL comment for references to the want-containing block
+    - Determine state: tracked (no agent or no implementations), checked (has _check_impl), assisted (has both _check_impl and _fix_impl), or owned (automatic, not yet implemented)
+  Output format: grouped by decision state with sections like "=== ASSISTED (N wants) ==="
+  Each want shows: want text, block ID, agent ID (if any), and implementation blocks.
+  Requires code to be loaded.
+  Call get_code() first, then handle_agents_wants(), then flush and exit successfully.
 3. Implementation notes:
 
 conf:
@@ -4304,6 +4316,9 @@ T:
 wants:
   Print all want statements (SN lines starting with "We want ") found in the project.
 
+agents-wants:
+  Show relationship between wants and agents. Display decision state (tracked/checked/assisted/owned) for each want.
+
 */
 
 
@@ -4356,14 +4371,40 @@ Manually maintained.
 
 */
 
-	int ind_conf = 0, ind_print_conf = 0, ind_help = 0, ind_init = 0, ind_version = 0;
-	int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_expand_block = 0;
-	int ind_content_index = 0, ind_grep = 0, ind_count_blocks = 0, ind_files_blocks = 0, ind_print_all = 0;
-	int ind_rewritepl = 0, ind_prompt = 0, ind_after = 0, ind_replace = 0, ind_replace_comment = 0, ind_replace_code = 0;
-	int ind_run = 0, ind_agents = 0, ind_checksum = 0;
-	int ind_T0 = 0, ind_event = 0, ind_strength = 0, ind_memorize = 0, ind_recall = 0, ind_T = 0;
-	int ind_map_error = 0, ind_test_block_map = 0;
+		int ind_conf = 0;
+	int ind_print_conf = 0;
+	int ind_init = 0;
+	int ind_help = 0;
+	int ind_version = 0;
+	int ind_print_block = 0;
+	int ind_print_comment = 0;
+	int ind_print_code = 0;
+	int ind_expand_block = 0;
+	int ind_content_index = 0;
+	int ind_grep = 0;
+	int ind_count_blocks = 0;
+	int ind_files_blocks = 0;
+	int ind_print_all = 0;
+	int ind_rewritepl = 0;
+	int ind_prompt = 0;
+	int ind_after = 0;
+	int ind_replace = 0;
+	int ind_replace_comment = 0;
+	int ind_replace_code = 0;
+	int ind_run = 0;
+	int ind_agents = 0;
+	int ind_agent_run = 0;
+	int ind_checksum = 0;
+	int ind_T0 = 0;
+	int ind_event = 0;
+	int ind_strength = 0;
+	int ind_memorize = 0;
+	int ind_recall = 0;
+	int ind_T = 0;
+	int ind_map_error = 0;
+	int ind_test_block_map = 0;
 	int ind_wants = 0;
+	int ind_agents_wants = 0;
 	
 	char *conf_filepath = NULL;
 	char *content_index_search = NULL;
@@ -4512,6 +4553,8 @@ Manually maintained.
 			ind_test_block_map = 1;
 		} else if (strcmp(arg, "--wants") == 0) {
 			ind_wants = 1;
+		} else if (strcmp(arg, "--agents-wants") == 0) {
+			ind_agents_wants = 1;
 		} else if (arg[0] == '-' && arg[1] == '-') {
 			prt("Unknown flag: "); prt(arg); prt("\n");
 			flush_exit(1);
@@ -4554,7 +4597,7 @@ Manually maintained.
 
 		// Handle --help, --version, --init first
 	if (ind_help) {
-		prt("Usage: cmpr [--help] [--version] [--init] [--conf <file>] [--print-conf] [--print-block <id>] [--print-comment <id>] [--print-code <id>] [--expand-block <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks] [--files-blocks] [--print-all] [--rewritepl <id>] [--prompt <id>] [--after <id>] [--replace <id>] [--replace-comment <id>] [--replace-code <id>] [--run <id>] [--agents] [--checksum] [--T0] [--event <string>] [--strength <value>] [--memorize] [--recall] [--T] [--map-error] [--test-block-map] [--wants]\n");
+		prt("Usage: cmpr [--help] [--version] [--init] [--conf <file>] [--print-conf] [--print-block <id>] [--print-comment <id>] [--print-code <id>] [--expand-block <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks] [--files-blocks] [--print-all] [--rewritepl <id>] [--prompt <id>] [--after <id>] [--replace <id>] [--replace-comment <id>] [--replace-code <id>] [--run <id>] [--agents] [--checksum] [--T0] [--event <string>] [--strength <value>] [--memorize] [--recall] [--T] [--map-error] [--test-block-map] [--wants] [--agents-wants]\n");
 		flush_exit(0);
 	}
 	
@@ -4593,7 +4636,8 @@ Manually maintained.
 	             ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code +
 	             ind_run + ind_agents + ind_checksum +
 	             ind_map_error + ind_test_block_map +
-	             ind_wants;
+	             ind_wants +
+	             ind_agents_wants;
 	
 	if (action_arg > 1) {
 		prt("Error: Only one action argument may be used at a time.\n");
@@ -4786,6 +4830,11 @@ Manually maintained.
 	
 	if (ind_wants) {
 		handle_wants();
+		flush_exit(0);
+	}
+
+	if (ind_agents_wants) {
+		handle_agents_wants();
 		flush_exit(0);
 	}
 	
@@ -10827,7 +10876,7 @@ void handle_checksum(void) {
 }
 /* #handle_wants @argtable @event_parse_sn
 
-Implement the --wants command which prints all want statements from the project.
+Implement the --wants command which prints all want statements from the project in SN format.
 
 void handle_wants();
 
@@ -10837,7 +10886,12 @@ Algorithm:
 1. Scan all files recursively in the current directory
 2. For each file, read line by line
 3. Parse each line as potential SN format: "..." <digits>.
-4. If the event string starts with "We want ", print it (one per line)
+4. If the event string starts with "We want ", print the entire SN line
+
+Output format:
+- Each want is printed as a complete SN line: "event string" <strength>.
+- One SN line per want
+- Preserves original strength values from source
 
 Implementation:
 - Use find_all_files_recursive() or similar to get all files in the project
@@ -10851,7 +10905,7 @@ Implementation:
     - Search backwards from end for pattern " <digits>.
     - Extract event string between opening " and the " in end pattern
     - Check if event string starts with "We want "
-    - If yes, print the event string followed by newline
+    - If yes, print the ENTIRE SN line (including quotes and strength)
 - Call flush() at the end
 - Exit successfully with exit(0)
 
@@ -10859,8 +10913,10 @@ Notes:
 - This scans all files, not just loaded code blocks
 - Includes .cmpr/T, .cmpr/events/*, and all source files
 - Uses the same SN parsing logic as event_parse_sn
-- Output is just the want strings, one per line
+- Output is SN format, compatible with event system commands
 - Does not include block IDs or locations (use --grep for that)
+
+Manually maintained.
 
 */
 void handle_wants() {
@@ -10871,6 +10927,9 @@ void handle_wants() {
             line.buf++;
         }
         
+        // Save the start position (after whitespace)
+        u8 *line_start = line.buf;
+        
         // Line must start with "
         if (line.buf >= line.end || *line.buf != '"') return;
         
@@ -10879,6 +10938,7 @@ void handle_wants() {
         
         // Must end with '.'
         if (p < line.buf || *p != '.') return;
+        u8 *line_end = p + 1; // Save end position (inclusive of '.')
         p--;
         
         // Skip digits
@@ -10900,8 +10960,9 @@ void handle_wants() {
         span want_prefix = S("We want ");
         if (event_str.end - event_str.buf >= want_prefix.end - want_prefix.buf &&
             memcmp(event_str.buf, want_prefix.buf, want_prefix.end - want_prefix.buf) == 0) {
-            // Print the event string
-            wrs(event_str);
+            // Print the entire SN line
+            span sn_line = {line_start, line_end};
+            wrs(sn_line);
             terpri();
         }
     }
@@ -10965,6 +11026,346 @@ void handle_wants() {
             scan_file(path);
         }
         closedir(events_dir);
+    }
+    
+    flush();
+}
+/* #handle_agents_wants @handle_wants @handle_agents @root_agent
+
+Implement the --agents-wants command which shows the relationship between wants and agents.
+
+void handle_agents_wants();
+
+Purpose:
+Display which wants are being maintained by which agents, and determine the "decision state" for each want.
+
+Four Decision States (from #root_agent):
+- **Tracked**: We record the want but don't verify it (no agent, or agent without implementation)
+- **Checked**: We can determine if criteria is met (agent has _check_impl)
+- **Assisted**: We can offer help with fixing it (agent has both _check_impl and _fix_impl)
+- **Owned**: We automatically maintain the want (agent runs automatically - not implemented yet)
+
+Algorithm:
+1. Get all wants using handle_wants() logic (scan all files for SN lines starting with "We want ")
+2. Get all agents using handle_agents() logic (find all blocks with IDs ending in "_agent")
+3. For each want:
+   a. Find which block(s) contain it (search through loaded blocks)
+   b. Match to agent by reading each agent's NL comment and checking for references to the want-containing block
+   c. Determine state by checking for existence of <agent>_check_impl and <agent>_fix_impl blocks
+   d. Output the want as SN line, followed by metadata
+
+Output Format:
+Group wants by decision state, with clear section headers.
+Each want is output as a complete SN line, followed by indented metadata:
+
+=== ASSISTED (N wants) ===
+"We want..." 255.
+  Block: <block_id>
+  Agent: <agent_id>
+  Check: <agent>_check_impl
+  Fix: <agent>_fix_impl
+
+=== CHECKED (N wants) ===
+"We want..." 255.
+  Block: <block_id>
+  Agent: <agent_id>
+  Check: <agent>_check_impl
+
+=== TRACKED (N wants) ===
+"We want..." 255.
+  Block: <block_id>
+  Agent: none (or <agent_id> if agent exists but has no implementations)
+
+Implementation Notes:
+- Reuse scan_files_for_wants() pattern from handle_wants
+- For each want, search block_idx to find which block contains it
+- For each agent, read its NL comment to look for references to want-containing blocks
+- Common agent reference patterns:
+  - "As seen in #block, we want..."
+  - "This agent helps satisfy the want in #block"
+  - Direct mention of the block ID
+- To check agent state, look for blocks with IDs: <agent>_check_impl, <agent>_fix_impl
+- If a want appears in multiple blocks, list all occurrences
+- If multiple agents maintain the same want, show all of them
+- Output wants in SN format (complete "..." <digits>. lines) for composability
+- Metadata (Block, Agent, Check, Fix) remains structured text for readability
+
+Manually maintained.
+
+*/
+void handle_agents_wants() {
+    // Structure to hold want information
+    typedef struct {
+        char *want_sn_line;  // Full SN line: "We want..." 255.
+        char *block_id;
+        char *agent_id;
+        char *state;  // "tracked", "checked", "assisted", "owned"
+        int has_check;
+        int has_fix;
+    } WantInfo;
+    
+    WantInfo *wants = NULL;
+    int want_count = 0;
+    int want_capacity = 0;
+    
+    // Step 1: Collect all wants using handle_wants logic
+    // Helper to parse SN line and extract want
+    void collect_want(span line, const char *source_file) {
+        // Skip leading whitespace
+        u8 *line_start = line.buf;
+        while (line.buf < line.end && (*line.buf == ' ' || *line.buf == '\t')) {
+            line.buf++;
+        }
+        
+        // Save start after whitespace
+        line_start = line.buf;
+        
+        if (line.buf >= line.end || *line.buf != '"') return;
+        
+        // Search backwards for pattern " <digits>.
+        u8 *p = line.end - 1;
+        if (p < line.buf || *p != '.') return;
+        u8 *line_end = p + 1;  // Save end position (inclusive of '.')
+        p--;
+        
+        u8 *digit_end = p + 1;
+        while (p >= line.buf && *p >= '0' && *p <= '9') p--;
+        if (p < line.buf || p + 1 == digit_end) return;
+        
+        if (*p != ' ') return;
+        p--;
+        
+        if (p < line.buf || *p != '"') return;
+        
+        span event_str = {line.buf + 1, p};
+        
+        // Check if starts with "We want "
+        span want_prefix = S("We want ");
+        if (event_str.end - event_str.buf >= want_prefix.end - want_prefix.buf &&
+            memcmp(event_str.buf, want_prefix.buf, want_prefix.end - want_prefix.buf) == 0) {
+            
+            // Allocate space if needed
+            if (want_count >= want_capacity) {
+                want_capacity = want_capacity == 0 ? 16 : want_capacity * 2;
+                wants = realloc(wants, want_capacity * sizeof(WantInfo));
+            }
+            
+            // Store full SN line
+            int len = line_end - line_start;
+            wants[want_count].want_sn_line = malloc(len + 1);
+            memcpy(wants[want_count].want_sn_line, line_start, len);
+            wants[want_count].want_sn_line[len] = '\0';
+            
+            // Initialize other fields
+            wants[want_count].block_id = NULL;
+            wants[want_count].agent_id = NULL;
+            wants[want_count].state = "tracked";
+            wants[want_count].has_check = 0;
+            wants[want_count].has_fix = 0;
+            
+            want_count++;
+        }
+    }
+    
+    // Scan loaded blocks for wants
+    for (int i = 0; i < state->blocks.n; i++) {
+        span block = state->blocks.a[i];
+        span comment = block_comment_part(block);
+        
+        if (!empty(comment)) {
+            span rest = comment;
+            while (rest.buf < rest.end) {
+                u8 *line_end = rest.buf;
+                while (line_end < rest.end && *line_end != '\n') line_end++;
+                
+                span line = {rest.buf, line_end};
+                collect_want(line, NULL);
+                
+                rest.buf = line_end;
+                if (rest.buf < rest.end && *rest.buf == '\n') rest.buf++;
+            }
+        }
+    }
+    
+    // Step 2: Match wants to blocks
+    for (int w = 0; w < want_count; w++) {
+        // Search for the want text in block comments
+        for (int i = 0; i < state->blocks.n; i++) {
+            span block = state->blocks.a[i];
+            span comment = block_comment_part(block);
+            
+            // Check if this block contains the want
+            if (contains(comment, S(wants[w].want_sn_line))) {
+                // Get block ID from block_idx
+                if (i < state->block_idx.n) {
+                    span block_id_span = state->block_idx.a[i];
+                    if (!empty(block_id_span)) {
+                        int id_len = block_id_span.end - block_id_span.buf;
+                        wants[w].block_id = malloc(id_len + 1);
+                        memcpy(wants[w].block_id, block_id_span.buf, id_len);
+                        wants[w].block_id[id_len] = '\0';
+                    }
+                }
+                break;  // Found the block
+            }
+        }
+    }
+    
+    // Step 3: Find all agents
+    typedef struct {
+        char *agent_id;
+        char *referenced_block;
+    } AgentInfo;
+    
+    AgentInfo *agents = NULL;
+    int agent_count = 0;
+    
+    for (int i = 0; i < state->block_idx.n; i++) {
+        span id = state->block_idx.a[i];
+        
+        if (empty(id)) continue;
+        
+        // Check if block ID ends with "_agent"
+        if (id.end - id.buf > 6 &&
+            memcmp(id.end - 6, "_agent", 6) == 0) {
+            
+            agents = realloc(agents, (agent_count + 1) * sizeof(AgentInfo));
+            
+            int id_len = id.end - id.buf;
+            agents[agent_count].agent_id = malloc(id_len + 1);
+            memcpy(agents[agent_count].agent_id, id.buf, id_len);
+            agents[agent_count].agent_id[id_len] = '\0';
+            
+            // Look for block references in agent's NL comment
+            int block_index = block_for_span(id);
+            if (block_index >= 0 && block_index < state->blocks.n) {
+                span block = state->blocks.a[block_index];
+                span comment = block_comment_part(block);
+                agents[agent_count].referenced_block = NULL;
+                
+                // Simple pattern: look for #block_name in comment
+                u8 *p = comment.buf;
+                while (p < comment.end) {
+                    if (*p == '#') {
+                        // Found potential block reference
+                        u8 *ref_start = p;
+                        p++;
+                        while (p < comment.end && 
+                               ((*p >= 'a' && *p <= 'z') || 
+                                (*p >= 'A' && *p <= 'Z') || 
+                                (*p >= '0' && *p <= '9') || 
+                                *p == '_')) {
+                            p++;
+                        }
+                        
+                        if (p > ref_start + 1) {
+                            int ref_len = p - ref_start;
+                            agents[agent_count].referenced_block = malloc(ref_len + 1);
+                            memcpy(agents[agent_count].referenced_block, ref_start, ref_len);
+                            agents[agent_count].referenced_block[ref_len] = '\0';
+                            break;  // Take first reference
+                        }
+                    } else {
+                        p++;
+                    }
+                }
+            }
+            
+            agent_count++;
+        }
+    }
+    
+    // Step 4: Match wants to agents
+    for (int w = 0; w < want_count; w++) {
+        if (!wants[w].block_id) continue;
+        
+        for (int a = 0; a < agent_count; a++) {
+            if (agents[a].referenced_block && 
+                strcmp(wants[w].block_id, agents[a].referenced_block) == 0) {
+                // This agent references the block containing this want
+                wants[w].agent_id = strdup(agents[a].agent_id);
+                
+                // Check for _check_impl and _fix_impl
+                char check_id[256];
+                char fix_id[256];
+                snprintf(check_id, sizeof(check_id), "%s_check_impl", agents[a].agent_id);
+                snprintf(fix_id, sizeof(fix_id), "%s_fix_impl", agents[a].agent_id);
+                
+                // Look for these blocks
+                for (int i = 0; i < state->block_idx.n; i++) {
+                    span id = state->block_idx.a[i];
+                    if (!empty(id)) {
+                        char id_str[256];
+                        int id_len = id.end - id.buf;
+                        if (id_len < 256) {
+                            memcpy(id_str, id.buf, id_len);
+                            id_str[id_len] = '\0';
+                            
+                            if (strcmp(id_str, check_id) == 0) {
+                                wants[w].has_check = 1;
+                            }
+                            if (strcmp(id_str, fix_id) == 0) {
+                                wants[w].has_fix = 1;
+                            }
+                        }
+                    }
+                }
+                
+                // Determine state
+                if (wants[w].has_check && wants[w].has_fix) {
+                    wants[w].state = "assisted";
+                } else if (wants[w].has_check) {
+                    wants[w].state = "checked";
+                }
+                
+                break;
+            }
+        }
+    }
+    
+    // Step 5: Output results grouped by state
+    const char *states[] = {"assisted", "checked", "tracked"};
+    const char *headers[] = {
+        "=== ASSISTED",
+        "=== CHECKED",
+        "=== TRACKED"
+    };
+    
+    for (int s = 0; s < 3; s++) {
+        const char *state_name = states[s];
+        
+        // Count wants in this state
+        int count = 0;
+        for (int w = 0; w < want_count; w++) {
+            if (strcmp(wants[w].state, state_name) == 0) {
+                count++;
+            }
+        }
+        
+        if (count > 0) {
+            char header[128];
+            snprintf(header, sizeof(header), "%s (%d wants) ===", headers[s], count);
+            prt("%s\n", header);
+            
+            // Print wants in this state
+            for (int w = 0; w < want_count; w++) {
+                if (strcmp(wants[w].state, state_name) == 0) {
+                    // Print full SN line
+                    prt("%s\n", wants[w].want_sn_line);
+                    
+                    prt("  Block: %s\n", wants[w].block_id ? wants[w].block_id : "unknown");
+                    prt("  Agent: %s\n", wants[w].agent_id ? wants[w].agent_id : "none");
+                    
+                    if (wants[w].has_check) {
+                        prt("  Check: %s_check_impl\n", wants[w].agent_id);
+                        if (wants[w].has_fix) {
+                            prt("  Fix: %s_fix_impl\n", wants[w].agent_id);
+                        }
+                    }
+                    prt("\n");
+                }
+            }
+        }
     }
     
     flush();
