@@ -2,6 +2,8 @@
 .cmpr/tmp
 .cmpr/api_calls
 .cmpr/cache
+.cmpr/events
+.cmpr/rev-indices
 revs
 tmp
 api_calls

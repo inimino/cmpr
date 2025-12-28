@@ -168,6 +168,7 @@ void handle_agents();
 void handle_prompt(int block_idx);
 void handle_checksum(void);
 void handle_wants();
+void handle_wants_status();
 void handle_agents_wants();
 void grep_blocks(span pattern);
 void after(span arg);
