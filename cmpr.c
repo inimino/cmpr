@@ -33,6 +33,10 @@ or
 The root_agent maintains this want by checking reachability and creating hub blocks to fix violations.
 See #ES_BR for the complete event space specification.
 
+## Documentation
+
+#glossary - Terminology and definitions
+
 ## Navigation Hubs
 
 The following blocks serve as navigation hubs to reach different parts of the codebase:
@@ -70,9 +74,9 @@ Quick navigation paths for the agent system and event system.
 */
 /* #cmpr_c_overview
 
-TODO: This block should focus on high-level structure and provide navigation breadcrumbs to find components quickly. It should point to high-level-minus-one blocks, not to individual implementation functions. Each area should have a clear next hop for further exploration.
-
 cmpr.c is the open-source CLI/TUI implementation (cmpr1) of the cmpr block database.
+
+See #source_intro for the file header and overview.
 
 ## Entry points and program flow
 
@@ -107,6 +111,12 @@ cmpr.c is the open-source CLI/TUI implementation (cmpr1) of the cmpr block datab
 Implementation hubs for cmpr.c functionality.
 
 This block organizes implementation areas not covered by #cmpr_c_overview's architectural view.
+
+## Core Data Structures
+
+#ui_state
+#rev_info
+#config_fields
 
 ## Implementation Areas
 
@@ -1217,54 +1227,31 @@ We either track them (or they wouldn't have any state in the system) or we check
 
 ## Running Agents
 
-To execute an agent:
-```bash
-cmpr --print-code '#agent_block_id' | bash
-```
+To execute an agent, use: `cmpr --print-code '#agent_block_id' | bash`
 
-To list all available agents:
-```bash
-dist/cmpr --agents
-```
-
-Example - run the migration agent:
-```bash
-cmpr --print-code '#migration_agent' | bash
-```
+To list all available agents: `dist/cmpr --agents`
 
 ## Agent Framework
 
-For general agent patterns and infrastructure:
-- #agent_infrastructure - Agent interface contract, state storage, output formats
-- #cmpr_agents - Agent ecosystem overview, agent vs script distinction
+For general agent patterns and infrastructure see #agent_infrastructure and #cmpr_agents.
 
-## Implementation
+## Root Agent Implementation
 
-Executable agents: 
-- #root_agent_check (documentation)
-- #root_agent_check_impl (CHECK mode implementation)
-- #root_agent_fix (documentation)
-- #root_agent_fix_impl (FIX mode implementation)
+- #root_agent_check - CHECK mode documentation
+- #root_agent_check_impl - CHECK mode implementation
+- #root_agent_fix - FIX mode documentation  
+- #root_agent_fix_impl - FIX mode implementation
+- #root_agent_impl - Design discussion part 1
+- #root_agent_impl_2 - Design discussion part 2
+- #root_agent_impl_3 - Design discussion part 3
 
-Design discussion: #root_agent_impl, #root_agent_impl_2, #root_agent_impl_3
-Integration with events: #claude_experience_report_root_agent_t_integration_20251227
+## Other Agents and System Wants
 
-## Other Agents
-
-Migration between cmpr1 and cmpr2:
-- #cmpr2_to_cmpr1_migration - Want: essential cmpr2 blocks should be in cmpr1
-- #migration_agent - Agent to identify and migrate blocks from cmpr2
-- #extract_block_from_cmpr2 - Helper script for extracting individual blocks
-
-## Meta-Level Agents
-
-Want maturation tracking:
-- #want_maturation_overview - Tracks automation state progression (tracked/checked/assisted/owned) for all wants
-
-## Report Wants
-
-System visibility through generated reports:
-- #report_wants - Wants for 10 reports: wants dashboard, nl2pl health, navigation graph, INBOX flow, event activity, block size, test coverage, revision heatmap, agent ecosystem, dependency map
+- #migration_agent - Migrates blocks from cmpr2 to cmpr1
+- #cmpr2_to_cmpr1_migration - Want specification for migration
+- #extract_block_from_cmpr2 - Helper script for block extraction
+- #want_maturation_overview - Tracks automation state progression
+- #report_wants - System visibility report wants
 
 */
 /* #root_agent_impl

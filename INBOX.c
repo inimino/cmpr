@@ -6700,12 +6700,12 @@ Build system for cmpr.
 ## Build Process
 
 1. Generate fdecls.h from cmpr.c function declarations using extract_decls.py
-2. Generate bootstrap_content.c from #claude_md_bootstrap block (embeds CLAUDE.md in binary)
+2. Generate bootstrap_content.c from #claude_md_bootstrap block using #generate_bootstrap (embeds CLAUDE.md in binary)
 3. Compile siphash library components
 4. Build dist/cmpr with version stamping
 
 The main binary is built with:
-- Version number (VER=8)
+- Version number (VER=9)
 - Build timestamp
 - Git commit hash
 - Embedded bootstrap content for `cmpr --init`
