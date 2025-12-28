@@ -616,6 +616,31 @@ Never be afraid to go back to the root block and look for something else.
 - Can be moved to permanent locations later during review
 - Or left in INBOX as temporal documentation
 Test nl2pl
+/* #wants_events_commands
+
+Command handlers for wants, events, and agent systems.
+
+These commands provide CLI access to the wants tracking, event system, and agent dashboard features.
+
+## Wants Commands
+
+#handle_wants - Display wants and their automation states
+#handle_agents_wants - Show agent-want associations
+#handle_wants_dashboard - Generate HTML dashboard for wants
+
+## Events Commands
+
+#handle_event_report - Generate HTML report of event snapshots
+#handle_snapshots - List event snapshots
+#handle_snapshot_view - View specific event snapshot
+#handle_event_spaces - List defined event spaces
+
+## Agent Commands
+
+#handle_agents - List available agents
+#handle_agent_run - Execute agent in CHECK/FIX mode
+
+*/
 /* #codex_experience_report_agent_event_navigation_20251228_1
 
 Summary:

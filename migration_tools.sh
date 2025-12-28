@@ -324,9 +324,9 @@ echo >&2
 
 # Step 1: Get all block IDs from #root
 echo "Step 1: Extracting hub block IDs from #root..." >&2
-root_nl=$(cmpr --print-comment '#root')
+root_nl=$(dist/cmpr --print-comment '#root')
 hub_ids=$(echo "$root_nl" | grep -oE '#[a-zA-Z_][a-zA-Z0-9_]*' | grep -v '^#root$' || true)
-hub_count=$(echo "$hub_ids" | grep -c . || echo 0)
+hub_count=$(echo "$hub_ids" | wc -w)
 
 echo "Found $hub_count hub blocks in #root:" >&2
 echo "$hub_ids" >&2
@@ -338,7 +338,7 @@ all_leaf_blocks=""
 hub_violations=0
 for hub in $hub_ids; do
     echo "  Checking $hub..." >&2
-    hub_nl=$(cmpr --print-comment "$hub" 2>/dev/null || echo "ERROR: Block not found")
+    hub_nl=$(dist/cmpr --print-comment "$hub" 2>/dev/null || echo "ERROR: Block not found")
     if echo "$hub_nl" | grep -q "ERROR"; then
         echo "    ❌ Hub block $hub does not exist!" >&2
         hub_violations=$((hub_violations + 1))
@@ -346,7 +346,7 @@ for hub in $hub_ids; do
     fi
     
     leaf_ids=$(echo "$hub_nl" | grep -oE '#[a-zA-Z_][a-zA-Z0-9_]*' | grep -v "^$hub$" || true)
-    leaf_count=$(echo "$leaf_ids" | grep -c . || echo 0)
+    leaf_count=$(echo "$leaf_ids" | wc -w)
     
     if [ "$leaf_count" -lt 2 ] || [ "$leaf_count" -gt 16 ]; then
         echo "    ❌ Has $leaf_count blocks (should be 2-16)" >&2
@@ -361,8 +361,8 @@ echo >&2
 
 # Step 3: Get all blocks in project
 echo "Step 3: Getting all blocks in project..." >&2
-all_blocks=$(cmpr --files-blocks | grep -oE 'Block [0-9]+: #[a-zA-Z_][a-zA-Z0-9_]*' | grep -oE '#[a-zA-Z_][a-zA-Z0-9_]*' || true)
-total_blocks=$(echo "$all_blocks" | grep -c . || echo 0)
+all_blocks=$(dist/cmpr --files-blocks | grep -oE 'Block [0-9]+: #[a-zA-Z_][a-zA-Z0-9_]*' | grep -oE '#[a-zA-Z_][a-zA-Z0-9_]*' || true)
+total_blocks=$(echo "$all_blocks" | wc -w)
 echo "Total named blocks in project: $total_blocks" >&2
 echo >&2
 
