@@ -33,6 +33,19 @@ Next steps:
 - Consider adding a helper script that materializes agents/ binaries from the agent blocks to make running them even faster.
 - Flesh out the visualization ideas into an actual blog post or published diagrams linked from the README.
 */
+/* #codex_experience_report_agent_doc_refresh_20251228_1
+
+Goal: tighten the README agent instructions and clarify the visualization pointer after review feedback.
+
+What changed:
+- Expanded the agent quick-start to cover building `dist/cmpr`, listing agents, inspecting their comments, and running CHECK/FIX with `root_agent` as the example.
+- Reiterated that `--agent-run` materializes scripts from the `_check_impl` and `_fix_impl` blocks so updating the repo keeps agents current.
+- Clarified that the visualization reference in `#blog_post_blockset_visualization` includes hub-and-spoke and force-directed views.
+
+Next steps:
+- Add a short sample of `--agents` output in the README so users know what to expect.
+- Publish or link to the first rendered visualization once the diagrams move beyond the proposal stage.
+*/
 /* #claude_experience_report_block_quality_agents_20251227
 
 Experience Report: Creating Block Quality Agents with Correct T Workflow

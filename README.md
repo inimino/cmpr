@@ -160,9 +160,11 @@ If you use the clipboard model with the palette, it will similarly just put the 
 
 cmpr ships agent implementations as blocks, so you can run them directly from the built binary without extra installation steps.
 
-- List available agents with `dist/cmpr --agents` (or `cmpr --agents` if installed system-wide). For example, the current repo includes `root_agent` and `migration_agent`.
-- Run an agent in CHECK or FIX mode with `dist/cmpr --agent-run <agent_name> CHECK` or `dist/cmpr --agent-run <agent_name> FIX`. A common check is `dist/cmpr --agent-run root_agent CHECK` to verify the hub coverage want from `#root`.
-- The `--agent-run` command extracts the shell script from the corresponding `<agent_name>_check_impl` or `<agent_name>_fix_impl` block, writes it to a temp file, and executes it, so keeping your repo up to date is enough to keep agents current.
+1. Build cmpr (`make`) so you have `dist/cmpr` on your PATH (or install system-wide with `sudo make install`).
+2. Discover what's available: `dist/cmpr --agents` lists agent names like `root_agent` and `migration_agent`.
+3. See what an agent does before running it: `dist/cmpr --print-comment '#root_agent'` shows the want it enforces, and `dist/cmpr --print-comment '#root_agent_check_impl'` shows the CHECK implementation it will run.
+4. Run an agent in CHECK or FIX mode with `dist/cmpr --agent-run <agent_name> CHECK` or `dist/cmpr --agent-run <agent_name> FIX`. Example: `dist/cmpr --agent-run root_agent CHECK` verifies the hub coverage want from `#root` and reports gaps; `FIX` attempts the corresponding repair when available.
+5. The `--agent-run` command extracts the shell script from the `<agent_name>_check_impl` or `<agent_name>_fix_impl` block, writes it to a temp file, and executes it, so updating your repo keeps agents current.
 ### Bonus: cmpr in cmpr
 
 1. We ship our own cmpr conf file, so run cmpr in the cmpr repo to see the code the way we do while building it.
@@ -187,7 +189,7 @@ This is mostly about how files get broken into blocks.
 Languages that support C-style block comments (Java, JavaScript, Rust, C++, ...) should work without much trouble.
 It's not hard to extend the support to other languages, just ask for what you want in the discord and it may happen soon!
 
-For a visual overview of the cmpr1 block graph and navigation goals, see the `#blog_post_blockset_visualization` block (run `dist/cmpr --print-comment '#blog_post_blockset_visualization'`) for proposed diagrams and a blog-style walkthrough of the workflow.
+For a visual overview of the cmpr1 block graph and navigation goals, see the `#blog_post_blockset_visualization` block (run `dist/cmpr --print-comment '#blog_post_blockset_visualization'`) for proposed diagrams and a blog-style walkthrough of the workflow, including hub-and-spoke and force-directed views.
 ## More
 
 Development is sometimes [streamed on twitch](https://www.twitch.tv/inimino2).
