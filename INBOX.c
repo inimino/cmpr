@@ -615,6 +615,607 @@ Never be afraid to go back to the root block and look for something else.
 - Experience reports go in INBOX initially: `cat report.txt | cmpr --after '#INBOX'`
 - Can be moved to permanent locations later during review
 - Or left in INBOX as temporal documentation
+/* #claude_experience_report_want_maturation_test_spike_20251228
+
+## Session Goal
+
+Design and implement vertical spike for want maturation end-to-end test, focusing on demonstrating the connection between events, event spaces, agents, and wants through publishable HTML output.
+
+## What Was Accomplished
+
+### Clarified Requirements ✅
+
+**Initial misunderstanding**: Started designing complex multi-phase tests with temporal tracking, gap analysis, maturation trajectories, etc.
+
+**User correction**: "I don't care about any of this. I want to see events, event spaces, and a clear connection between those things, agents, and wants, in a table or two in a nice HTML page that is generated from markdown."
+
+**Key insight**: The value is in DEMONSTRATING how the event system works, not in tracking metrics. Show the mechanics: events → event spaces → agents → wants.
+
+### Implemented Vertical Spike ✅
+
+**What it does**:
+1. Runs a domain agent (`#root_agent_check_impl`) to populate T with events
+2. Adds meta-level events (simulating want maturation agent)
+3. Parses current T state to extract all events
+4. Categorizes events by prefix pattern into event spaces
+5. Generates markdown report showing the composition pattern
+6. Converts to HTML using pandoc
+
+**Output artifacts**:
+- `/tmp/generate_event_report.sh` - POSIX shell script, 160 lines
+- `/tmp/event_report.md` - Markdown report, 76 lines
+- `/tmp/event_report.html` - Styled HTML, 430 lines
+
+**Report sections**:
+1. **Overview** - Total events, source description
+2. **Event Spaces Identified** - Table of 7 event space prefixes with examples
+3. **All Events in Current T** - Full event table with space/layer categorization
+4. **Event Composition Pattern** - Explains domain vs meta layers
+5. **Agent → Event Mapping** - Which agents emit which events
+6. **How to Query These Events** - Example bash commands for recall
+
+### Demonstrated Core Concepts ✅
+
+**Event Spaces**:
+- Domain layer: `"Agent: "`, `"Mode: "`, `"Status: "`, `"Hub blocks: "`, `"Hub violations: "`, `"Unreferenced blocks: "`, `"Timestamp: "`
+- Meta layer: `"The want is: "`, `"Automation state: "`, `"CHECK implementation: "`
+
+**Composition Pattern**:
+- 7 events from `#root_agent_check_impl` (domain verification)
+- 3 events from want maturation system (meta-level tracking)
+- Both coexist in same T state
+- Want maturation agent CALLS domain agent, doesn't replace it
+
+**Event → Space → Agent → Want chain**:
+- Event: `"Status: constraint not satisfied"` 
+- Space: `"Status: "` (domain verification results)
+- Agent: `#root_agent_check_impl`
+- Want: "all blocks reachable from #root in ≤2 hops"
+
+## What Works Now
+
+✅ **Script runs today** - No future implementation required
+✅ **Uses real events** - Actual output from `#root_agent_check_impl`
+✅ **POSIX-compliant** - Uses /bin/sh, basic sed/grep/awk
+✅ **Clean output** - Professional markdown → HTML via pandoc
+✅ **Demonstrates value** - Shows event system mechanics clearly
+✅ **TDD-ready** - Output works before full want maturation implementation
+
+**Test execution**:
+```bash
+# Generate events
+dist/cmpr --T0
+cmpr --print-code '#root_agent_check_impl' | bash
+dist/cmpr --event "The want is: all blocks reachable from #root in ≤2 hops" --strength 255
+dist/cmpr --event "Automation state: assisted" --strength 255
+dist/cmpr --event "CHECK implementation: #root_agent_check_impl" --strength 255
+
+# Generate report
+/tmp/generate_event_report.sh > /tmp/event_report.md
+pandoc -f markdown -t html --standalone --metadata title="Event System Report" /tmp/event_report.md -o /tmp/event_report.html
+
+# View in browser
+open /tmp/event_report.html
+```
+
+## Technical Implementation Details
+
+**Event Parsing**:
+- Reads `dist/cmpr --T` output (SN format)
+- Format: `"event string" 255.`
+- Interior quotes NOT escaped (per SN spec)
+- Extracts event string and strength using sed
+
+**Event Space Detection**:
+- Pattern matching on event string prefix
+- Case statement categorizes into known spaces
+- Assigns layer (Domain vs Meta)
+- Extensible: new spaces auto-detected by prefix
+
+**Markdown Generation**:
+- Pipe-based tables for clean alignment
+- Code formatting for event strings
+- Truncates long events (>60 chars) for readability
+- Includes explanatory sections between tables
+
+**HTML Conversion**:
+- Uses pandoc with `--standalone` flag
+- Includes default CSS styling
+- Sets page title via `--metadata`
+- Clean, professional output suitable for web publishing
+
+## What Doesn't Work Yet
+
+❌ **Not integrated into test suite** - Script is in /tmp, not committed
+❌ **No temporal queries** - Only shows current T state, not historical progression
+❌ **Single want only** - Manually added one want's meta-events, not all 13 wants
+❌ **No automation** - Manual event population, not calling actual want maturation agent
+❌ **No snapshot comparison** - Can't show "before/after" or "week-over-week" changes
+
+None of these are blockers - the vertical spike demonstrates the core value.
+
+## Key Design Insights
+
+**1. Events are the primitive**:
+Everything starts with events in T. Event spaces are just patterns we recognize in event strings.
+
+**2. Composition via shared T state**:
+Want maturation agent calls domain agent, both write to T, single snapshot contains both perspectives.
+
+**3. After-the-fact event space definition**:
+We don't need to declare event spaces upfront. Pattern matching on prefixes lets us categorize events later.
+
+**4. Visual clarity matters**:
+Tables showing Event → Space → Layer → Agent make the abstract concept concrete.
+
+**5. TDD works for infrastructure**:
+The report script works TODAY even though want maturation agent doesn't exist yet. Shows what the output will look like, validates the design.
+
+## Next Steps
+
+**Phase 1: Commit the spike** ✅
+1. Move `/tmp/generate_event_report.sh` to repo as `tests/test_want_maturation_report.sh`
+2. Create example invocation in test suite
+3. Document expected output format
+
+**Phase 2: Expand coverage**
+1. Iterate over all 13 wants from `cmpr --agents-wants`
+2. For each want, detect automation state (tracked/checked/assisted/owned)
+3. Generate comprehensive report showing all wants
+
+**Phase 3: Add temporal queries**
+1. Save snapshots at different times
+2. Query historical snapshots
+3. Show maturation progression: "Week ago vs today"
+4. Generate timeline view per want
+
+**Phase 4: Implement actual want maturation agent**
+1. Write `#want_maturation_agent_check` PL
+2. Implement helpers: extract_wants, find_agent, determine_state
+3. Make it populate T automatically (remove manual event adding)
+4. Verify report script still works with real agent output
+
+**Phase 5: Polish for production**
+1. Add CLI flag: `cmpr --want-maturation-report`
+2. Output to configurable path
+3. Add filtering: by want, by date range, by automation state
+4. Generate historical archive: daily snapshots → trend charts
+
+## Files Created
+
+- `/tmp/generate_event_report.sh` - Report generator script
+- `/tmp/event_report.md` - Example markdown output
+- `/tmp/event_report.html` - Example HTML output
+
+## References
+
+Design context:
+- #claude_experience_report_want_maturation_design_20251228 - Original design session
+- #want_maturation_overview - Hub block for want maturation system
+- #want_maturation_event_spaces - Event space definitions
+
+Related implementations:
+- #root_agent_check_impl - Example domain agent (generates events shown in report)
+- #cmpr_events - Event system primitives (T/E/S)
+- #event_system_guide - User guide for event system
+
+Test infrastructure:
+- `tests/test_events_*.sh` - Existing event system tests
+- This spike could become `tests/test_want_maturation_report.sh`
+
+## Status
+
+Vertical spike COMPLETE ✅
+
+User feedback: "I fucking love it" ✅
+
+Ready to commit and expand to full test suite.
+
+*/
+/* #claude_experience_report_want_maturation_design_20251228
+
+## Session Goal
+
+Design and establish block structure for want maturation tracking system - a meta-level agent that uses the event system to track automation state progression of all wants.
+
+## What Was Accomplished
+
+### Design Phase ✅
+
+**Event System Understanding:**
+- Confirmed T (transient memory) design intent: cleared between sessions with --T0
+- Established the loop pattern: t0() → e() → m() per entity, not loading all entities into one T
+- Clarified event space definition: prefix-based, can be defined after-the-fact
+- Understood recall as query mechanism using want text as natural key
+
+**Core Design Insight:**
+The want maturation system treats wants themselves as entities to evaluate:
+
+```bash
+for want in $(all_wants); do
+  t0()
+  e("The want is: $want_text")           # Want as recall key
+  e("The want is: assisted")              # Automation state
+  # Call the want's CHECK agent if it exists (adds constraint events)
+  m()                                     # Save snapshot
+done
+```
+
+**Event Spaces Designed:**
+- Primary ES: "The want is: " → {tracked, checked, assisted, owned}
+- Supporting ES: "Agent exists: ", "CHECK implementation exists: ", "FIX implementation exists: "
+- Composition pattern: want maturation events + domain constraint events in same snapshot
+
+**Elegance Properties:**
+1. Minimal primitives (t0/e/m/r only)
+2. Want text serves as natural query key
+3. Composable: calls existing agents, doesn't replace them
+4. After-the-fact ES definition enables temporal queries on old data
+5. Meta-level reasoning about system infrastructure maturation
+
+### Block Structure Phase ✅
+
+**Created 6 blocks:**
+
+1. **#want_maturation_overview** (hub)
+   - Four automation states concept
+   - Meta-level agent pattern (evaluates agents themselves)
+   - Event space declarations
+   - Composition pattern explained
+   - After-the-fact ES insight documented
+
+2. **#want_maturation_event_spaces**
+   - "The want is: " ES with 4 outcomes
+   - Supporting ES for infrastructure detection
+   - Composition examples
+
+3. **#want_maturation_agent_check** (stub)
+   - Algorithm: iterate wants, determine state, call domain CHECK, memorize
+   - References to helpers
+
+4. **#want_maturation_agent_fix** (stub)
+   - Placeholder for future scaffolding capability
+   - Would generate agent/CHECK/FIX block stubs
+
+5. **#want_maturation_query** (stub)
+   - Algorithm: iterate wants, recall, parse T, display table
+   - Output format specified
+
+6. **#want_maturation_helpers** (stub)
+   - List of needed helper functions
+   - Extract wants, find agents, check block existence, parse T
+
+**Navigation Integration ✅**
+
+Updated hub blocks to link to new system:
+
+- **#root_agent**: Added "Meta-Level Agents" section → #want_maturation_overview
+- **#cmpr_events**: Added "Applications" section → #want_maturation_overview
+
+**Reachability verified:**
+- #root → #root_agent → #want_maturation_overview (2 hops)
+- #root → #cmpr_events → #want_maturation_overview (2 hops)
+- All 6 blocks reachable within ≤3 hops from #root
+
+**Design Philosophy Applied:**
+Per user direction: "favor putting in structure and references, not final details"
+- Block structure complete
+- Navigation complete
+- Algorithms outlined
+- Event spaces specified
+- Implementation details deferred
+
+## What Works Now
+
+✅ Complete navigable block structure
+✅ Design documented with key insights
+✅ Event spaces defined
+✅ Two navigation paths from root (agent perspective + event perspective)
+✅ Algorithm outlines clear enough to implement
+✅ Composition pattern documented
+
+## What Doesn't Work Yet
+
+❌ No PL implementations (all blocks are NL-only stubs)
+❌ Helper functions not written
+❌ Query parsing logic not implemented
+❌ Integration with existing --agents-wants not done
+❌ Cannot actually run want maturation CHECK yet
+
+## Key Insights Captured
+
+**1. After-the-Fact Event Spaces:**
+Event spaces don't need pre-declaration. Agents emit natural events, and we recognize patterns later as event spaces. This enables temporal queries on old snapshots without re-running agents.
+
+**2. Meta-Level Reasoning:**
+Want maturation is an agent that reasons about the agent system itself. It evaluates what infrastructure exists for each want, not whether the want's criteria are met.
+
+**3. Composition Over Replacement:**
+The want maturation agent CALLS existing want agents (like #root_agent_check_impl). It layers meta-evaluation on top of domain evaluation. Both sets of events live in the same snapshot.
+
+**4. Want Text as Query Key:**
+The want text itself serves as the recall key. Loading `"The want is: all blocks reachable..."` into T and calling recall() retrieves historical snapshots about that specific want.
+
+**5. T is Transient by Design:**
+The existence of --T0 reveals design intent: T holds context for ONE entity at a time. The loop pattern (t0/e/m per entity) is correct. Fighting this with "embedded patterns" or avoiding --T0 is wrong.
+
+## Next Steps
+
+**Phase 1: Implement Helpers**
+1. Write #want_maturation_helpers PL:
+   - extract_wants() - parse cmpr --agents-wants
+   - find_agent_for_want() - pattern matching on agent block references
+   - check_block_exists() - test block existence
+   - determine_automation_state() - check infrastructure
+
+**Phase 2: Implement CHECK Agent**
+1. Write #want_maturation_agent_check PL
+2. Test with small set of wants
+3. Verify snapshots created correctly
+4. Check composition (does it call root_agent_check_impl?)
+
+**Phase 3: Implement Query Tool**
+1. Write #want_maturation_query PL
+2. Implement T parsing functions
+3. Test recall → parse → display workflow
+4. Create table formatter
+
+**Phase 4: Test End-to-End**
+1. Run CHECK to populate snapshots
+2. Use query tool to display current state
+3. Make changes (add agent for a want)
+4. Run CHECK again
+5. Verify temporal progression visible
+
+**Phase 5: Integration**
+1. Optionally integrate into --agents-wants output
+2. Or keep as separate --want-maturation command
+3. Document workflow in #event_system_guide
+
+## Technical Context for Implementation
+
+**Existing Patterns to Follow:**
+- #root_agent_check_impl - example of agent using event system
+- #handle_agents_wants - example of parsing wants
+- Event system CLI: dist/cmpr --T0, --event, --memorize, --recall, --T
+
+**Known Infrastructure:**
+- .cmpr/T - current transient memory file
+- .cmpr/events/ - snapshot storage
+- Snapshot format: YYYYMMDD-HHMMSS-nanos
+- SN format: `"event string" 255.` (quotes not escaped)
+
+**Helper Functions Needed:**
+Most of these likely already exist in cmpr.c or can be simple shell:
+- Block existence: can use cmpr --print-comment '#id' and check exit code
+- Extract wants: grep/awk on --agents-wants output
+- Find agent: search for want text in agent block NL comments
+- Parse T: grep for prefixes, extract values
+
+**Testing Strategy:**
+Start with manual workflow:
+```bash
+# Simulate what CHECK agent should do
+dist/cmpr --T0
+dist/cmpr --event "The want is: all blocks reachable from #root in ≤2 hops" --strength 255
+dist/cmpr --event "The want is: assisted" --strength 255
+# Run actual domain agent
+cmpr --print-code '#root_agent_check_impl' | bash
+# This adds constraint events to T
+dist/cmpr --memorize
+# Now query it back
+dist/cmpr --T0
+dist/cmpr --event "The want is: all blocks reachable from #root in ≤2 hops" --strength 255
+dist/cmpr --recall
+dist/cmpr --T
+# Should see both automation state and constraint status events
+```
+
+## Files Modified
+
+- #want_maturation_overview (created)
+- #want_maturation_event_spaces (created)
+- #want_maturation_agent_check (created)
+- #want_maturation_agent_fix (created)
+- #want_maturation_query (created)
+- #want_maturation_helpers (created)
+- #root_agent (updated NL: added meta-level agents section)
+- #cmpr_events (updated NL: added applications section)
+
+## References
+
+Design foundations:
+- #root_agent - Four automation states concept
+- #cmpr_events - Event system primitives (T/E/S)
+- #event_system_guide - User guide for event system
+- #agent_infrastructure - Agent patterns
+
+Example implementations:
+- #root_agent_check_impl - Agent using event system
+- #handle_agents_wants - Parsing wants list
+
+Related systems:
+- #ES_BR - Block reachability event space (domain example)
+- #want_maturation_event_spaces - Meta-level event spaces
+
+## Status
+
+Design complete ✅
+Block structure complete ✅
+Navigation integrated ✅
+Implementation: NOT STARTED
+
+Ready for implementation phase when needed.
+
+*/
+/* #want_maturation_overview
+
+Meta-level agent that evaluates the automation state of all wants in the system.
+
+## Concept
+
+For each want, there are four possible automation states:
+1. **Tracked** - Want is documented but no verification exists
+2. **Checked** - Can determine if criteria is met (CHECK agent exists)
+3. **Assisted** - Can help fix violations (FIX agent exists)
+4. **Owned** - Automatically maintains the want
+
+This agent uses the event system to record and query which state each want is in.
+
+## Event Spaces
+
+Event space: "The want is: " (automation state)
+- "The want is: tracked" 255.
+- "The want is: checked" 255.
+- "The want is: assisted" 255.
+- "The want is: owned" 255.
+
+See #want_maturation_event_spaces for complete ES definitions.
+
+## Design Pattern
+
+This is a **meta-level agent**: it reasons about the agent system itself by:
+1. Loading each want into T
+2. Determining what agent infrastructure exists for that want
+3. Recording the automation state as an event
+4. Calling the actual want's CHECK agent if it exists
+5. Memorizing the snapshot
+
+Later queries use recall to examine historical automation state.
+
+## Implementation
+
+Agent modes:
+- #want_maturation_agent_check - CHECK mode: evaluate all wants
+- #want_maturation_agent_fix - FIX mode: scaffold new agents (future)
+
+Query and display:
+- #want_maturation_query - Display current automation state table
+
+Helpers:
+- #want_maturation_helpers - Extract wants, find agents, parse snapshots
+
+## Key Insight: After-the-Fact Event Spaces
+
+Event spaces can be defined AFTER events are recorded. Agents emit natural events during their work, and we later recognize patterns as event spaces. This enables temporal queries on old snapshots without re-running agents.
+
+## Composition
+
+This agent CALLS existing want agents (like #root_agent_check_impl) rather than replacing them. It layers meta-evaluation on top of domain evaluation.
+
+*/
+/* #want_maturation_event_spaces
+
+Event space definitions for want maturation tracking.
+
+## Primary Event Space: Automation State
+
+Prefix: "The want is: "
+
+Outcomes:
+- "The want is: tracked" 255.
+- "The want is: checked" 255.
+- "The want is: assisted" 255.
+- "The want is: owned" 255.
+
+## Supporting Event Spaces
+
+Want identification:
+- "The want is: <want text>" 255.
+
+Infrastructure existence:
+- "Agent exists: <agent_id>" 255.
+- "CHECK implementation exists: <block_id>" 255.
+- "FIX implementation exists: <block_id>" 255.
+
+Composition:
+When want_maturation_agent runs CHECK on a want, it loads T with:
+1. Want text event (for recall key)
+2. Automation state event
+3. Results from the want's own CHECK agent (if it exists)
+
+This allows temporal queries like:
+- "When did want X reach 'assisted' state?"
+- "What was the constraint status when we first got CHECK capability?"
+
+*/
+/* #want_maturation_agent_check
+
+CHECK mode: Evaluate automation state for all wants in the system.
+
+Algorithm:
+1. Get list of all wants from --agents-wants
+2. For each want:
+   - t0()
+   - e("The want is: <want text>")
+   - Determine automation state (check if agent/CHECK/FIX blocks exist)
+   - e("The want is: <state>")
+   - If CHECK impl exists, run it (adds constraint status events to T)
+   - m()
+
+Output: Timestamped snapshots in .cmpr/events/ for each want
+
+See #want_maturation_overview for design.
+See #want_maturation_helpers for helper functions.
+
+*/
+
+/* #want_maturation_agent_fix
+
+FIX mode: Scaffold new agent infrastructure for wants.
+
+Not yet implemented.
+
+Future capability: When a want is in "tracked" state, generate:
+- Agent predicate block
+- CHECK implementation stub
+- FIX implementation stub
+
+See #want_maturation_overview for design.
+
+*/
+
+/* #want_maturation_query
+
+Display current automation state for all wants.
+
+Algorithm:
+1. Get list of all wants
+2. For each want:
+   - t0()
+   - e("The want is: <want text>")
+   - r() (recall latest snapshot)
+   - Parse T for automation state and constraint status
+3. Display table
+
+Output format:
+```
+Want: all blocks reachable from #root
+State: assisted
+Status: constraint not satisfied (285 unreachable blocks)
+Last checked: 2025-12-27T05:25:46
+```
+
+See #want_maturation_overview for design.
+See #want_maturation_helpers for parsing functions.
+
+*/
+
+/* #want_maturation_helpers
+
+Helper functions for want maturation system.
+
+Functions needed:
+- extract_wants() - Parse --agents-wants output
+- find_agent_for_want(want_text) - Locate agent block maintaining a want
+- check_block_exists(block_id) - Test if block exists
+- determine_automation_state(want_text) - Check agent/CHECK/FIX infrastructure
+- parse_automation_state_from_t() - Extract state from T after recall
+- parse_constraint_status_from_t() - Extract constraint info from T
+
+See #want_maturation_overview for design.
+
+*/
 /* #handle_snapshots @events_functions @argtable
 
 List all event snapshots with formatted output.

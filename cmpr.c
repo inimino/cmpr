@@ -639,6 +639,11 @@ See #block_quality_agents_overview for agents tracking block quality metrics.
 See #event_system_guide for a comprehensive guide to using the event system.
 See #block_context_workflow for the manual workflow to load complete block context into T.
 
+## Applications
+
+Want maturation tracking:
+- #want_maturation_overview - Uses event system to track automation state progression of wants
+
 ## Implementation and Related Blocks
 
 Implementation: #events_types (data structures), #events_functions (CLI operations)
@@ -1230,6 +1235,11 @@ Migration between cmpr1 and cmpr2:
 - #cmpr2_to_cmpr1_migration - Want: essential cmpr2 blocks should be in cmpr1
 - #migration_agent - Agent to identify and migrate blocks from cmpr2
 - #extract_block_from_cmpr2 - Helper script for extracting individual blocks
+
+## Meta-Level Agents
+
+Want maturation tracking:
+- #want_maturation_overview - Tracks automation state progression (tracked/checked/assisted/owned) for all wants
 
 */
 /* #root_agent_impl
