@@ -41,12 +41,14 @@ See #ES_BR for the complete event space specification.
 
 The following blocks serve as navigation hubs to reach different parts of the codebase:
 
+#cat_core
 #agent_event_navigation
 #cmpr_c_overview
 #cmpr_implementation
 #libraryintro
 #root_agent
 #cmpr_events
+#wants_events_commands
 
 ## Build System
 
@@ -1155,10 +1157,61 @@ The events live in .cmpr/event_names which is a file of newline-separated events
 */
 /* #glossary
 
+Terminology and key concept definitions.
+
+## Core Concepts
+
+#want_definition - What a want line tells us
+#glossary_agent - Agent definition and structure
+#glossary_event_space - Event space concept
+#glossary_block - Block structure (NL/PL parts)
+
+## Terms
+
 cmpr agent: an agent consists of a single function which combines test and any possible fix functionality.
 
-*/
+See individual blocks above for detailed definitions of core concepts.
 
+*/
+/* #glossary_agent
+
+Agent: A function that combines CHECK and FIX functionality.
+
+An agent consists of:
+- A predicate (Want) defining the desired state
+- A step function that can CHECK if the want is satisfied
+- Logic to FIX violations when the want is not satisfied
+
+Agents maintain wants by verifying state and taking corrective action.
+
+See: #root_agent for implementation example
+
+*/
+/* #glossary_event_space
+
+Event Space: A set of possible states or outcomes for a system property.
+
+Every want defines an event space with two outcomes:
+- The desired state (the want is satisfied)
+- All other states (the want is not satisfied)
+
+Event spaces enable temporal reasoning about system state over time.
+
+See: #ES_BR for Block Reachability event space example
+
+*/
+/* #glossary_block
+
+Block: The fundamental unit of code organization in cmpr.
+
+Each block consists of:
+- NL Part: Natural language comment (source of truth)
+- PL Part: Programming language code (generated from NL via nl2pl)
+- Block ID: Unique identifier like #block_name
+
+Blocks are referenced using @other_block or #other_block syntax to create dependency graphs.
+
+*/
 /* #high_cardinality_storage
 
 We have some set $X$ of event spaces $S_i$ where $i \in \{ 1, \ldots, N \}$.
