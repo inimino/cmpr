@@ -19,6 +19,23 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 
 
 
+/* #codex_experience_report_merge_conflict_blocker_20251228_1
+
+Goal: respond to feedback about merge conflicts by verifying the branch state and what is blocking a rebase.
+
+What happened:
+- Rebuilt dist/cmpr to follow cmpr navigation requirements.
+- Checked git status/log to confirm the branch is clean and identify the latest commit.
+- Attempted `git pull --rebase`, which failed because no upstream remote is configured for work.
+
+Current state:
+- Branch work has no tracking remote, so we cannot pull or rebase to resolve upstream conflicts.
+- No local merge conflicts are present; resolution depends on fetching the upstream baseline.
+
+Next steps:
+- Add the correct remote (e.g., `git remote add origin <URL>`), set upstream tracking, and run `git pull --rebase origin <branch>`.
+- After pulling, replay our doc changes with cmpr block edits to avoid large conflicts.
+*/
 /* #codex_experience_report_agent_docs_refresh_followup_20251228_1
 
 Goal: address feedback on the agent quick-start and keep the repo aligned.
