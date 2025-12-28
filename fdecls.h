@@ -64,6 +64,7 @@ network_ret call_ollama(json messages, span model);
 network_ret call_ollama_curl(span req, span resp, span err);
 network_ret call_anthropic(json messages, span model);
 network_ret call_anthropic_curl(span req, span resp, span err);
+span get_bootstrap_content_span();
 void handle_args(int argc, char **argv);
 void print_files_blocks();
 void inp_sanity_checks();

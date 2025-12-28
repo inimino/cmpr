@@ -1824,7 +1824,7 @@ When adding a new agent:
 - add the agent to the agents list above
 - add the check script to the check scripts list above
 - write NL for any new blocks, generate PL for them
-- for now, installation is manual; later we'll think about having some generic way to install the agents (i.e. to populate the agents/* files from the corresponding blocks)
+- for now, installation is manual; later we'll think about having some generic way to install the agents (i.e. to populate the agents/ * files from the corresponding blocks)
 
 */
 /* #rvs_feature_root
@@ -3834,6 +3834,27 @@ void print_config() {
     flush();
 }
 
+/* #print_bootstrap
+
+Output the embedded CLAUDE.md guidance to stdout.
+
+This function retrieves the bootstrap content (CLAUDE.md) that was embedded
+in the binary at build time and writes it to stdout.
+
+The content comes from get_bootstrap_content_span(), which is generated
+in bootstrap_content.c during the build process.
+*/
+
+#ifndef PROMPT_LIST
+// Forward declaration for function generated in bootstrap_content.c
+span get_bootstrap_content_span();
+
+void print_bootstrap() {
+    span content = get_bootstrap_content_span();
+    prt("%.*s", len(content), content.buf);
+    flush();
+}
+#endif
 /* #argtable
 
 We present the supported arguments and flags in a tabular form (as with langtable previously).
@@ -4023,7 +4044,7 @@ T:
 
 wants:
   Find all SN lines in the project that start with "We want " and print the want strings.
-  Scans all files in the project (source files, .cmpr/T, .cmpr/events/*).
+  Scans all files in the project (source files, .cmpr/T, .cmpr/events/ *).
   For each SN line (format: "..." <digits>. per #event_parse_sn) where the event string starts with "We want ", print the want string.
   Output is one want per line.
   Does not require code to be loaded.
@@ -4217,7 +4238,7 @@ T:
 wants:
   find all SN lines across the entire project that start with "We want "
   does NOT require code to be loaded
-  scans all files recursively in current directory (including .cmpr/T, .cmpr/events/*, source files)
+  scans all files recursively in current directory (including .cmpr/T, .cmpr/events/ *, source files)
   for each file, read line by line
   parse each line as potential SN line using the format from #event_parse_sn:
     - skip leading whitespace
@@ -4373,6 +4394,7 @@ Manually maintained.
 
 		int ind_conf = 0;
 	int ind_print_conf = 0;
+	int ind_print_bootstrap = 0;
 	int ind_init = 0;
 	int ind_help = 0;
 	int ind_version = 0;
@@ -4393,7 +4415,6 @@ Manually maintained.
 	int ind_replace_code = 0;
 	int ind_run = 0;
 	int ind_agents = 0;
-	int ind_agent_run = 0;
 	int ind_checksum = 0;
 	int ind_T0 = 0;
 	int ind_event = 0;
@@ -4469,6 +4490,8 @@ Manually maintained.
 			conf_filepath = argv[++i];
 		} else if (strcmp(arg, "--print-conf") == 0) {
 			ind_print_conf = 1;
+		} else if (strcmp(arg, "--print-bootstrap") == 0) {
+			ind_print_bootstrap = 1;
 		} else if (strcmp(arg, "--print-block") == 0) {
 			ind_print_block = 1;
 			if (i + 1 >= argc) { prt("Missing <id> argument for --print-block\n"); flush_exit(1); }
@@ -4597,7 +4620,7 @@ Manually maintained.
 
 		// Handle --help, --version, --init first
 	if (ind_help) {
-		prt("Usage: cmpr [--help] [--version] [--init] [--conf <file>] [--print-conf] [--print-block <id>] [--print-comment <id>] [--print-code <id>] [--expand-block <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks] [--files-blocks] [--print-all] [--rewritepl <id>] [--prompt <id>] [--after <id>] [--replace <id>] [--replace-comment <id>] [--replace-code <id>] [--run <id>] [--agents] [--checksum] [--T0] [--event <string>] [--strength <value>] [--memorize] [--recall] [--T] [--map-error] [--test-block-map] [--wants] [--agents-wants]\n");
+		prt("Usage: cmpr [--help] [--version] [--init] [--conf <file>] [--print-conf] [--print-bootstrap] [--print-block <id>] [--print-comment <id>] [--print-code <id>] [--expand-block <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks] [--files-blocks] [--print-all] [--rewritepl <id>] [--prompt <id>] [--after <id>] [--replace <id>] [--replace-comment <id>] [--replace-code <id>] [--run <id>] [--agents] [--checksum] [--T0] [--event <string>] [--strength <value>] [--memorize] [--recall] [--T] [--map-error] [--test-block-map] [--wants] [--agents-wants]\n");
 		flush_exit(0);
 	}
 	
@@ -4629,7 +4652,15 @@ Manually maintained.
 		print_config();
 		flush_exit(0);
 	}
-	
+
+	// Handle --print-bootstrap
+#ifndef PROMPT_LIST
+	if (ind_print_bootstrap) {
+		print_bootstrap();
+		flush_exit(0);
+	}
+#endif
+
 	// Count action flags (excluding event-related flags which are handled separately)
 	action_arg = ind_print_block + ind_print_comment + ind_print_code + ind_expand_block +
 	             ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all +
@@ -10911,7 +10942,7 @@ Implementation:
 
 Notes:
 - This scans all files, not just loaded code blocks
-- Includes .cmpr/T, .cmpr/events/*, and all source files
+- Includes .cmpr/T, .cmpr/events/ *, and all source files
 - Uses the same SN parsing logic as event_parse_sn
 - Output is SN format, compatible with event system commands
 - Does not include block IDs or locations (use --grep for that)
