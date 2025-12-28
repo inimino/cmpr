@@ -2,9 +2,15 @@
 
 This directory contains documentation and reports providing visibility into the cmpr project.
 
+## README Files
+
+- **[../README.md](../README.md)** - Human-written concise README (main project README)
+- **[README_AI.md](README_AI.md)** - AI-generated comprehensive README with detailed examples and explanations
+
 ## Value and Presentation
 
 - **[VALUE_PROPOSITION.md](VALUE_PROPOSITION.md)** - Comprehensive analysis of cmpr's value proposition, key benefits, and use cases
+- **[ONE_PAGE_PITCH.md](ONE_PAGE_PITCH.md)** - One-page pitch document for presentations
 - **[claude_exploration.md](claude_exploration.md)** - An AI agent's first-person account of exploring the cmpr codebase
 
 ## System Reports
@@ -64,6 +70,5 @@ No secrets, credentials, or sensitive data are included.
 ## Additional Resources
 
 For more information about cmpr:
-- [Main README](../README.md) - Quick start and installation
 - [CLAUDE.md](../CLAUDE.md) - How AI agents work with cmpr
 - [AGENTS.md](../AGENTS.md) - Agent integration guide
