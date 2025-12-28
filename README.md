@@ -119,6 +119,21 @@ Install cmpr as described above, then:
 
 It's early days and there <s>may be</s> <ins>are</ins> bugs!
 
+## Event System Visualizations
+
+The cmpr event system tracks wants, agent activity, and metrics over time. View interactive visualizations:
+
+**[Event System Dashboard](public_html/index.html)** - Interactive timeline, metrics, and statistics
+
+Individual visualizations:
+- [Event Timeline](public_html/event_timeline.html) - Scatter plot of all snapshots and agent runs
+- [Unreferenced Blocks](public_html/metric_unreferenced.html) - Track blocks not reachable from #root
+- [Hub Blocks](public_html/metric_hubs.html) - Overview block count over time
+- [Event Count](public_html/metric_events.html) - Total events tracked
+- [Snapshot Statistics](public_html/snapshot_stats.html) - Statistical analysis
+
+These visualizations are auto-generated from the event system and updated with each build.
+
 ## More
 
 Join [our discord](https://discord.gg/ekEq6jcEQ2).

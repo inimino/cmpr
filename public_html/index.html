@@ -1,9 +1,8 @@
-bash: line 29: warning: here-document at line 4 delimited by end-of-file (wanted `EOF')
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>cmpr Visualizations</title>
+  <title>cmpr Event Visualizations</title>
   <style>
     body { font-family: monospace; margin: 20px; background: #1e1e1e; color: #d4d4d4; }
     h1 { color: #4ec9b0; }
@@ -21,6 +20,48 @@ bash: line 29: warning: here-document at line 4 delimited by end-of-file (wanted
   <div id="container">
     <h1>cmpr Event Visualizations</h1>
     
+    <p>Interactive visualizations of the event system tracking agent activity, metrics, and temporal trends.</p>
+    
     <div class="section">
-      <h2>Event System</h2>
-
+      <h2>Timeline</h2>
+      <a href="event_timeline.html" class="viz-link">
+        <strong>Event Timeline</strong>
+        <div class="description">Scatter plot of all event snapshots over time, showing agent runs and work sessions.</div>
+      </a>
+    </div>
+    
+    <div class="section">
+      <h2>Metrics</h2>
+      <a href="metric_unreferenced.html" class="viz-link">
+        <strong>Unreferenced Blocks</strong>
+        <div class="description">Track blocks that are not reachable from #root over time.</div>
+      </a>
+      <a href="metric_hubs.html" class="viz-link">
+        <strong>Hub Blocks</strong>
+        <div class="description">Number of hub/overview blocks in the codebase.</div>
+      </a>
+      <a href="metric_events.html" class="viz-link">
+        <strong>Event Count</strong>
+        <div class="description">Total events tracked in snapshots over time.</div>
+      </a>
+    </div>
+    
+    <div class="section">
+      <h2>Statistics</h2>
+      <a href="snapshot_stats.html" class="viz-link">
+        <strong>Snapshot Statistics</strong>
+        <div class="description">Statistical analysis of event patterns, agent activity, and snapshot distribution.</div>
+      </a>
+    </div>
+    
+    <div class="section">
+      <h2>About</h2>
+      <p>These visualizations are generated from the cmpr event system, which tracks wants, agent activity, and metrics over time.</p>
+      <p>To regenerate:</p>
+      <pre>dist/cmpr --print-code '#generate_timeline_html' | bash > public_html/event_timeline.html
+dist/cmpr --print-code '#generate_metric_plot' | bash -s unreferenced > public_html/metric_unreferenced.html
+dist/cmpr --print-code '#generate_visualization_index' | bash > public_html/index.html</pre>
+    </div>
+  </div>
+</body>
+</html>
