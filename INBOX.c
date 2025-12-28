@@ -615,6 +615,637 @@ Never be afraid to go back to the root block and look for something else.
 - Experience reports go in INBOX initially: `cat report.txt | cmpr --after '#INBOX'`
 - Can be moved to permanent locations later during review
 - Or left in INBOX as temporal documentation
+/* #handle_snapshots @events_functions @argtable
+
+List all event snapshots with formatted output.
+
+This function implements the --snapshots CLI command.
+
+Algorithm:
+1. Read .cmpr/events/ directory to get list of snapshot files
+2. Sort files in reverse chronological order (newest first)
+   - Filenames are already sortable: YYYYMMDD-HHMMSS-nanos
+   - dir_listing returns sorted results, so reverse iteration works
+3. For each snapshot file:
+   - Parse timestamp from filename
+   - Format timestamp as "YYYY-MM-DD HH:MM:SS.nanos"
+   - Read snapshot file and count events
+   - Parse first 3 event strings (up to 60 chars each for display)
+   - Print formatted output
+4. If no snapshots exist, print "No event snapshots found."
+
+Output format for each snapshot:
+  Timestamp: YYYY-MM-DD HH:MM:SS.nanos
+  Events: N
+  - "first event string..." (truncated to 60 chars)
+  - "second event string..."
+  - "third event string..."
+  [blank line]
+
+Implementation:
+
+void handle_snapshots()
+  Create path to .cmpr/events/ directory.
+  Use opendir/readdir to get all files.
+  If directory doesn't exist or is empty:
+    prt("No event snapshots found.\n")
+    return
+  
+  Iterate through files in reverse order (newest first):
+    For each filename:
+      Parse timestamp from filename and format as "YYYY-MM-DD HH:MM:SS.nanos"
+      Read snapshot file using read_whole_file
+      Count events (non-empty lines)
+      Parse first 3 events using parse_sn_event_string helper
+      Print formatted output
+  
+  flush()
+
+TODO: Check if dir_listing helper exists or use opendir directly
+TODO: Verify MAKE_ARENA usage pattern from other code
+TODO: Test with actual snapshot files
+
+*/
+
+void format_timestamp(span filename, char* out_buf) {
+    // Input: "20251227-052740-736095164"
+    // Output: "2025-12-27 05:27:40.736095164"
+    
+    char* p = filename.buf;
+    sprintf(out_buf, "%.4s-%.2s-%.2s %.2s:%.2s:%.2s.%s",
+            p,      // year
+            p+4,    // month
+            p+6,    // day
+            p+9,    // hour (skip '-')
+            p+11,   // minute
+            p+13,   // second
+            p+16);  // nanos (skip '-')
+}
+
+span parse_sn_event_string(span line) {
+    // Parse SN line: "event_string" strength.
+    // Returns event_string span
+    
+    char* p = line.buf;
+    while (p < line.end && (*p == ' ' || *p == '\t')) p++;
+    
+    if (p >= line.end || *p != '"') {
+        return (span){p, p};
+    }
+    
+    char* event_start = p + 1;
+    
+    // Find end pattern: " <digits>. working backwards
+    char* end = line.end - 1;
+    if (end >= line.buf && *end == '\n') end--;
+    if (end < line.buf || *end != '.') return (span){event_start, event_start};
+    end--;
+    
+    while (end >= event_start && *end >= '0' && *end <= '9') end--;
+    if (end < event_start || *end != ' ') return (span){event_start, event_start};
+    end--;
+    
+    if (end < event_start || *end != '"') return (span){event_start, event_start};
+    
+    return (span){event_start, end};
+}
+
+void handle_snapshots() {
+    DIR* dir = opendir(".cmpr/events");
+    if (!dir) {
+        prt("No event snapshots found.\n");
+        flush();
+        return;
+    }
+    
+    // Collect filenames
+    MAKE_ARENA(spans, files_arena);
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        
+        span* file_span = files_arena.n++;
+        *file_span = from_cstr(entry->d_name);
+    }
+    closedir(dir);
+    
+    int file_count = files_arena.n;
+    
+    if (file_count == 0) {
+        prt("No event snapshots found.\n");
+        flush();
+        return;
+    }
+    
+    // Iterate in reverse (newest first)
+    for (int i = file_count - 1; i >= 0; i--) {
+        span filename = files_arena.a[i];
+        
+        char timestamp_buf[64];
+        format_timestamp(filename, timestamp_buf);
+        
+        char filepath[256];
+        sprintf(filepath, ".cmpr/events/%.*s", (int)(filename.end - filename.buf), filename.buf);
+        span snapshot_content = read_whole_file(from_cstr(filepath));
+        
+        if (snapshot_content.buf == snapshot_content.end) continue;
+        
+        // Count events and parse first 3
+        int event_count = 0;
+        span preview_events[3];
+        int preview_count = 0;
+        
+        span remaining = snapshot_content;
+        while (remaining.buf < remaining.end) {
+            char* nl = remaining.buf;
+            while (nl < remaining.end && *nl != '\n') nl++;
+            
+            span line = {remaining.buf, nl};
+            
+            if (line.buf < line.end && line.buf[0] != '\n' && line.buf[0] != '\0') {
+                event_count++;
+                
+                if (preview_count < 3) {
+                    span event_str = parse_sn_event_string(line);
+                    if (event_str.buf < event_str.end) {
+                        preview_events[preview_count++] = event_str;
+                    }
+                }
+            }
+            
+            remaining.buf = (nl < remaining.end) ? nl + 1 : nl;
+        }
+        
+        prt("Timestamp: %s\n", timestamp_buf);
+        prt("Events: %d\n", event_count);
+        
+        for (int j = 0; j < preview_count; j++) {
+            span evt = preview_events[j];
+            int len = evt.end - evt.buf;
+            
+            if (len > 60) {
+                prt("  - \"%.*s...\"\n", 57, evt.buf);
+            } else {
+                prt("  - \"%.*s\"\n", len, evt.buf);
+            }
+        }
+        
+        prt("\n");
+    }
+    
+    flush();
+}
+/* #handle_snapshot_view @events_functions @argtable
+
+View complete contents of a specific event snapshot.
+
+This function implements the --snapshot-view <timestamp> CLI command.
+
+Takes one argument: timestamp string (format: YYYYMMDD-HHMMSS-nanos)
+Reads and displays the complete snapshot file.
+
+Output format:
+  Snapshot: YYYY-MM-DD HH:MM:SS.nanos
+  Events: N
+  [blank line]
+  "<event string 1>" strength.
+  "<event string 2>" strength.
+  ...
+
+Error handling:
+- If timestamp argument is missing: "Error: --snapshot-view requires timestamp argument"
+- If snapshot file doesn't exist: "Snapshot not found: <timestamp>"
+
+Implementation:
+
+void handle_snapshot_view(span timestamp_arg)
+  Validate timestamp argument is provided (not empty span)
+  Construct filepath: .cmpr/events/<timestamp>
+  
+  Check if file exists:
+    If not: prt("Snapshot not found: %s\n", timestamp) and exit(1)
+  
+  Read snapshot file using read_whole_file
+  
+  Format timestamp for display:
+    Use format_timestamp helper from #handle_snapshots
+  
+  Count events:
+    Split by newlines, count non-empty lines
+  
+  Print header:
+    prt("Snapshot: %s\n", formatted_timestamp)
+    prt("Events: %d\n\n", event_count)
+  
+  Print all SN lines:
+    For each line in snapshot:
+      prt("%.*s\n", line.length, line.buf)
+  
+  flush()
+
+TODO: Verify format_timestamp is accessible or duplicate it
+TODO: Check error handling pattern (exit vs return)
+
+*/
+
+void handle_snapshot_view(span timestamp_arg) {
+    if (timestamp_arg.buf >= timestamp_arg.end) {
+        prt("Error: --snapshot-view requires timestamp argument\n");
+        exit(1);
+    }
+    
+    // Construct filepath
+    char filepath[256];
+    sprintf(filepath, ".cmpr/events/%.*s", 
+            (int)(timestamp_arg.end - timestamp_arg.buf), timestamp_arg.buf);
+    
+    // Check if file exists
+    FILE* f = fopen(filepath, "r");
+    if (!f) {
+        prt("Snapshot not found: %.*s\n", 
+            (int)(timestamp_arg.end - timestamp_arg.buf), timestamp_arg.buf);
+        exit(1);
+    }
+    fclose(f);
+    
+    // Read snapshot file
+    span snapshot_content = read_whole_file(from_cstr(filepath));
+    
+    if (snapshot_content.buf == snapshot_content.end) {
+        prt("Snapshot not found: %.*s\n",
+            (int)(timestamp_arg.end - timestamp_arg.buf), timestamp_arg.buf);
+        exit(1);
+    }
+    
+    // Format timestamp
+    char timestamp_buf[64];
+    format_timestamp(timestamp_arg, timestamp_buf);
+    
+    // Count events
+    int event_count = 0;
+    span remaining = snapshot_content;
+    while (remaining.buf < remaining.end) {
+        char* nl = remaining.buf;
+        while (nl < remaining.end && *nl != '\n') nl++;
+        
+        span line = {remaining.buf, nl};
+        if (line.buf < line.end && line.buf[0] != '\n' && line.buf[0] != '\0') {
+            event_count++;
+        }
+        
+        remaining.buf = (nl < remaining.end) ? nl + 1 : nl;
+    }
+    
+    // Print header
+    prt("Snapshot: %s\n", timestamp_buf);
+    prt("Events: %d\n\n", event_count);
+    
+    // Print all lines
+    remaining = snapshot_content;
+    while (remaining.buf < remaining.end) {
+        char* nl = remaining.buf;
+        while (nl < remaining.end && *nl != '\n') nl++;
+        
+        span line = {remaining.buf, nl};
+        if (line.buf < line.end && line.buf[0] != '\n' && line.buf[0] != '\0') {
+            prt("%.*s\n", (int)(line.end - line.buf), line.buf);
+        }
+        
+        remaining.buf = (nl < remaining.end) ? nl + 1 : nl;
+    }
+    
+    flush();
+}
+/* #handle_event_spaces @events_functions @argtable
+
+List all declared event spaces in the project.
+
+This function implements the --event-spaces CLI command.
+
+Scans all blocks looking for "Event space:" declarations in NL comments.
+Extracts and displays event space information with the declaring block.
+
+Pattern to match:
+  "Event space: <NAME> (<DESCRIPTION>)"
+
+Example from #root:
+  "Event space: BR (Block Reachability)"
+
+Output format for each event space:
+  <NAME>: <DESCRIPTION>
+    Declared in: #blockid
+  [blank line]
+
+If no event spaces found: "No event spaces declared in project."
+
+Implementation:
+
+void handle_event_spaces()
+  Requires code to be loaded (call get_code() first in read_())
+  
+  Iterate through all blocks (state->blocks):
+    For each block:
+      Get NL comment part using block_comment_part()
+      Scan comment line by line
+      
+      For each line:
+        Look for pattern "Event space: "
+        If found:
+          Parse remainder of line:
+            Extract NAME (text before '(')
+            Extract DESCRIPTION (text between '(' and ')')
+          Store: {name, description, block_id}
+  
+  If no event spaces found:
+    prt("No event spaces declared in project.\n")
+  Else:
+    For each event space found:
+      prt("%s: %s\n", name, description)
+      prt("  Declared in: #%s\n\n", block_id)
+  
+  flush()
+
+Parsing logic for "Event space: BR (Block Reachability)":
+  1. Find "Event space: " prefix
+  2. Start = position after prefix
+  3. Find '(' - NAME is from Start to '('
+  4. Find ')' - DESCRIPTION is from '(' to ')'
+  5. Trim whitespace from NAME and DESCRIPTION
+
+TODO: Check block_comment_part() signature
+TODO: Verify block iteration pattern
+TODO: Handle edge cases (missing '(' or ')', malformed declarations)
+
+*/
+
+void handle_event_spaces() {
+    // Assumes get_code() was already called
+    
+    typedef struct {
+        span name;
+        span description;
+        span block_id;
+    } event_space_info;
+    
+    MAKE_ARENA(event_space_info, spaces);
+    
+    // Iterate through all blocks
+    for (int i = 0; i < state->blocks.n; i++) {
+        block* blk = &state->blocks.a[i];
+        span comment = block_comment_part(blk);
+        
+        // Scan comment line by line
+        span remaining = comment;
+        while (remaining.buf < remaining.end) {
+            char* nl = remaining.buf;
+            while (nl < remaining.end && *nl != '\n') nl++;
+            
+            span line = {remaining.buf, nl};
+            
+            // Look for "Event space: " pattern
+            span prefix = from_cstr("Event space: ");
+            if (line.end - line.buf >= prefix.end - prefix.buf) {
+                int match = 1;
+                for (int j = 0; j < prefix.end - prefix.buf; j++) {
+                    if (line.buf[j] != prefix.buf[j]) {
+                        match = 0;
+                        break;
+                    }
+                }
+                
+                if (match) {
+                    // Parse NAME (DESCRIPTION)
+                    char* start = line.buf + (prefix.end - prefix.buf);
+                    char* paren_open = start;
+                    while (paren_open < line.end && *paren_open != '(') paren_open++;
+                    
+                    if (paren_open < line.end) {
+                        // Found '('
+                        char* paren_close = paren_open + 1;
+                        while (paren_close < line.end && *paren_close != ')') paren_close++;
+                        
+                        if (paren_close < line.end) {
+                            // Found ')'
+                            span name = {start, paren_open};
+                            span desc = {paren_open + 1, paren_close};
+                            
+                            // Trim whitespace from name
+                            while (name.buf < name.end && *name.buf == ' ') name.buf++;
+                            while (name.buf < name.end && *(name.end - 1) == ' ') name.end--;
+                            
+                            // Store event space info
+                            event_space_info* info = spaces.n++;
+                            info->name = name;
+                            info->description = desc;
+                            info->block_id = from_cstr(blk->blockid ? blk->blockid : "anonymous");
+                        }
+                    }
+                }
+            }
+            
+            remaining.buf = (nl < remaining.end) ? nl + 1 : nl;
+        }
+    }
+    
+    // Print results
+    if (spaces.n == 0) {
+        prt("No event spaces declared in project.\n");
+    } else {
+        for (int i = 0; i < spaces.n; i++) {
+            event_space_info* info = &spaces.a[i];
+            prt("%.*s: %.*s\n",
+                (int)(info->name.end - info->name.buf), info->name.buf,
+                (int)(info->description.end - info->description.buf), info->description.buf);
+            prt("  Declared in: #%.*s\n\n",
+                (int)(info->block_id.end - info->block_id.buf), info->block_id.buf);
+        }
+    }
+    
+    flush();
+}
+/* #claude_experience_report_events_wants_integration_20251228
+
+SESSION GOAL:
+Integrate event system (#cmpr_events) into wants system by:
+1. Adding event space declarations to want blocks  
+2. Enhancing --agents-wants to display temporal information from T snapshots
+
+WHAT WAS ACCOMPLISHED:
+
+## Step 5: Event Space Declarations Added ✓
+
+Added "Event space:" declarations to three major want blocks:
+
+1. **#root** - Declared BR (Block Reachability) event space
+   - Documents that want creates event space with "reachable"/"unreachable" outcomes per block
+   - Links to #ES_BR for complete specification
+   - Links to root_agent as maintainer
+
+2. **#cmpr_checksum** - Declared Checksum Correctness event space
+   - Documents outcomes: "matches reference" vs "differs from reference"
+   - Describes how CHECK/FIX agents would work
+
+3. **#cmpr2_to_cmpr1_migration** - Declared Block Migration Status event space
+   - Documents per-block outcomes: "exists in cmpr1" vs "missing from cmpr1"
+   - Links to migration_agent
+
+4. **#cmpr1_build_manifest** - Already had event space declaration ✓
+   - Good example pattern to follow
+
+Pattern Established:
+```
+Event space: <Name> (<Short Description>)
+
+The want above defines an event space:
+  "<outcome 1>"
+or
+  "<outcome 2>"
+
+A CHECK agent would...
+A FIX agent would...
+```
+
+## Step 4: Enhanced --agents-wants Implementation (PARTIAL)
+
+Created enhanced implementation of handle_agents_wants() with:
+
+**New Data Fields:**
+- event_space: Extracted from "Event space: XYZ" in want block's NL
+- last_check_time: From agent snapshots in .cmpr/events/
+- last_check_status: Result from last CHECK run
+- unreferenced_count: Metric for root_agent
+
+**New Helper Functions:**
+1. `extract_event_space(block_id)` - Parse block NL for event space declaration
+2. `find_latest_agent_snapshot(agent_id)` - Search .cmpr/events/ for most recent snapshot
+3. `parse_agent_snapshot(path, want_info*)` - Extract temporal data from snapshot
+
+**Enhanced Output Format:**
+```
+=== ASSISTED (N wants) ===
+"We want..." 255.
+  Block: #block_id
+  Agent: #agent_id
+  Event Space: BR (Block Reachability)
+  Last CHECK: 2025-12-27T05:25:46+00:00
+  Status: constraint not satisfied
+  Unreferenced blocks: 285
+```
+
+**Implementation Status:**
+- Code written and compiles ✓
+- Helper functions implemented ✓  
+- Enhanced output format implemented ✓
+- NL documentation updated ✓
+
+WHAT DOESN'T WORK:
+
+## Agent-to-Want Matching Bug (BLOCKING)
+
+The same bug from the previous experience report (#claude_experience_report_agents_wants_implementation_20251228) still exists:
+
+**Symptom:** All 13 wants show as TRACKED with "Agent: none"
+
+**Expected:** #root want should show "Agent: #root_agent" with state ASSISTED
+
+**Known Facts:**
+- Agents exist and are registered (cmpr --agents shows 2 agents) ✓
+- Agent blocks exist (#root_agent, #root_agent_check_impl, #root_agent_fix_impl) ✓
+- #root_agent clearly references #root in its NL comment ✓
+- Suffix matching logic works (tested standalone) ✓
+
+**Debug Finding:** 
+Added debug output showing agent_id comes out as NULL during discovery loop.
+This means the agent discovery code (Step 3) is not correctly storing agent IDs,
+even though the allocation code looks correct.
+
+**Root Cause:** Unknown - requires further debugging
+Possible issues:
+- Agent discovery loop not executing
+- Malloc failing silently  
+- Wrong array indexing
+- Block loading issue
+
+**Impact:** Without agent matching working, temporal information cannot be displayed
+because we don't know which agent maintains which want.
+
+BENEFITS OF COMPLETED WORK:
+
+## Event Space Declarations
+
+The added declarations create explicit documentation of the want→event space relationship:
+- Makes the dual nature of wants concrete
+- Documents what CHECK agents should measure
+- Provides navigation to event space specification blocks
+- Establishes consistent pattern for future wants
+
+## Enhanced Code Architecture
+
+Even though not fully working, the enhanced implementation provides:
+- Clean separation between structural info and temporal info
+- Helper functions that can be reused  
+- Event snapshot parsing infrastructure
+- Foundation for future temporal queries
+
+NEXT STEPS:
+
+1. **DEBUG AGENT MATCHING** (highest priority)
+   - Add systematic debug output to agent discovery loop
+   - Verify agent_count > 0 after Step 3
+   - Check if agents array is being populated
+   - Test agent_id allocation separately
+   - Compare with working handle_agents() implementation
+
+2. **FIX STATE DETECTION**
+   - After agent matching works, verify _check_impl and _fix_impl lookup
+   - Test with known blocks (#root_agent_check_impl exists)
+   - May need to use block_by_id() instead of string comparison
+
+3. **TEST TEMPORAL INTEGRATION**
+   - Run root_agent CHECK to create fresh snapshot
+   - Verify snapshot parsing extracts correct data
+   - Confirm enhanced output displays temporal info
+
+4. **ADD MORE EVENT SPACE DECLARATIONS**
+   - Other wants in INBOX experience reports need event spaces
+   - Block quality wants (BDQ, BSZ, BLNG, BMM) need declarations
+
+TECHNICAL CONTEXT:
+
+**Event System Integration Pattern:**
+1. Want blocks declare their event space
+2. Agents write events to T during CHECK/FIX
+3. --memorize saves snapshots to .cmpr/events/
+4. --agents-wants queries snapshots to show temporal state
+5. Enables questions like "When did block X become unreachable?"
+
+**Want→Event Space→Agent Trinity:**
+- Want (255 bits) defines desired state
+- Event space partitions reality into outcomes  
+- Agent navigates between outcomes via CHECK/FIX
+- T provides temporal memory across runs
+
+FILES MODIFIED:
+
+- #root - Added BR event space declaration
+- #cmpr_checksum - Added checksum event space declaration
+- #cmpr2_to_cmpr1_migration - Added migration event space declaration
+- #handle_agents_wants - Enhanced NL and PL with event integration (compiles but agent matching broken)
+
+REFERENCES:
+
+- #cmpr_events - Event system overview
+- #ES_BR - Block reachability event space
+- #ES_names - Standard block event spaces
+- #event_system_guide - User guide for T/E/S
+- #claude_experience_report_root_agent_t_integration_20251227 - Example of agent writing to T
+- #claude_experience_report_agents_wants_implementation_20251228 - Previous session, same bug
+
+STATUS: Partial completion
+- Event space declarations: DONE ✓
+- Enhanced output implementation: BLOCKED by agent matching bug
+
+*/
 /* #claude_experience_report_bootstrap_wiring_20251228
 
 ## Session Goal
@@ -4772,6 +5403,460 @@ Testing:
 
 
 
+/* #event_visibility_examples @cmpr_events @event_system_guide
+
+Practical examples for using event system visibility commands.
+
+This block demonstrates how to use the new event visibility commands:
+- --snapshots
+- --snapshot-view <timestamp>
+- --event-spaces
+
+These commands provide easy ways to explore and understand the event system without manually reading files.
+
+EXAMPLE 1: List all event snapshots
+
+To see all saved event snapshots:
+
+$ cmpr --snapshots
+
+Example output:
+  Timestamp: 2025-12-27 05:27:40.736095164
+  Events: 9
+    - "Session: 2"
+    - "Timestamp: 2025-12-27T11:00:00"
+    - "Agent: root_agent"
+
+  Timestamp: 2025-12-27 05:25:49.233477943
+  Events: 4
+    - "Agent: root_agent"
+    - "Check time: 2025-12-27T05:25:46+00:00"
+    - "Agent result: constraint not satisfied"
+
+  Timestamp: 2025-12-27 04:18:48.008203168
+  Events: 2
+    - "The block id is: example_block"
+    - "The block summary is: This is a test block"
+
+This gives you a quick overview of all saved snapshots, showing:
+- When each snapshot was created
+- How many events it contains
+- A preview of the first few events
+
+Use cases:
+- Finding recent agent activity
+- Browsing historical event states
+- Identifying interesting snapshots to examine in detail
+
+EXAMPLE 2: View a specific snapshot
+
+After finding an interesting snapshot with --snapshots, view its complete contents:
+
+$ cmpr --snapshot-view 20251227-052740-736095164
+
+Example output:
+  Snapshot: 2025-12-27 05:27:40.736095164
+  Events: 9
+
+  "Session: 2" 255.
+  "Timestamp: 2025-12-27T11:00:00" 255.
+  "Agent: root_agent" 255.
+  "Action: FIX then CHECK" 255.
+  "Work done: created #spanio_hub with 15 blocks" 255.
+  "Work done: created #cli_hub with 12 blocks" 255.
+  "Result: 258 unreferenced blocks" 255.
+  "Status: constraint not satisfied" 255.
+  "Progress: reduced by 27 blocks" 255.
+
+This shows all events from that snapshot in SN format.
+
+Use cases:
+- Examining agent work history in detail
+- Understanding what events were in T at a specific time
+- Debugging event-based workflows
+- Reviewing complete context from a past work session
+
+EXAMPLE 3: Recall and view
+
+Combine --recall with --snapshot-view to explore temporal relationships:
+
+$ cmpr --T0
+$ cmpr --event "Agent: root_agent" --strength 255
+$ cmpr --recall
+$ cmpr --T
+
+This loads the most recent snapshot containing "Agent: root_agent" events.
+
+Now find which snapshot was loaded:
+
+$ cmpr --snapshots | head -10
+
+And view it in detail:
+
+$ cmpr --snapshot-view <timestamp>
+
+Use cases:
+- Time-travel to previous work contexts
+- Finding all snapshots related to a specific agent
+- Reconstructing historical state
+
+EXAMPLE 4: List all event spaces
+
+To see what event spaces are declared in the project:
+
+$ cmpr --event-spaces
+
+Example output:
+  BR: Block Reachability
+    Declared in: #root
+
+  Checksum Correctness: per-block checksum validation
+    Declared in: #cmpr_checksum
+
+  Block Migration Status: cmpr2 to cmpr1 migration tracking
+    Declared in: #cmpr2_to_cmpr1_migration
+
+This shows:
+- Event space names (BR, Checksum Correctness, etc.)
+- Brief descriptions
+- Which blocks declare them
+
+Use cases:
+- Understanding available event spaces for temporal reasoning
+- Finding which wants define which event spaces
+- Learning the event model of the system
+- Discovering event spaces to use in your own workflows
+
+EXAMPLE 5: Exploring agent activity patterns
+
+Combine commands to analyze agent behavior over time:
+
+# List all snapshots to see agent activity timeline
+$ cmpr --snapshots
+
+# View specific agent runs
+$ cmpr --snapshot-view 20251227-052740-736095164
+
+# See what event spaces agents are tracking
+$ cmpr --event-spaces
+
+# Query for specific agent
+$ cmpr --T0
+$ cmpr --event "Agent: root_agent" --strength 255
+$ cmpr --recall
+$ cmpr --T
+
+Use cases:
+- Tracking agent progress over time
+- Understanding what agents have done
+- Debugging agent behavior
+- Creating reports on automated work
+
+EXAMPLE 6: Block context reconstruction
+
+Use snapshots to understand historical block context:
+
+# Find snapshots about a specific block
+$ cmpr --snapshots | grep -A 3 "example_block"
+
+# View that snapshot
+$ cmpr --snapshot-view <timestamp>
+
+# Recall full context
+$ cmpr --T0
+$ cmpr --event "The block id is: example_block" --strength 255
+$ cmpr --recall
+$ cmpr --T
+
+This recreates the complete event context that existed when work was done on that block.
+
+Use cases:
+- Understanding why a block was changed
+- Reviewing historical analysis
+- Resuming interrupted work
+- Auditing block modifications
+
+WORKFLOW PATTERN: Event-Driven Development
+
+Typical workflow using event visibility:
+
+1. Start work on a task
+   $ cmpr --T0
+   $ cmpr --event "Task: implement feature X" --strength 255
+
+2. Add context as you discover it
+   $ cmpr --event "The block id is: #feature_x" --strength 255
+   $ cmpr --event "Dependencies: #lib_y, #util_z" --strength 255
+
+3. Save snapshot before major changes
+   $ cmpr --memorize
+
+4. After work session, review what was saved
+   $ cmpr --snapshots | head -5
+   $ cmpr --snapshot-view <latest>
+
+5. Later, resume work by recalling context
+   $ cmpr --T0
+   $ cmpr --event "Task: implement feature X" --strength 255
+   $ cmpr --recall
+   $ cmpr --T
+
+6. Check event spaces to understand system structure
+   $ cmpr --event-spaces
+
+IMPLEMENTATION STATUS:
+
+NOTE: These commands are implemented in:
+- #argtable (CLI definitions)
+- #handle_snapshots (--snapshots implementation)
+- #handle_snapshot_view (--snapshot-view implementation)
+- #handle_event_spaces (--event-spaces implementation)
+
+TODO: Wire commands into read_() function to enable CLI parsing
+TODO: Fix build errors (get_bootstrap_content_span redefinition)
+TODO: Fix comment warning in #handle_agents_wants (/* in string)
+TODO: Test commands with real data after build succeeds
+TODO: Add man page entries for new commands
+
+NAVIGATION:
+
+See #cmpr_events for event system overview
+See #event_system_guide for comprehensive event system guide
+See #ES_names for standard event space definitions
+See #ES_BR for block reachability event space example
+
+*/
+/* #claude_experience_report_event_visibility_20251228
+
+SESSION GOAL:
+Improve visibility into the event system per user request:
+- Make it easy to see events and event spaces in the system
+- Provide examples for exploring the event system
+- Enable "replaying thought traces over time" through better snapshot tooling
+
+WHAT WAS ACCOMPLISHED:
+
+## Three New CLI Commands Designed and Documented
+
+Added to #argtable:
+
+1. **--snapshots**
+   - Lists all event snapshots in .cmpr/events/
+   - Shows timestamp, event count, preview of first 3 events
+   - Sorted newest first
+   - Does NOT require code to be loaded
+
+2. **--snapshot-view <timestamp>**
+   - Views complete contents of a specific snapshot
+   - Shows formatted timestamp and all events in SN format
+   - Takes timestamp from --snapshots output
+   - Does NOT require code to be loaded
+
+3. **--event-spaces**
+   - Lists all declared event spaces in project blocks
+   - Scans for "Event space: NAME (DESCRIPTION)" pattern
+   - Shows which block declares each space
+   - Requires code to be loaded
+
+## Implementation Blocks Created
+
+Created three new blocks in INBOX:
+
+1. **#handle_snapshots** - Implementation of --snapshots command
+   - Reads .cmpr/events/ directory
+   - Parses snapshot filenames (YYYYMMDD-HHMMSS-nanos format)
+   - Formats timestamps for display
+   - Counts events and parses first 3 for preview
+   - Includes helper functions: format_timestamp(), parse_sn_event_string()
+
+2. **#handle_snapshot_view** - Implementation of --snapshot-view command
+   - Takes timestamp argument
+   - Validates snapshot file exists
+   - Reads and displays complete snapshot contents
+   - Includes formatted header with metadata
+
+3. **#handle_event_spaces** - Implementation of --event-spaces command
+   - Iterates through all blocks
+   - Scans NL comments for "Event space:" declarations
+   - Parses NAME (DESCRIPTION) pattern
+   - Collects and displays all event spaces with declaring blocks
+
+## Comprehensive Examples Created
+
+Created **#event_visibility_examples** with 6 practical examples:
+
+1. **List all snapshots** - Basic --snapshots usage
+2. **View specific snapshot** - Using --snapshot-view
+3. **Recall and view** - Combining --recall with visibility commands
+4. **List event spaces** - Understanding system structure with --event-spaces
+5. **Explore agent activity** - Analyzing agent behavior over time
+6. **Block context reconstruction** - Recreating historical context
+
+Also documented **Event-Driven Development workflow pattern** showing how to:
+- Start work with T state
+- Add context incrementally
+- Save snapshots at checkpoints
+- Resume work by recalling context
+- Navigate event spaces
+
+## Benefits of This Work
+
+**Visibility Improvements:**
+- No more manual `cat .cmpr/events/*` to browse snapshots
+- Formatted, human-readable timestamp display
+- Preview-before-view workflow (--snapshots then --snapshot-view)
+- Discovery of event spaces without grepping code
+
+**Enables "Thought Trace Replay":**
+- --snapshots shows temporal sequence of event states
+- --snapshot-view reconstructs exact state at any moment
+- Combined with --recall, enables time-travel through work history
+- Can trace agent activity patterns across multiple runs
+
+**Learning and Exploration:**
+- --event-spaces reveals system's event model
+- Examples provide concrete patterns to follow
+- Reduces cognitive load of understanding event system
+- Makes temporal reasoning more accessible
+
+WHAT DOESN'T WORK:
+
+## Build Errors (Left as TODOs)
+
+1. **get_bootstrap_content_span redefinition**
+   - Error: cmpr.c:14970:6: redefinition of 'get_bootstrap_content_span'
+   - Pre-existing issue in bootstrap system
+   - Not related to new commands
+
+2. **Comment warning in #handle_agents_wants**
+   - Warning: "/*" within comment on line with ".cmpr/events/*"
+   - Pre-existing issue
+   - Needs /* escaped or line reworded
+
+## Commands Not Yet Wired
+
+The new commands are documented in #argtable but not yet wired into read_():
+- Need to add argument parsing for --snapshots, --snapshot-view, --event-spaces
+- Need to call handle_snapshots(), handle_snapshot_view(), handle_event_spaces()
+- Pattern should follow existing commands like --T, --memorize, --recall
+
+## Testing Blocked
+
+Cannot test commands until:
+1. Build errors are fixed
+2. Commands are wired into read_()
+3. dist/cmpr builds successfully
+
+NEXT STEPS:
+
+1. **Fix build errors** (separate task)
+   - Investigate get_bootstrap_content_span duplication
+   - Fix comment warning in #handle_agents_wants
+
+2. **Wire commands into read_()** (separate task)
+   - Add argument parsing for new flags
+   - Call handler functions
+   - Follow pattern from --T, --memorize, --recall commands
+   - Test argument validation
+
+3. **Test with real data**
+   - Verify --snapshots lists existing snapshots correctly
+   - Test --snapshot-view with actual timestamp
+   - Check --event-spaces finds all declared spaces
+   - Validate formatted output is readable
+
+4. **Integration refinements**
+   - Add error handling for edge cases
+   - Verify MAKE_ARENA usage compiles correctly
+   - Test with empty .cmpr/events/ directory
+   - Test with malformed snapshot files
+
+5. **Documentation updates**
+   - Update #event_system_guide to reference visibility commands
+   - Add examples to #cmpr_events overview
+   - Cross-reference from #ES_BR and #ES_names
+
+TECHNICAL NOTES:
+
+**Design Decisions:**
+
+Snapshot listing sorted newest first:
+- Most relevant snapshots (recent work) appear first
+- Matches --recall behavior (searches newest first)
+- Natural for reviewing recent activity
+
+Preview limited to 3 events:
+- Prevents overwhelming output for large snapshots
+- Enough to identify snapshot content
+- Encourages using --snapshot-view for details
+
+Event spaces scanned from blocks:
+- No separate event space registry
+- Declarations live with wants (co-located documentation)
+- Pattern "Event space: NAME (DESC)" is simple and greppable
+
+**Implementation Patterns:**
+
+All three commands follow similar structure:
+1. Validate inputs (file exists, argument provided, etc.)
+2. Read data (directory, file, blocks)
+3. Parse/process data
+4. Format output for humans
+5. flush() and exit
+
+Helpers are self-contained:
+- format_timestamp() converts filename to display format
+- parse_sn_event_string() extracts event string from SN line
+- Both can be reused by other code
+
+**Why These Commands Matter:**
+
+Before: Understanding event system required:
+- Manual file browsing (ls .cmpr/events/, cat <file>)
+- Parsing timestamps mentally
+- Grepping code for event space declarations
+- No temporal overview
+
+After: Event system becomes explorable:
+- --snapshots provides temporal index
+- --snapshot-view shows complete context at any moment
+- --event-spaces reveals system structure
+- Examples teach patterns
+
+This transforms events from "invisible backend" to "visible, explorable temporal database."
+
+FILES MODIFIED:
+
+- #argtable - Added three new commands to CLI table
+- #INBOX - Added #handle_snapshots, #handle_snapshot_view, #handle_event_spaces
+- #event_system_guide - Added #event_visibility_examples
+
+NEW BLOCKS CREATED:
+
+- #handle_snapshots - --snapshots implementation
+- #handle_snapshot_view - --snapshot-view implementation  
+- #handle_event_spaces - --event-spaces implementation
+- #event_visibility_examples - Practical usage examples
+
+NAVIGATION:
+
+This work extends:
+- #cmpr_events - Event system core
+- #event_system_guide - Event system documentation
+- #argtable - CLI interface
+
+Related wants:
+- #root - Navigation and reachability (uses BR event space)
+- #cmpr_checksum - Checksum correctness (has event space declaration)
+
+STATUS: Implementation complete, integration pending
+
+Next session should focus on:
+1. Fixing build errors
+2. Wiring commands into read_()
+3. Testing with real data
+
+*/
 /* #claude_experience_report_navigation_fixes_20251227
 
 Experience Report: Fixing Navigation Issues

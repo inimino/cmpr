@@ -8,6 +8,19 @@ Context:
 - cmpr1 should have blocks it references but not necessarily ALL cmpr2 blocks
 - See #cmpr2_via_cmpr1 for how to access cmpr2 blocks
 
+Event space: Block Migration Status
+
+The want above defines an event space for each block referenced by cmpr1:
+  "The block id is: {blockid}"
+  "The block exists in cmpr1"
+or
+  "The block id is: {blockid}"
+  "The block is missing from cmpr1"
+
+The migration_agent maintains this want by:
+- CHECK: Identifying blocks referenced by cmpr1 wants/overviews but missing from cmpr1
+- FIX: Migrating approved blocks from cmpr2 using #extract_block_from_cmpr2
+
 Current state (2025-12-27):
 - 374 blocks in cmpr1
 - 1033 blocks in cmpr2  
