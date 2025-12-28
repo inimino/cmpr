@@ -106,6 +106,125 @@ Quick navigation paths for the agent system and event system.
 - dist/cmpr --print-comment '#cmpr_events'
 - dist/cmpr --print-comment '#event_system_guide'
 */
+/* #experience_report_lifecycle_policy
+
+Experience Report Lifecycle Policy: Maximizing Value While Minimizing Cruft
+
+## Core Principle
+
+Experience reports are **temporal documentation** - they capture context at a moment in time. Their value decays as work completes and knowledge transfers into permanent structures (code, design docs, tests).
+
+## Lifecycle States
+
+### 1. ACTIVE (0-7 days old)
+**Value**: High - contains fresh context for ongoing work
+**Action**: Keep all active reports
+**Location**: Can remain in INBOX or wherever created
+
+### 2. REFERENCE (completed work, valuable lessons)
+**Value**: Medium - documents important decisions, tradeoffs, or non-obvious learnings
+**Action**: Extract key insights into permanent documentation blocks, then delete
+**Examples to preserve as permanent docs**:
+- Design rationale that isn't obvious from code
+- Comparison analyses (cmpr1 vs cmpr2)
+- Protocol/pattern definitions
+- Lessons about tools or workflows
+
+### 3. STALE (completed work, implementation details)
+**Value**: Low - details are in the code now
+**Action**: Delete aggressively
+**Examples to delete**:
+- "Successfully implemented X" - the code is the record
+- "Fixed bug Y" - the fix is in the code
+- "Added feature Z" - the feature exists now
+- Build/compilation debugging sessions
+
+## Retention Policy
+
+**DELETE immediately:**
+- Completed implementation reports where code is the artifact
+- Bug fix reports where the bug is fixed
+- Build/compilation troubleshooting sessions
+- Reports that just describe what the code now does
+
+**EXTRACT then DELETE:**
+- Design decisions → move insights to design blocks
+- Comparison analyses → create permanent comparison/analysis blocks
+- Process lessons → update CLAUDE.md or workflow docs
+- Protocol definitions → create standalone protocol blocks
+
+**KEEP temporarily:**
+- Reports for incomplete/blocked work
+- Reports referenced in current T state
+- Reports less than 7 days old during active development
+
+## Maximizing Value Pattern
+
+When triaging old reports:
+
+1. **Read the report** - what was accomplished?
+2. **Check if work is complete** - is the code/feature done?
+3. **Extract insights** - any non-obvious learnings?
+4. **Create permanent docs** - if insights exist, make a non-report block
+5. **Delete the report** - temporal artifact no longer needed
+
+## Example: Good Extraction
+
+Experience report says:
+> "Discovered that get_code() must be called before --files-blocks works. Added ind_files_blocks to the get_code() condition."
+
+Action:
+1. Check if the code works now ✓
+2. Extract insight: "All flags that access blocks must be in get_code() condition"
+3. Add to #handle_args NL comment or create #handle_args_pattern block
+4. Delete experience report
+
+## Anti-Pattern: Report Hoarding
+
+❌ Keeping every implementation report "for history"
+- Git history is the record
+- Reports become noise
+- Hard to find actual valuable documentation
+
+✅ Ruthless deletion of completed implementation work
+- Code is self-documenting (with good NL comments)
+- Git log shows what changed when
+- Only insights get promoted to permanent docs
+
+## Integration with Session Workflow
+
+Per #claude_experience_report_session_workflow_documentation_20251228:
+- Create experience reports at session end
+- Add event: `"The experience report is: #blockid"`
+- Memorize snapshot for queryability
+
+But also:
+- **Triage old reports regularly** (weekly or after major milestones)
+- Move insights into permanent documentation
+- Delete temporal implementation reports
+- Keep the repo lean
+
+## Target Metrics
+
+- Experience reports < 7 days old: unlimited
+- Experience reports 7-30 days old: < 10 (most should be triaged)
+- Experience reports > 30 days old: 0-2 (only incomplete/blocked work)
+
+## Questions This Answers
+
+**Q: Should I delete experience reports?**
+A: Yes! Aggressively delete completed implementation reports. Extract insights first.
+
+**Q: Won't we lose context?**
+A: No. Code has the implementation. Git has the history. NL comments have the design. Reports were temporal.
+
+**Q: What about valuable lessons?**
+A: Extract them into permanent docs (design blocks, CLAUDE.md updates, pattern blocks) THEN delete the report.
+
+**Q: How often should we triage?**
+A: Weekly during active development, or after completing major features.
+
+*/
 /* #cmpr_c_overview
 
 cmpr.c is the open-source CLI/TUI implementation (cmpr1) of the cmpr block database.
@@ -872,165 +991,8 @@ From Model system and product patterns:
 #claude_product_pattern_experience - Product pattern exploration
 
 */
-/* #claude_experience_report_events_20251224 @cmpr_events
 
-Claude experience report on #cmpr_events exploration, 2024-12-24.
 
-## Current Status
-
-The events system implementation exists but is non-functional. Testing `dist/cmpr --T0` produces "Failed to allocate memory for arena."
-
-## Implementation vs. Design Discrepancies
-
-The current implementation in #events_functions contradicts the design clarifications in #events_persistence_questions, #events_workflow_questions, and #events_example_interpretation:
-
-**Current Implementation (#events_functions):**
-- Saves to `.cmpr/events/current`
-- T is in-memory only, lost between invocations unless manually saved
-- --memorize overwrites a single file
-- --recall loads from that single file
-
-**Intended Design (from question blocks):**
-- T lives persistently in `.cmpr/T` (written whenever it changes)
-- Event spaces live in `.cmpr/ES/` with sub-structure TBD
-- Event names in `.cmpr/event_names` (newline-separated)
-- --memorize saves a joint event with timestamp (like revs format)
-- --memorize does NOT overwrite; it creates a new timestamped event file
-- T persists automatically across invocations (no manual --recall needed)
-
-## Root Cause of Arena Allocation Failure
-
-The event_entries arena is declared in #events_types using `MAKE_ARENA(event_entry, event_entries, 256)`, which creates a global arena that needs initialization.
-
-The arena must be initialized in the init() function (see #main), but searching shows it's not being initialized. The event system commands try to access state->events without the underlying arena being set up.
-
-## What Needs to be Fixed
-
-1. **Arena initialization**: Add `event_entries_arena_init();` to init() function
-2. **Persistence model**: Rewrite #events_functions to match the intended design:
-   - Auto-save T to `.cmpr/T` after each modification
-   - Auto-load T from `.cmpr/T` on startup (in read_() or init())
-   - Change --memorize to create timestamped joint events, not overwrite
-   - Remove --recall or repurpose it (maybe for loading specific timestamped events?)
-3. **File structure**: Create `.cmpr/T`, `.cmpr/ES/`, and handle `.cmpr/event_names`
-
-## Architecture Questions Still Unresolved
-
-From the question blocks, it's clear that:
-- Event spaces are meant for efficient indexing of event string patterns
-- "The block id is: X" represents a subspace where only X varies
-- Event spaces can be "added or considered later as indexes"
-- Initial implementation should just index events as pure strings
-
-But unclear:
-- What exactly is the format of `.cmpr/T`? (List of event IDs? Or full strings?)
-- How do timestamped joint events in --memorize relate to the ongoing T state?
-- Is `.cmpr/event_names` a global string table, or per-workspace?
-
-## Next Steps
-
-Before implementing more event features, should:
-1. Fix the arena initialization bug
-2. Align #events_functions with the intended design
-3. Update #events_persistence_questions and #events_workflow_questions to remove the "fucking stupid" questions and document actual design decisions
-4. Test the basic workflow: --T0, --event, --event, --memorize
-
-*/
-/* #claude_experience_report_events_20251224_2 @cmpr_events
-
-Claude experience report on #cmpr_events implementation work, 2024-12-24 (session 2).
-
-## Task
-
-Catch up with the #cmpr_events track of work and get the events system functional.
-
-## Initial State
-
-The events system was completely non-functional:
-- `dist/cmpr --T0` failed with "Failed to allocate memory for arena"
-- Build was failing due to bash script in #root_agent_check being compiled as C
-- Design existed in #cmpr_events and question blocks but implementation was incomplete
-
-## Root Causes Identified
-
-1. **Arena Initialization Bug**: event_entries_arena_alloc() was never called in init()
-2. **Memory Allocation Bug**: checksums_arena_alloc(1UL<<30) tried to allocate 8GB (1 billion checksums × 8 bytes)
-3. **Block Ordering Bug**: #events_types defined event_entries type AFTER #ui_state used it
-4. **Build Failure**: #root_agent_check contained raw bash script that C compiler tried to compile
-
-## Fixes Applied
-
-1. **Fixed block ordering**: Moved #events_types before #ui_state using delete-then-add workflow
-2. **Fixed init()**: Added event_entries_arena_alloc(1UL<<20) and reduced checksums to 2^20
-3. **Fixed build**: Moved bash script in #root_agent_check into comment block
-4. **Updated CLAUDE.md**: Added documentation on block reordering workflow
-5. **Rewrote #events_functions**: Implemented auto-persist design where T lives in .cmpr/T
-6. **Added event_load_T()**: Called from read_() to load T on startup
-
-## Current Implementation
-
-### Data Structures (#events_types)
-- `event_entry` struct with event_str (span) and strength (u8)
-- `event_entries` arena-allocated array
-- Lives in ui_state as state->events
-
-### Functions Implemented (#events_functions)
-- `event_load_T()`: Load T from .cmpr/T on startup
-- `event_save_T()`: Save T to .cmpr/T  
-- `event_add_internal()`: Add event without persisting
-- `event_T0()`: Clear T and persist
-- `event_add()`: Add event and persist
-- `event_memorize()`: Save T as timestamped joint event in .cmpr/events/YYYYMMDD-HHMMSS
-- `event_print_T()`: Print T as SN lines
-
-### CLI Integration (#handle_args)
-All flags already implemented:
-- --T0, --event, --strength, --memorize, --recall, --T
-
-## Outstanding Issues
-
-1. **event_recall() missing**: handle_args calls it but function doesn't exist
-   - Design docs suggest --recall shouldn't exist (T auto-loads)
-   - But argtable documents it and handle_args calls it
-   - Need to decide: implement or remove?
-
-2. **parse_int() missing**: Compilation warning in event_load_T()
-   - Need to implement or use existing parsing function
-
-3. **Directory creation**: .cmpr/events/ directory needed for --memorize
-   - Should be created by check_dirs() or on first use?
-
-4. **Untested**: Haven't verified the full workflow works:
-   - Does T actually persist across invocations?
-   - Does --memorize create files correctly?
-   - Does event_load_T() parse correctly?
-
-## Design Confusion
-
-The question blocks (#events_persistence_questions, #events_workflow_questions) express frustration with early questions and clarify the intended design, but there's still ambiguity:
-
-- Question blocks say: T lives in .cmpr/T, auto-persists, --recall shouldn't be needed
-- Current implementation: T auto-loads on startup, auto-saves on modification
-- But handle_args still has --recall implemented
-- argtable documents --recall as "load previously memorized event state"
-
-**Interpretation**: --recall might be for loading timestamped joint events from .cmpr/events/, not for reloading .cmpr/T (which happens automatically).
-
-## Current Build Status
-
-✓ Build succeeds (warning about parse_int only)
-✓ dist/cmpr --T0 runs without error
-✓ Basic initialization works
-? Full workflow untested
-
-## Next Steps (Not Completed)
-
-1. Decide on event_recall(): implement for loading timestamped events, or remove entirely
-2. Implement or find parse_int()
-3. Test full workflow: --T0, --event, --T, --memorize, restart, check persistence
-4. Ensure .cmpr/events/ gets created
-
-*/
 /* #events_persistence_questions @cmpr_events
 
 Questions about event system file persistence:
