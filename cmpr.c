@@ -36,6 +36,407 @@ The following blocks serve as navigation hubs to reach different parts of the co
 #makefile
 
 */
+/* #cmpr_c_overview
+
+TODO: This block should focus on high-level structure and provide navigation breadcrumbs to find components quickly. It should point to high-level-minus-one blocks, not to individual implementation functions. Each area should have a clear next hop for further exploration.
+
+cmpr.c is the open-source CLI/TUI implementation (cmpr1) of the cmpr block database.
+
+## Entry points and program flow
+
+#main               Program entry point: calls init, read_, main_loop
+#init               Initialization: I/O library, memory arenas, globals  
+#read_              Per-run setup: arguments, config, project scanning
+#main_loop          TUI event loop (for interactive mode)
+
+## Command-line interface
+
+#argtable           CLI argument definitions and behavior (start here for all CLI features)
+
+## Interactive TUI
+
+#keybinds                   Keyboard command table
+#handle_keystroke           Keystroke dispatcher
+#ui_display_overview        TUI display, interaction, and ex commands
+
+## Core data and operations
+
+#get_code                       File reading and block indexing
+#Settings                       Configuration system
+#block_ops_overview             Block manipulation and query functions
+#llm_integration_overview       LLM integration and prompt system
+#parsing_io_overview            Parsing, scanning, and I/O utilities
+#rev_system_c_overview          Revision system (C implementation)
+#blockref_expansion_overview    Block reference expansion and context
+
+*/
+/* #cmpr_implementation
+
+Implementation hubs for cmpr.c functionality.
+
+This block organizes implementation areas not covered by #cmpr_c_overview's architectural view.
+
+## Implementation Areas
+
+#ui_display_overview
+#block_editing_overview
+#llm_integration_overview
+#prompt_system_overview
+#block_ops_overview
+#command_handlers_overview
+
+*/
+/* #Settings
+
+When the tool starts, we ask about specific configuration settings that must exist.
+Otherwise, for settings like the buildcmd we only ask the first time the feature is used.
+
+As settings are changed, we write a configuration file, which is always .cmpr/conf in the current working directory.
+
+The contents of this file will be similar to RFC822-style headers.
+We will have a key name followed by colon, space and then a value to the end of the line.
+
+We have functions to read and write this format, which we do in the cmp space.
+
+In handle_conf_{language,file} we are called with a span in each case containing either a pathname or a language, in the order that these config keys occur in the config file.
+
+The idea is that when a language key occurs, it sets the language which is then used on subsequent files.
+However, as the one exception to this pattern, when files are included before any language is given, then we will add the files without a language.
+
+Therefore:
+
+- when we see a language line, we will set the current_language on the state
+- when we see a file line, we set the language on the file to current_language and add the file to the state
+- only in the case where we see a language line and the language was not already set, then we know that this is the first language line in the file; in this case we iterate over any files that we already added, and set the language on them.
+
+Below we write both functions handle_conf_{language,file}.
+*/
+
+
+/* #parsing_io_overview
+
+Parsing, scanning, and I/O utilities.
+
+## File operations
+
+#files - File list management
+#projfiles - Project files tracking  
+#file_for_block - Get file containing a block
+#file_auto_mode_decisions - Auto-detection decisions
+#read_file_into - Read file into buffer
+#dir_listing - Directory listing
+#add_projfile - Add file to project
+#update_projfile - Update project file
+#copy_file - Copy file utility
+#pathpart - Path manipulation  
+#mkdir_p - Recursive directory creation
+
+## Block finding and indexing
+
+#find_all_blocks - Find all blocks in project
+#find_all_lines - Find lines matching pattern  
+#find_blocks_language_auto - Auto-detect block language
+#find_blocks_language_markdown - Find blocks in markdown
+#find_blocks_language_none - Handle files without blocks
+#index_block_ids - Build block ID index
+#blockref_id - Parse block reference ID
+#write_block_map - Write block map file
+
+## Parsing utilities
+
+#parse_blocks_lines - Parse --files-blocks output
+#parse_config - Parse configuration file
+#parse_hex - Parse hex string
+#parse_ids_lines - Parse block IDs from lines
+#parse_int - Parse integer
+#parse_revfile_cache - Parse revision file cache
+#parse_scs_lines - Parse SCS lines
+#parse_section_header_line - Parse section headers
+#parse_template - Parse prompt template
+#scan_checksum - Scan checksum from text
+#scan_hex - Scan hex value
+#scan_int - Scan integer value
+
+## String and span utilities
+
+#span_cmp_wrapper - Compare spans (qsort wrapper)
+#pattern - Pattern matching
+#s_pattern - Span pattern matching
+
+## Checksums and hashing
+
+#checksum_setup - Initialize checksum system
+#checksums - Checksum utilities
+#prs_checksum - Parse checksum  
+#sorted_line_checksums - Sort checksums by line
+#cksums_intersection - Find checksum intersections
+#scan_checksum - Scan checksum value
+
+## Input validation
+
+#inp_sanity_checks - Input buffer sanity checks
+#block_sanity_check - Block structure validation (also in #block_ops_overview)
+
+## Generic data structures
+
+#generic_output_save - Save output generically
+#all_functions - Function catalog
+#ingest - Ingest parsed data
+#ingest_functions - Function ingestion
+
+*/
+/* #rev_system_c_overview
+
+Revision system implementation in C (low-level).
+
+These are the C implementation details for the revision system.
+For the high-level rvs CLI and library features, see #rvs_feature_root.
+
+## Revision creation and management
+
+#new_rev - Create new revision
+#rev_info - Revision info structure
+#pr_revinfo - Print revision info
+#current_block_checksum - Get current block checksum (also in #block_ops_overview)
+
+## Revision retrieval
+
+#get_revs - Load revisions from disk
+#get_revs_2 - Load revisions (continued)
+#get_revs_cache_get - Get from revision cache
+#get_revs_cache_put - Put into revision cache
+#get_revdir - Get revisions directory path
+#revs_cache_design - Revision cache design
+
+## Revision data structures and output
+
+#output_design - Output design
+#output_save - Save output
+#lookup_output - Look up output
+#get_outputs - Get outputs
+#make_output_saver - Create output saver
+#out2cmp - Output to cmp buffer
+#out2file - Output to file
+
+## Block history and comparison
+
+#select_block_version - Select block version (also in #ui_display_overview)
+
+## Revision optimization notes
+
+#rvs_build_blkmap_optimization_20251222 - Block map build optimization
+#rvs_stale_optimization_notes - Stale detection optimization notes
+
+*/
+/* #blockref_expansion_overview
+
+Block reference expansion and context handling.
+
+## Block expansion
+
+#expand_block - Expand block with references  
+#expand_refs - Expand block references
+#expand_refs_2 - Expand references (v2)
+#expand_refs_2_rec - Recursive expansion (v2)
+#expand_refs_2_rec_body - Recursive expansion body
+#expand_refs_2_rec_context - Recursive expansion context
+#expand_refs_rec - Recursive expansion (original)
+
+## Reference chasing
+
+#chase_ref - Follow block reference (also in #ui_display_overview)
+#chase_ref_2 - Follow block reference (v2)
+
+## Block context
+
+#count_physical_lines - Count lines in block
+
+## Pragmas and partials
+
+#pragmas - Pragma handling
+#partials - Partial block system
+
+## Configuration and context
+
+#check_conf_vars - Check configuration variables
+#ensure_conf_var - Ensure config variable exists
+#check_dirs - Check directory existence
+
+## Bootstrap and initialization
+
+#bootstrap - Bootstrap system
+#cmpr_init - Initialize cmpr
+#cmpr_blockize - Blockize files
+
+## Compilation
+
+#compile - Run build command
+#cmpr1_build - Build cmpr1 (referenced from root)
+
+## Error handling
+
+#complain_and_exit - Error and exit
+#complain_and_prompt - Error and prompt for input
+
+## Miscellaneous utilities
+
+#get_debug_info - Get debug information
+#tmp_filename - Generate temp filename
+
+*/
+/* #ui_display_overview
+
+TUI display and interaction system.
+
+## State Management
+
+#ui_state - TUI state variables
+
+## Display Functions
+
+#clear_display - Screen clearing
+#sbv_display - Status bar and view display
+
+*/
+/* #block_editing_overview
+
+Block editing and file operations.
+
+## Editor Integration
+
+#edit_current_block - Edit the current block
+#tmp_filename - Temporary file naming
+#launch_editor - Launch external editor
+#file_for_block - Find source file for a block
+#handle_edited_file - Process edited files
+
+## Language Detection
+
+#current_block_language - Get language for current block
+#guess_language_from_filename - Language detection from filename
+#language_for_block - Determine block's language
+
+## Block Parts
+
+#block_comment_part - Extract NL comment part
+#block_comment_part_excl - Extract NL excluding markers
+#block_code_part - Extract PL code part
+
+*/
+/* #llm_integration_overview
+
+LLM integration for code generation and rewriting.
+
+## Core LLM Functions
+
+#gpt_message - Message formatting for LLMs
+#send_to_llm - Send requests to LLM APIs
+
+## Response Handlers
+
+#handle_openai_response - Process OpenAI API responses
+#handle_ollama_response - Process Ollama API responses
+#handle_anthropic_response - Process Anthropic API responses
+
+*/
+/* #prompt_system_overview
+
+Prompt template system for LLM interactions.
+
+## Prompt Palette
+
+#prompt_palette_design - Design of the prompt palette system
+#prompt_palette - Prompt palette implementation
+#optable - Operation table for prompts
+#get_palette - Palette retrieval
+#apply_prompt - Apply prompt to blocks
+
+## Template System
+
+#prompt_template_design - Template system design
+#prompt_list_gen - Prompt list generation
+#get_prompt_template - Template retrieval
+#template_language_design - Template language specification
+#parse_template - Template parser
+
+## Template Processing
+
+#output_template_var - Output variable handling
+#lookup_output - Output lookup functions
+#expand_template - Template expansion
+#print_template_literal - Literal printing
+#gcb - Get current block for templates
+#current_block_template_vars - Block template variables
+#eval_template_variable - Variable evaluation
+
+## Standard Prompts
+
+#nl2plrewrite - NL to PL rewriting prompt
+#agreement - Agreement prompt
+#agreement_to_nl_diff - Agreement to NL diff
+
+*/
+
+/* #block_ops_overview
+
+Block Operations Overview
+
+This hub organizes the block manipulation and query functions in cmpr.c.
+
+## Block Printing and Display
+
+- #print_block - Print entire block (NL + PL)
+- #print_files_blocks - List all files and their blocks
+
+## Block Modification
+
+- #after - Insert new block after specified block ID
+- #replace - Replace entire block content from stdin
+- #replace_comment - Replace only NL part, preserve PL
+- #replace_code - Replace only PL part, preserve NL
+- #replace_block - General block replacement function
+- #replace_block_code_part - Replace code part of a block
+
+## Block Reference Expansion
+
+- #expand_refs_rec - Recursively expand @blockid references
+
+## Block Parts Extraction
+
+- #block_comment_part - Extract NL comment part of a block
+- #block_comment_part_excl - Extract NL excluding markers
+
+Referenced by: #cmpr_c_overview
+
+*/
+/* #command_handlers_overview
+
+Command-line and TUI command handlers.
+
+## Agent Commands
+
+#handle_agent_run - Run agent in CHECK/FIX mode
+#handle_agents - List available agents
+#handle_run - Run block as executable
+
+## Block Commands
+
+#handle_prompt - Apply prompts to blocks
+#handle_checksum - Compute block checksums
+#print_block - Print entire block
+#content_index - Search block content
+#block_from_arg - Resolve block from argument
+#block_id_arg - Parse block ID argument
+
+## Configuration and Files
+
+#check_dirs - Verify required directories
+#check_conf_vars - Validate configuration
+#ensure_conf_var - Ensure config variable exists
+#update_projfile - Update project files
+#new_rev - Create new revision
+
+*/
 /* #claude_exploration_report
 
 Claude's First Encounter with cmpr
@@ -3439,7 +3840,7 @@ We present the supported arguments and flags in a tabular form (as with langtabl
 
 Command syntax summary:
 
-cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]
+cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--wants]
 
 Command argument and flag table:
 
@@ -3475,6 +3876,7 @@ Command argument and flag table:
 --memorize
 --recall
 --T
+--wants
 
 2. Behavior of arguments and flags:
 
@@ -3617,6 +4019,13 @@ recall:
 
 T:
   Output the current event state T as SN (strength-notation) lines.
+
+wants:
+  Find all SN lines in the project that start with "We want " and print the want strings.
+  Scans all files in the project (source files, .cmpr/T, .cmpr/events/*).
+  For each SN line (format: "..." <digits>. per #event_parse_sn) where the event string starts with "We want ", print the want string.
+  Output is one want per line.
+  Does not require code to be loaded.
 
 3. Implementation notes:
 
@@ -3793,6 +4202,19 @@ T:
   each event on its own line
   we don't need to load code for this
 
+wants:
+  find all SN lines across the entire project that start with "We want "
+  does NOT require code to be loaded
+  scans all files recursively in current directory (including .cmpr/T, .cmpr/events/*, source files)
+  for each file, read line by line
+  parse each line as potential SN line using the format from #event_parse_sn:
+    - skip leading whitespace
+    - line must start with "
+    - search backwards from end for pattern " <digits>.
+    - extract event string between opening " and the " in end pattern
+  if event string starts with "We want ", print the event string (one per line)
+  flush and exit successfully
+
 4. Help strings:
 
 conf:
@@ -3879,8 +4301,13 @@ recall:
 T:
   Output current event state T as SN lines.
 
+wants:
+  Print all want statements (SN lines starting with "We want ") found in the project.
+
 */
-/* #handle_args @argtable
+
+
+/* #handle_args @argtable @gcb
 
 In handle_args we handle any command-line arguments.
 
@@ -3888,69 +4315,26 @@ void handle_args(int argc, char **argv);
 
 Below we implement void handle_args(int argc, char **argv);
 
-Here are some random further implementation notes on that:
+Here, the first line just opens the function:
 
-There are things that have to be handled in specific orderings.
+Manually maintained.
+
+*/
+
+void handle_args(int argc, char **argv) {
+/* #handle_args_2 @handle_args:all
+
+Here we declare indicator variables (int ind_*) and argument pointers (char *arg_*).
+
 Our basic technique here is to set indicators (0- or 1-valued ints) in our arg-handling loop.
 These are used directly in if statements, like `if (ind_print_block) { ...`.
 Below the loop we then handle the necessaries in the correct order.
 We use "int ind_*" for these variables so they don't conflict with functions or anything else we already have.
-We also have an int "action_arg" which tracks whether one of the action flags has been set, char pointers for string arguments like conf filepath or content-index search or run block ID.
+We also have char pointers for string arguments.
 
-Action flags (cannot be combined, mutually exclusive):
-- print-block, print-comment, print-code, expand-block
-- content-index, grep, count-blocks, files-blocks, print-all
-- rewritepl, prompt, after, replace, replace-comment, replace-code
-- run, agents, checksum
+Here we declare these int ind_* and char *arg_* variables, one per line, still indented for the function body.
 
-If more than one is set, we print an error message and exit.
-If any of these are set then we exit successfully, but if none of them is, then we will return from this function and enter our main loop.
-
-Because --init is used to set up the config file, it cannot be combined with --conf, if it is, we also print an error and exit.
-Also, if we are doing an --init, we need to not try to parse the config file, because that will definitely fail.
-
-If "--conf <alternate-config-file>" is passed, we update config_file_path on the state.
-Once we know the conf file to read from, we call parse_config before we do anything else.
-
-If "--print-conf" is passed in, we print our configuration settings and exit.
-This is only OK to do once we have already called parse_config, so the configuration settings have already been read in from the file.
-
-For --print-block, --print-comment, --print-code, --expand-block, --rewritepl, --prompt: Use block_from_arg() to parse the argument which can be either a numeric index or a block ID (with or without '#' prefix).
-
-If "--content-index <search>" is passed in, we call content_index() which searches all blocks for the literal string and outputs a space-separated list of one-based indices of all matching blocks.
-
-If "--run <block_id>" is passed in, we delegate to handle_run() which extracts and executes the PL code from that block.
-
-If "--agents" is passed in, we delegate to handle_agents() which lists all registered agents.
-
-If "--checksum" is passed in, we delegate to handle_checksum() which reads stdin and outputs the checksum hash.
-
-If "--expand-block <id>" is passed in, we parse the block ID/index, validate it, then call expand_block(idx) which prints the block with all @blockid references transitively expanded.
-
-If "--rewritepl <id>" is passed in, we parse the block ID/index, set state->curr_block_idx to that index, then call nl2pl_rewrite() which regenerates the PL from NL using the LLM.
-
-If "--prompt <id>" is passed in, we parse the block ID/index, validate it, then call handle_prompt(idx) which prints the nl2pl prompt that would be sent to the LLM for that block, without actually calling the LLM.
-
-If "--after <id>" is passed in, we call after() with the block ID/index as a span argument. The after() function reads stdin and inserts content after the specified block.
-
-If "--replace <id>" is passed in, we call replace() with the block ID/index as a span argument. The replace() function reads stdin and replaces the entire block.
-
-If "--replace-comment <id>" is passed in, we call replace_comment() with the block ID/index as a span argument. This replaces only the NL (comment) part while preserving the PL (code).
-
-If "--replace-code <id>" is passed in, we call replace_code() with the block ID/index as a span argument. This replaces only the PL (code) part while preserving the NL (comment).
-
-IMPORTANT: This block's PL implementation should be SIMPLE and delegate complex logic to separate blocks.
-Do NOT inline the full implementation of complex commands like --run or --agents here.
-Extract that logic into separate helper blocks (e.g., #handle_run, #handle_agents, #handle_prompt, #after, #replace, etc.).
-This block should mainly:
-1. Declare indicator variables (int ind_*) and argument pointers (char *arg_*)
-2. Parse arguments in a loop and set indicators
-3. Validate mutually exclusive action flags
-4. Call get_code() if needed for action flags
-5. Dispatch to helper functions based on indicators
-6. Keep the main flow readable
-
-The indicator variables should include:
+Indicator variables needed:
 - ind_conf, ind_print_conf, ind_help, ind_init, ind_version
 - ind_print_block, ind_print_comment, ind_print_code, ind_expand_block
 - ind_content_index, ind_grep, ind_count_blocks, ind_files_blocks, ind_print_all
@@ -3958,317 +4342,454 @@ The indicator variables should include:
 - ind_run, ind_agents, ind_checksum
 - ind_T0, ind_event, ind_strength, ind_memorize, ind_recall, ind_T
 - ind_map_error, ind_test_block_map
+- ind_wants
 
-The argument pointers should include:
+Argument pointers needed:
 - conf_filepath, content_index_search, grep_pattern, run_block_id
 - arg_print_block, arg_print_comment, arg_print_code, arg_expand_block
 - arg_rewritepl, arg_prompt, arg_after, arg_replace, arg_replace_comment, arg_replace_code
 - event_string, event_strength_str
 
-This function will always call parse_config, always before printing the config if "--print-conf" is used, and always after updating the config file if "--conf" is used.
-In particular, even if no alternate conf file was set, we still need to read the default conf file.
-
-The --help handler should print ONLY a short usage summary line, not detailed descriptions.
-Format: "Usage: cmpr [options...]" using the command syntax from #argtable.
+We also need an int "action_arg" which tracks whether one of the action flags has been set.
 
 Manually maintained.
 
 */
-void handle_args(int argc, char **argv) {
-    int ind_conf = 0, ind_print_conf = 0, ind_help = 0, ind_init = 0, ind_version = 0;
-    int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_expand_block = 0;
-    int ind_content_index = 0, ind_grep = 0, ind_count_blocks = 0, ind_files_blocks = 0, ind_print_all = 0;
-    int ind_rewritepl = 0, ind_prompt = 0, ind_after = 0, ind_replace = 0, ind_replace_comment = 0, ind_replace_code = 0;
-    int ind_run = 0, ind_agents = 0, ind_agent_run = 0, ind_checksum = 0;
-    int ind_T0 = 0, ind_event = 0, ind_strength = 0, ind_memorize = 0, ind_recall = 0, ind_T = 0;
-    int ind_map_error = 0, ind_test_block_map = 0;
-    char *conf_filepath = NULL, *content_index_search = NULL, *grep_pattern = NULL, *run_block_id = NULL, *agent_run_name = NULL, *agent_run_mode = NULL;
-    char *arg_print_block = NULL, *arg_print_comment = NULL, *arg_print_code = NULL, *arg_expand_block = NULL;
-    char *arg_rewritepl = NULL, *arg_prompt = NULL, *arg_after = NULL, *arg_replace = NULL, *arg_replace_comment = NULL, *arg_replace_code = NULL;
-    char *event_str = NULL, *map_error_line = NULL;
-    int strength_value = 0;
 
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--conf") == 0 && i + 1 < argc) {
-            conf_filepath = argv[++i];
-            ind_conf = 1;
-        } else if (strcmp(argv[i], "--print-conf") == 0) {
-            ind_print_conf = 1;
-        } else if (strcmp(argv[i], "--help") == 0) {
-            ind_help = 1;
-        } else if (strcmp(argv[i], "--init") == 0) {
-            ind_init = 1;
-        } else if (strcmp(argv[i], "--version") == 0) {
-            ind_version = 1;
-        } else if (strcmp(argv[i], "--print-block") == 0 && i + 1 < argc) {
-            arg_print_block = argv[++i];
-            ind_print_block = 1;
-        } else if (strcmp(argv[i], "--print-comment") == 0 && i + 1 < argc) {
-            arg_print_comment = argv[++i];
-            ind_print_comment = 1;
-        } else if (strcmp(argv[i], "--print-code") == 0 && i + 1 < argc) {
-            arg_print_code = argv[++i];
-            ind_print_code = 1;
-        } else if (strcmp(argv[i], "--expand-block") == 0 && i + 1 < argc) {
-            arg_expand_block = argv[++i];
-            ind_expand_block = 1;
-        } else if (strcmp(argv[i], "--rewritepl") == 0 && i + 1 < argc) {
-            arg_rewritepl = argv[++i];
-            ind_rewritepl = 1;
-        } else if (strcmp(argv[i], "--prompt") == 0 && i + 1 < argc) {
-            arg_prompt = argv[++i];
-            ind_prompt = 1;
-        } else if (strcmp(argv[i], "--after") == 0 && i + 1 < argc) {
-            arg_after = argv[++i];
-            ind_after = 1;
-        } else if (strcmp(argv[i], "--replace") == 0 && i + 1 < argc) {
-            arg_replace = argv[++i];
-            ind_replace = 1;
-        } else if (strcmp(argv[i], "--replace-comment") == 0 && i + 1 < argc) {
-            arg_replace_comment = argv[++i];
-            ind_replace_comment = 1;
-        } else if (strcmp(argv[i], "--replace-code") == 0 && i + 1 < argc) {
-            arg_replace_code = argv[++i];
-            ind_replace_code = 1;
-        } else if (strcmp(argv[i], "--content-index") == 0 && i + 1 < argc) {
-            content_index_search = argv[++i];
-            ind_content_index = 1;
-        } else if (strcmp(argv[i], "--grep") == 0 && i + 1 < argc) {
-            grep_pattern = argv[++i];
-            ind_grep = 1;
-        } else if (strcmp(argv[i], "--count-blocks") == 0) {
-            ind_count_blocks = 1;
-        } else if (strcmp(argv[i], "--files-blocks") == 0) {
-            ind_files_blocks = 1;
-        } else if (strcmp(argv[i], "--print-all") == 0) {
-            ind_print_all = 1;
-        } else if (strcmp(argv[i], "--run") == 0 && i + 1 < argc) {
-            run_block_id = argv[++i];
-            ind_run = 1;
-        } else if (strcmp(argv[i], "--agents") == 0) {
-            ind_agents = 1;
-        } else if (strcmp(argv[i], "--agent-run") == 0 && i + 2 < argc) {
-            agent_run_name = argv[++i];
-            agent_run_mode = argv[++i];
-            ind_agent_run = 1;
-        } else if (strcmp(argv[i], "--checksum") == 0) {
-            ind_checksum = 1;
-        } else if (strcmp(argv[i], "--T0") == 0) {
-            ind_T0 = 1;
-        } else if (strcmp(argv[i], "--event") == 0 && i + 1 < argc) {
-            event_str = argv[++i];
-            ind_event = 1;
-        } else if (strcmp(argv[i], "--strength") == 0 && i + 1 < argc) {
-            strength_value = atoi(argv[++i]);
-            ind_strength = 1;
-            if (strength_value != 255) {
-                prt("unimplemented: --strength != 255");
-                flush_exit(1);
-            }
-        } else if (strcmp(argv[i], "--memorize") == 0) {
-            ind_memorize = 1;
-        } else if (strcmp(argv[i], "--recall") == 0) {
-            ind_recall = 1;
-        } else if (strcmp(argv[i], "--T") == 0) {
-            ind_T = 1;
-        } else if (strcmp(argv[i], "--map-error") == 0 && i + 1 < argc) {
-            map_error_line = argv[++i];
-            ind_map_error = 1;
-        } else if (strcmp(argv[i], "--test-block-map") == 0) {
-            ind_test_block_map = 1;
-        } else if (argv[i][0] == '-' && argv[i][1] == '-') {
-            prt("Unknown flag: %s\n", argv[i]);
-            flush_exit(1);
-        }
-    }
+	int ind_conf = 0, ind_print_conf = 0, ind_help = 0, ind_init = 0, ind_version = 0;
+	int ind_print_block = 0, ind_print_comment = 0, ind_print_code = 0, ind_expand_block = 0;
+	int ind_content_index = 0, ind_grep = 0, ind_count_blocks = 0, ind_files_blocks = 0, ind_print_all = 0;
+	int ind_rewritepl = 0, ind_prompt = 0, ind_after = 0, ind_replace = 0, ind_replace_comment = 0, ind_replace_code = 0;
+	int ind_run = 0, ind_agents = 0, ind_checksum = 0;
+	int ind_T0 = 0, ind_event = 0, ind_strength = 0, ind_memorize = 0, ind_recall = 0, ind_T = 0;
+	int ind_map_error = 0, ind_test_block_map = 0;
+	int ind_wants = 0;
+	
+	char *conf_filepath = NULL;
+	char *content_index_search = NULL;
+	char *grep_pattern = NULL;
+	char *run_block_id = NULL;
+	char *arg_print_block = NULL;
+	char *arg_print_comment = NULL;
+	char *arg_print_code = NULL;
+	char *arg_expand_block = NULL;
+	char *arg_rewritepl = NULL;
+	char *arg_prompt = NULL;
+	char *arg_after = NULL;
+	char *arg_replace = NULL;
+	char *arg_replace_comment = NULL;
+	char *arg_replace_code = NULL;
+	char *event_string = NULL;
+	char *event_strength_str = NULL;
+	
+	int action_arg = 0;
+/* #handle_args_3 @handle_args_2:all @block_from_arg
 
-    if (ind_help) {
-        prt("Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T]\n");
-        flush_exit(0);
-    }
+Now we iterate argv and parse the flags.
 
-    if (ind_version) {
-        prt("Version: $VERSION$\n");
-        flush_exit(0);
-    }
+We loop through argc starting from index 1.
+For each argument:
+- If it matches a known flag (--help, --version, --print-block, etc.), we set the corresponding indicator
+- For flags that take arguments (--conf, --print-block, --grep, etc.), we also capture the next argv element
+- If an unknown flag starting with "--" is encountered, we print an error and exit
 
-    if (ind_init) {
-        if (ind_conf) {
-            prt("Error: --init and --conf cannot be used together\n");
-            flush_exit(1);
-        }
-        cmpr_init();
-        flush_exit(0);
-    }
+The parsing loop should handle all flags listed in #argtable:
+- --help, --version, --init
+- --conf <file>, --print-conf
+- --print-block <id>, --print-comment <id>, --print-code <id>, --expand-block <id>
+- --content-index <search>, --grep <pattern>, --count-blocks, --files-blocks, --print-all
+- --rewritepl <id>, --prompt <id>
+- --after <id>, --replace <id>, --replace-comment <id>, --replace-code <id>
+- --run <id>, --agents, --checksum
+- --T0, --event <string>, --strength <value>, --memorize, --recall, --T
+- --map-error, --test-block-map
+- --wants
 
-    if (ind_conf) {
-        state->config_file_path = S(conf_filepath);
-    }
+For unknown flags, print error: "Unknown flag: <flag>" and exit with status 1.
 
-    if (!ind_init) {
-        parse_config();
-    }
+For flags requiring arguments, if the argument is missing, print error like "Missing <id> argument for --print-block" and exit.
 
-    if (ind_print_conf) {
-        print_config();
-        flush_exit(0);
-    }
+Manually maintained.
 
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents + ind_agent_run + ind_checksum > 1) {
-            prt("Error: --print-block, --print-comment, --print-code, --expand-block, --content-index, --grep, --count-blocks, --files-blocks, --print-all, --rewritepl, --prompt, --after, --replace, --replace-comment, --replace-code, --run, --agents, and --checksum cannot be combined.\n");
-            flush_exit(1);
-        }
-        if (ind_print_block + ind_print_comment + ind_print_code + ind_expand_block + ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all + ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_run + ind_agents + ind_agent_run) {
-          get_code();
-        }
-        if (ind_print_block) {
-            int idx = block_from_arg(arg_print_block);
-            if (idx < 0 || idx >= state->blocks.n) {
-                prt("Block id or index not found: %s\n", arg_print_block);
-                flush_exit(1);
-            }
-            print_block(idx);
-            flush_exit(0);
-        } else if (ind_print_comment) {
-            int idx = block_from_arg(arg_print_comment);
-            if (idx < 0 || idx >= state->blocks.n) {
-                prt("Block id or index not found: %s\n", arg_print_comment);
-                flush_exit(1);
-            }
-            print_comment(idx);
-            flush_exit(0);
-        } else if (ind_print_code) {
-            int idx = block_from_arg(arg_print_code);
-            if (idx < 0 || idx >= state->blocks.n) {
-                prt("Block id or index not found: %s\n", arg_print_code);
-                flush_exit(1);
-            }
-            print_code(idx);
-            flush_exit(0);
-        } else if (ind_expand_block) {
-            int idx = block_from_arg(arg_expand_block);
-            if (idx < 0 || idx >= state->blocks.n) {
-                prt("Block id or index not found: %s\n", arg_expand_block);
-                flush_exit(1);
-            }
-            expand_block(idx);
-            flush_exit(0);
-        } else if (ind_rewritepl) {
-            int idx = block_from_arg(arg_rewritepl);
-            if (idx < 0 || idx >= state->blocks.n) {
-                prt("Block id or index not found: %s\n", arg_rewritepl);
-                flush_exit(1);
-            }
-            state->curr_block_idx = idx;
-            nl2pl_rewrite();
-            flush_exit(0);
-        } else if (ind_prompt) {
-            int idx = block_from_arg(arg_prompt);
-            if (idx < 0 || idx >= state->blocks.n) {
-                prt("Block id or index not found: %s\n", arg_prompt);
-                flush_exit(1);
-            }
-            handle_prompt(idx);
-            flush_exit(0);
-        } else if (ind_after) {
-            after(S(arg_after));
-            flush_exit(0);
-        } else if (ind_replace) {
-            replace(S(arg_replace));
-            flush_exit(0);
-        } else if (ind_replace_comment) {
-            replace_comment(S(arg_replace_comment));
-            flush_exit(0);
-        } else if (ind_replace_code) {
-            replace_code(S(arg_replace_code));
-            flush_exit(0);
-        } else if (ind_content_index) {
-            content_index(S(content_index_search));
-            flush_exit(0);
-        } else if (ind_grep) {
-            grep_blocks(S(grep_pattern));
-            flush_exit(0);
-        } else if (ind_count_blocks) {
-            prt("%d\n", state->blocks.n);
-            flush_exit(0);
-        } else if (ind_files_blocks) {
-            print_files_blocks();
-            flush_exit(0);
-        } else if (ind_print_all) {
-            for (int i = 0; i < state->blocks.n; i++) {
-                print_block(i);
-            }
-            flush_exit(0);
-        } else if (ind_agents) {
-            handle_agents();
-            flush_exit(0);
-        } else if (ind_agent_run) {
-            handle_agent_run(agent_run_name, agent_run_mode);
-            flush_exit(0);
-        } else if (ind_run) {
-            handle_run(run_block_id);
-            flush_exit(0);
-        } else if (ind_checksum) {
-            handle_checksum();
-            flush_exit(0);
-        }
+*/
 
-    if (ind_T0 || ind_event || ind_strength || ind_memorize || ind_recall || ind_T) {
-        if (ind_event && !ind_strength) {
-            prt("Error: --event requires --strength\n");
-            flush_exit(1);
-        }
-        if (ind_strength && !ind_event) {
-            prt("Error: --strength must be used with --event\n");
-            flush_exit(1);
-        }
+	for (int i = 1; i < argc; i++) {
+		char *arg = argv[i];
+		
+		if (strcmp(arg, "--help") == 0) {
+			ind_help = 1;
+		} else if (strcmp(arg, "--version") == 0) {
+			ind_version = 1;
+		} else if (strcmp(arg, "--init") == 0) {
+			ind_init = 1;
+		} else if (strcmp(arg, "--conf") == 0) {
+			ind_conf = 1;
+			if (i + 1 >= argc) { prt("Missing <file> argument for --conf\n"); flush_exit(1); }
+			conf_filepath = argv[++i];
+		} else if (strcmp(arg, "--print-conf") == 0) {
+			ind_print_conf = 1;
+		} else if (strcmp(arg, "--print-block") == 0) {
+			ind_print_block = 1;
+			if (i + 1 >= argc) { prt("Missing <id> argument for --print-block\n"); flush_exit(1); }
+			arg_print_block = argv[++i];
+		} else if (strcmp(arg, "--print-comment") == 0) {
+			ind_print_comment = 1;
+			if (i + 1 >= argc) { prt("Missing <id> argument for --print-comment\n"); flush_exit(1); }
+			arg_print_comment = argv[++i];
+		} else if (strcmp(arg, "--print-code") == 0) {
+			ind_print_code = 1;
+			if (i + 1 >= argc) { prt("Missing <id> argument for --print-code\n"); flush_exit(1); }
+			arg_print_code = argv[++i];
+		} else if (strcmp(arg, "--expand-block") == 0) {
+			ind_expand_block = 1;
+			if (i + 1 >= argc) { prt("Missing <id> argument for --expand-block\n"); flush_exit(1); }
+			arg_expand_block = argv[++i];
+		} else if (strcmp(arg, "--content-index") == 0) {
+			ind_content_index = 1;
+			if (i + 1 >= argc) { prt("Missing <search> argument for --content-index\n"); flush_exit(1); }
+			content_index_search = argv[++i];
+		} else if (strcmp(arg, "--grep") == 0) {
+			ind_grep = 1;
+			if (i + 1 >= argc) { prt("Missing <pattern> argument for --grep\n"); flush_exit(1); }
+			grep_pattern = argv[++i];
+		} else if (strcmp(arg, "--count-blocks") == 0) {
+			ind_count_blocks = 1;
+		} else if (strcmp(arg, "--files-blocks") == 0) {
+			ind_files_blocks = 1;
+		} else if (strcmp(arg, "--print-all") == 0) {
+			ind_print_all = 1;
+		} else if (strcmp(arg, "--rewritepl") == 0) {
+			ind_rewritepl = 1;
+			if (i + 1 >= argc) { prt("Missing <id> argument for --rewritepl\n"); flush_exit(1); }
+			arg_rewritepl = argv[++i];
+		} else if (strcmp(arg, "--prompt") == 0) {
+			ind_prompt = 1;
+			if (i + 1 >= argc) { prt("Missing <id> argument for --prompt\n"); flush_exit(1); }
+			arg_prompt = argv[++i];
+		} else if (strcmp(arg, "--after") == 0) {
+			ind_after = 1;
+			if (i + 1 >= argc) { prt("Missing <id> argument for --after\n"); flush_exit(1); }
+			arg_after = argv[++i];
+		} else if (strcmp(arg, "--replace") == 0) {
+			ind_replace = 1;
+			if (i + 1 >= argc) { prt("Missing <id> argument for --replace\n"); flush_exit(1); }
+			arg_replace = argv[++i];
+		} else if (strcmp(arg, "--replace-comment") == 0) {
+			ind_replace_comment = 1;
+			if (i + 1 >= argc) { prt("Missing <id> argument for --replace-comment\n"); flush_exit(1); }
+			arg_replace_comment = argv[++i];
+		} else if (strcmp(arg, "--replace-code") == 0) {
+			ind_replace_code = 1;
+			if (i + 1 >= argc) { prt("Missing <id> argument for --replace-code\n"); flush_exit(1); }
+			arg_replace_code = argv[++i];
+		} else if (strcmp(arg, "--run") == 0) {
+			ind_run = 1;
+			if (i + 1 >= argc) { prt("Missing <id> argument for --run\n"); flush_exit(1); }
+			run_block_id = argv[++i];
+		} else if (strcmp(arg, "--agents") == 0) {
+			ind_agents = 1;
+		} else if (strcmp(arg, "--checksum") == 0) {
+			ind_checksum = 1;
+		} else if (strcmp(arg, "--T0") == 0) {
+			ind_T0 = 1;
+		} else if (strcmp(arg, "--event") == 0) {
+			ind_event = 1;
+			if (i + 1 >= argc) { prt("Missing <string> argument for --event\n"); flush_exit(1); }
+			event_string = argv[++i];
+		} else if (strcmp(arg, "--strength") == 0) {
+			ind_strength = 1;
+			if (i + 1 >= argc) { prt("Missing <value> argument for --strength\n"); flush_exit(1); }
+			event_strength_str = argv[++i];
+		} else if (strcmp(arg, "--memorize") == 0) {
+			ind_memorize = 1;
+		} else if (strcmp(arg, "--recall") == 0) {
+			ind_recall = 1;
+		} else if (strcmp(arg, "--T") == 0) {
+			ind_T = 1;
+		} else if (strcmp(arg, "--map-error") == 0) {
+			ind_map_error = 1;
+		} else if (strcmp(arg, "--test-block-map") == 0) {
+			ind_test_block_map = 1;
+		} else if (strcmp(arg, "--wants") == 0) {
+			ind_wants = 1;
+		} else if (arg[0] == '-' && arg[1] == '-') {
+			prt("Unknown flag: "); prt(arg); prt("\n");
+			flush_exit(1);
+		}
+	}
+/* #handle_args_4 @handle_args_3:all @blocks
 
-        int event_actions = ind_T0 + ind_event + ind_memorize + ind_recall + ind_T;
-        if (event_actions > 1) {
-            prt("Error: --T0, --event, --memorize, --recall, and --T cannot be combined\n");
-            flush_exit(1);
-        }
+Here we dispatch using the indicators, and finally close the handle_args function.
 
-        check_conf_vars();
-        check_dirs();
-        event_load_T();
+First we handle --help, --version, and --init.
+For --version, we prt "Version: $VERSION$\n" verbatim, which will get replaced by our build system.
+For --help, we prt the usage summary.
+For --init we call cmpr_init.
+After any of these we flush_exit(0).
 
-        if (ind_T0) {
-            event_T0();
-            flush_exit(0);
-        }
-        if (ind_event) {
-            span event_span = { (u8 *)event_str, (u8 *)event_str + strlen(event_str) };
-            event_add(event_span, (unsigned char)strength_value);
-            flush_exit(0);
-        }
-        if (ind_memorize) {
-            event_memorize();
-            flush_exit(0);
-        }
-        if (ind_recall) {
-            event_recall();
-            flush_exit(0);
-        }
-        if (ind_T) {
-            event_print_T();
-            flush_exit(0);
-        }
-    }
+If --init and --conf are both set, print error "Error: --init and --conf cannot be used together" and flush_exit(1).
 
-    if (ind_map_error) {
-        prt("Error: --map-error not yet implemented");
-        if (map_error_line) {
-            prt(" (line %s)", map_error_line);
-        }
-        prt("\n");
-        flush_exit(1);
-    }
+If --conf was set, update state->config_file_path.
 
-    if (ind_test_block_map) {
-        block_map_selftest();
-        flush_exit(0);
-    }
+Call parse_config before doing anything else (unless --init was set).
+
+If --print-conf was set, call print_config() and exit.
+
+For the other action args, they are code database operations and are mutually exclusive.
+Count action flags and error if more than one is set.
+
+For commands that need the block database, call get_code() first.
+
+Then handle each action flag by calling the appropriate handler function.
+
+After handling any action flag, flush_exit(0).
+
+If there wasn't an action arg then we return from this function, and we will go into our normal interactive loop.
+
+As this is the last block, we close the function body with a final closing brace.
+
+Manually maintained.
+
+*/
+
+		// Handle --help, --version, --init first
+	if (ind_help) {
+		prt("Usage: cmpr [--help] [--version] [--init] [--conf <file>] [--print-conf] [--print-block <id>] [--print-comment <id>] [--print-code <id>] [--expand-block <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks] [--files-blocks] [--print-all] [--rewritepl <id>] [--prompt <id>] [--after <id>] [--replace <id>] [--replace-comment <id>] [--replace-code <id>] [--run <id>] [--agents] [--checksum] [--T0] [--event <string>] [--strength <value>] [--memorize] [--recall] [--T] [--map-error] [--test-block-map] [--wants]\n");
+		flush_exit(0);
+	}
+	
+	if (ind_version) {
+		prt("Version: $VERSION$\n");
+		flush_exit(0);
+	}
+	
+	if (ind_init && ind_conf) {
+		prt("Error: --init and --conf cannot be used together\n");
+		flush_exit(1);
+	}
+	
+	if (ind_init) {
+		cmpr_init();
+		flush_exit(0);
+	}
+	
+	// Update config file path if --conf was used
+	if (ind_conf) {
+		state->config_file_path = S(conf_filepath);
+	}
+	
+	// Parse config file (always do this unless --init was used)
+	parse_config();
+	
+	// Handle --print-conf
+	if (ind_print_conf) {
+		print_config();
+		flush_exit(0);
+	}
+	
+	// Count action flags (excluding event-related flags which are handled separately)
+	action_arg = ind_print_block + ind_print_comment + ind_print_code + ind_expand_block +
+	             ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all +
+	             ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code +
+	             ind_run + ind_agents + ind_checksum +
+	             ind_map_error + ind_test_block_map +
+	             ind_wants;
+	
+	if (action_arg > 1) {
+		prt("Error: Only one action argument may be used at a time.\n");
+		flush_exit(1);
+	}
+	
+	// Get code database if needed (for most commands)
+	if (action_arg > 0 && !ind_checksum && !ind_wants) {
+		get_code();
+	}
+	
+	// Dispatch to handlers
+	if (ind_print_block) {
+		int idx = block_from_arg(arg_print_block);
+		if (idx < 0 || idx >= state->blocks.n) {
+			prt("Block id or index not found: %s\n", arg_print_block);
+			flush_exit(1);
+		}
+		print_block(idx);
+		flush_exit(0);
+	}
+	
+	if (ind_print_comment) {
+		int idx = block_from_arg(arg_print_comment);
+		if (idx < 0 || idx >= state->blocks.n) {
+			prt("Block id or index not found: %s\n", arg_print_comment);
+			flush_exit(1);
+		}
+		print_comment(idx);
+		flush_exit(0);
+	}
+	
+	if (ind_print_code) {
+		int idx = block_from_arg(arg_print_code);
+		if (idx < 0 || idx >= state->blocks.n) {
+			prt("Block id or index not found: %s\n", arg_print_code);
+			flush_exit(1);
+		}
+		print_code(idx);
+		flush_exit(0);
+	}
+	
+	if (ind_expand_block) {
+		int idx = block_from_arg(arg_expand_block);
+		if (idx < 0 || idx >= state->blocks.n) {
+			prt("Block id or index not found: %s\n", arg_expand_block);
+			flush_exit(1);
+		}
+		expand_block(idx);
+		flush_exit(0);
+	}
+	
+	if (ind_content_index) {
+		content_index(S(content_index_search));
+		flush_exit(0);
+	}
+	
+	if (ind_grep) {
+		grep_blocks(S(grep_pattern));
+		flush_exit(0);
+	}
+	
+	if (ind_count_blocks) {
+		prt("%d\n", state->blocks.n);
+		flush_exit(0);
+	}
+	
+	if (ind_files_blocks) {
+		print_files_blocks();
+		flush_exit(0);
+	}
+	
+	if (ind_print_all) {
+		for (int i = 0; i < state->blocks.n; i++) {
+			print_block(i);
+		}
+		flush_exit(0);
+	}
+	
+	if (ind_rewritepl) {
+		int idx = block_from_arg(arg_rewritepl);
+		if (idx < 0 || idx >= state->blocks.n) {
+			prt("Block id or index not found: %s\n", arg_rewritepl);
+			flush_exit(1);
+		}
+		state->curr_block_idx = idx;
+		nl2pl_rewrite();
+		flush_exit(0);
+	}
+	
+	if (ind_prompt) {
+		int idx = block_from_arg(arg_prompt);
+		if (idx < 0 || idx >= state->blocks.n) {
+			prt("Block id or index not found: %s\n", arg_prompt);
+			flush_exit(1);
+		}
+		handle_prompt(idx);
+		flush_exit(0);
+	}
+	
+	if (ind_after) {
+		after(S(arg_after));
+		flush_exit(0);
+	}
+	
+	if (ind_replace) {
+		replace(S(arg_replace));
+		flush_exit(0);
+	}
+	
+	if (ind_replace_comment) {
+		replace_comment(S(arg_replace_comment));
+		flush_exit(0);
+	}
+	
+	if (ind_replace_code) {
+		replace_code(S(arg_replace_code));
+		flush_exit(0);
+	}
+	
+	if (ind_run) {
+		handle_run(run_block_id);
+		flush_exit(0);
+	}
+	
+	if (ind_agents) {
+		handle_agents();
+		flush_exit(0);
+	}
+	
+	if (ind_checksum) {
+		handle_checksum();
+		flush_exit(0);
+	}
+	
+	// Event system commands (have special validation)
+	if (ind_T0 || ind_event || ind_strength || ind_memorize || ind_recall || ind_T) {
+		if (ind_event && !ind_strength) {
+			prt("Error: --event requires --strength\n");
+			flush_exit(1);
+		}
+		if (ind_strength && !ind_event) {
+			prt("Error: --strength must be used with --event\n");
+			flush_exit(1);
+		}
+		
+		int event_actions = ind_T0 + ind_event + ind_memorize + ind_recall + ind_T;
+		if (event_actions > 1) {
+			prt("Error: --T0, --event, --memorize, --recall, and --T cannot be combined\n");
+			flush_exit(1);
+		}
+		
+		check_conf_vars();
+		check_dirs();
+		event_load_T();
+		
+		if (ind_T0) {
+			event_T0();
+			flush_exit(0);
+		}
+		if (ind_event) {
+			span event_span = { (u8 *)event_string, (u8 *)event_string + strlen(event_string) };
+			int strength_value = event_strength_str ? atoi(event_strength_str) : 255;
+			event_add(event_span, (unsigned char)strength_value);
+			flush_exit(0);
+		}
+		if (ind_memorize) {
+			event_memorize();
+			flush_exit(0);
+		}
+		if (ind_recall) {
+			event_recall();
+			flush_exit(0);
+		}
+		if (ind_T) {
+			event_print_T();
+			flush_exit(0);
+		}
+	}
+	
+	if (ind_map_error) {
+		prt("Error: --map-error not yet implemented\n");
+		flush_exit(1);
+	}
+	
+	if (ind_test_block_map) {
+		block_map_selftest();
+		flush_exit(0);
+	}
+	
+	if (ind_wants) {
+		handle_wants();
+		flush_exit(0);
+	}
+	
+	// No action arg - return to enter interactive mode
 }
 /* #print_files_blocks @gcb @ids_for_block
 
@@ -10303,6 +10824,150 @@ void handle_checksum(void) {
     checksum cs = selected_checksum(input);
     prt("%016llX\n", (unsigned long long)cs.__u);
     free(buffer);
+}
+/* #handle_wants @argtable @event_parse_sn
+
+Implement the --wants command which prints all want statements from the project.
+
+void handle_wants();
+
+A want statement is any SN line (per #event_parse_sn) where the event string starts with "We want ".
+
+Algorithm:
+1. Scan all files recursively in the current directory
+2. For each file, read line by line
+3. Parse each line as potential SN format: "..." <digits>.
+4. If the event string starts with "We want ", print it (one per line)
+
+Implementation:
+- Use find_all_files_recursive() or similar to get all files in the project
+- Skip binary files and very large files
+- For each file:
+  - Read file content into a buffer
+  - Parse line by line using head_line()
+  - For each line:
+    - Skip leading whitespace
+    - If line doesn't start with ", skip it
+    - Search backwards from end for pattern " <digits>.
+    - Extract event string between opening " and the " in end pattern
+    - Check if event string starts with "We want "
+    - If yes, print the event string followed by newline
+- Call flush() at the end
+- Exit successfully with exit(0)
+
+Notes:
+- This scans all files, not just loaded code blocks
+- Includes .cmpr/T, .cmpr/events/*, and all source files
+- Uses the same SN parsing logic as event_parse_sn
+- Output is just the want strings, one per line
+- Does not include block IDs or locations (use --grep for that)
+
+*/
+void handle_wants() {
+    // Helper function to parse SN line and check if it starts with "We want "
+    void check_line(span line) {
+        // Skip leading whitespace
+        while (line.buf < line.end && (*line.buf == ' ' || *line.buf == '\t')) {
+            line.buf++;
+        }
+        
+        // Line must start with "
+        if (line.buf >= line.end || *line.buf != '"') return;
+        
+        // Search backwards from end for pattern " <digits>.
+        u8 *p = line.end - 1;
+        
+        // Must end with '.'
+        if (p < line.buf || *p != '.') return;
+        p--;
+        
+        // Skip digits
+        u8 *digit_end = p + 1;
+        while (p >= line.buf && *p >= '0' && *p <= '9') p--;
+        if (p < line.buf || p + 1 == digit_end) return; // No digits found
+        
+        // Must have space before digits
+        if (*p != ' ') return;
+        p--;
+        
+        // Must have " before space
+        if (p < line.buf || *p != '"') return;
+        
+        // Extract event string: between opening " and this "
+        span event_str = {line.buf + 1, p};
+        
+        // Check if starts with "We want "
+        span want_prefix = S("We want ");
+        if (event_str.end - event_str.buf >= want_prefix.end - want_prefix.buf &&
+            memcmp(event_str.buf, want_prefix.buf, want_prefix.end - want_prefix.buf) == 0) {
+            // Print the event string
+            wrs(event_str);
+            terpri();
+        }
+    }
+    
+    // Helper function to scan a file
+    void scan_file(const char *filepath) {
+        FILE *f = fopen(filepath, "r");
+        if (!f) return;
+        
+        // Read file into buffer
+        fseek(f, 0, SEEK_END);
+        long fsize = ftell(f);
+        if (fsize < 0 || fsize > 100000000) { // Skip files > 100MB
+            fclose(f);
+            return;
+        }
+        fseek(f, 0, SEEK_SET);
+        
+        u8 *content = (u8 *)malloc(fsize);
+        if (!content) {
+            fclose(f);
+            return;
+        }
+        
+        size_t bytes_read = fread(content, 1, fsize, f);
+        fclose(f);
+        
+        if (bytes_read != (size_t)fsize) {
+            free(content);
+            return;
+        }
+        
+        span file_span = {content, content + fsize};
+        
+        // Process line by line
+        while (file_span.buf < file_span.end) {
+            span line = head_line(&file_span);
+            check_line(line);
+        }
+        
+        free(content);
+    }
+    
+    // Scan source files
+    scan_file("cmpr.c");
+    scan_file("spanio.c");
+    scan_file("INBOX.c");
+    
+    // Scan .cmpr/T
+    scan_file(".cmpr/T");
+    
+    // Scan .cmpr/events/*
+    DIR *events_dir = opendir(".cmpr/events");
+    if (events_dir) {
+        struct dirent *entry;
+        while ((entry = readdir(events_dir)) != NULL) {
+            if (entry->d_name[0] == '.') continue;
+            
+            char path[512];
+            snprintf(path, sizeof(path), ".cmpr/events/%s", entry->d_name);
+            scan_file(path);
+        }
+        closedir(events_dir);
+    }
+    
+    flush();
 }
 /* #grep_blocks
 

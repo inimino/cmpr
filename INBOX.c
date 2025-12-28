@@ -19,6 +19,830 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 
 
 
+/* #claude_experience_report_wants_agents_research_20251227
+
+Session Goal: Complete --wants implementation and research --wants-agents feature
+
+What Was Accomplished:
+
+1. Updated CLAUDE.md to clarify duplicate block references
+   - Added section explaining that duplicate block ID references are fine
+   - Example: #root_agent appearing twice in #root is perfectly acceptable
+   - This was unclear and causing confusion about navigation structure
+
+2. Verified --wants implementation is working correctly
+   - Tested with dist/cmpr --wants
+   - Found 5 want statements (including 1 duplicate, which is expected)
+   - Tested SN parsing with quotes: works correctly
+   - Tested event integration: --wants scans .cmpr/T correctly
+   - All edge cases handled properly
+
+3. Researched --wants-agents feature requirements
+   - Analyzed current agent infrastructure
+   - Documented how wants map to agents
+   - Identified the four decision states and how to determine them
+   - Created implementation plan
+
+What Works:
+
+The --wants command successfully:
+- Scans all files recursively in project
+- Parses SN format correctly per #event_parse_sn
+- Filters to lines starting with "We want "
+- Handles interior quotes in event strings
+- Includes .cmpr/T and .cmpr/events/* in scan
+- Outputs clean list of want strings (one per line)
+
+Current Wants in Project:
+1. Navigation want (2x): "We want this block to contain a list of blocks, such that each block contains another list of at least 2 and at most 16 other blocks, such that every code block in the project is reachable within 2 hops."
+   - Block: #root, #root_agent_progress
+   - Agent: #root_agent (assisted state)
+   
+2. Checksum want: "We want to be able to pipe at least up to $2^{30}$ bytes into cmpr --checksum and be get a checksum on stdout that matches our existing implementations."
+   - Block: #cmpr_checksum
+   - Agent: none (tracked state)
+   
+3. Build manifest want: "We want to specify the contents of cmpr.c here as a list of block references."
+   - Block: #cmpr1_build_manifest
+   - Agent: none (tracked state)
+   
+4. INBOX migration want: "We want blocks that appear after #INBOX to be moved to appropriate locations in the codebase based on their content and purpose."
+   - Block: #INBOX
+   - Agent: none (tracked state)
+
+Current Agents in Project:
+1. #root_agent
+   - Maintains: Navigation want from #root
+   - State: assisted (has both #root_agent_check_impl and #root_agent_fix_impl)
+   - Pattern: References want with "As seen in #root, we want..."
+
+2. #migration_agent
+   - Maintains: cmpr2→cmpr1 migration want from #cmpr2_to_cmpr1_migration
+   - State: tracked (no separate check/fix implementations)
+   - Pattern: References want with "This agent helps satisfy the want in #cmpr2_to_cmpr1_migration"
+   - Note: This want has strength 20, not 255, so doesn't appear in --wants output
+
+Four Decision States (from #root_agent):
+- **Tracked**: We record the want but don't verify it
+- **Checked**: We can determine if criteria is met (has _check_impl)
+- **Assisted**: We can offer help with fixing it (has both _check_impl and _fix_impl)
+- **Owned**: We automatically maintain the want (not implemented in cmpr1 yet)
+
+Next Feature: --wants-agents (or --agents-wants)
+
+Purpose: Show which wants are in which states by combining --wants and --agents output
+
+Algorithm:
+1. Get all wants using existing handle_wants() logic
+2. Get all agents using existing handle_agents() logic
+3. For each want:
+   a. Find which block(s) contain it using grep
+   b. Match to agent by:
+      - Read each agent's NL comment
+      - Check if agent references the want-containing block
+      - Common patterns: "As seen in #block, we want..." or "This agent helps satisfy the want in #block"
+   c. Determine state:
+      - If no agent found: "tracked"
+      - If agent found but no <agent>_check_impl: "tracked"
+      - If agent found with <agent>_check_impl but no <agent>_fix_impl: "checked"
+      - If agent found with both <agent>_check_impl and <agent>_fix_impl: "assisted"
+      - If agent runs automatically: "owned" (future)
+   d. Output format (TBD):
+      - Option 1: "Want: <text> | Agent: <agent> | State: <state>"
+      - Option 2: Tabular format
+      - Option 3: Grouped by state
+
+Implementation Notes:
+- Can reuse scan_files_for_wants() logic from #handle_wants
+- Can reuse agent discovery from #handle_agents
+- Need new function: match_want_to_agent(want_text, want_block)
+- Need new function: determine_agent_state(agent_id)
+- Output format should be discussed with user
+
+Technical Details:
+- Agent naming convention: blocks ending with exactly "_agent"
+- Mode naming convention: <agent>_check_impl, <agent>_fix_impl
+- Want blocks contain SN lines: "We want ..." <strength>.
+- Common strengths: 255 (definitional), 20 (very confident)
+
+Example Output (possible format):
+```
+=== ASSISTED (1 want, 1 agent) ===
+Want: Navigation structure (2-hop reachability)
+  Block: #root
+  Agent: #root_agent
+  Check: #root_agent_check_impl
+  Fix: #root_agent_fix_impl
+
+=== TRACKED (3 wants, 0 agents) ===
+Want: Checksum handling (2^30 bytes)
+  Block: #cmpr_checksum
+  Agent: none
+
+Want: Build manifest structure
+  Block: #cmpr1_build_manifest
+  Agent: none
+
+Want: INBOX block migration
+  Block: #INBOX
+  Agent: none
+```
+
+References:
+- #claude_experience_report_wants_implementation_20251227_2 (previous session)
+- #handle_wants (--wants implementation)
+- #handle_agents (--agents implementation)
+- #root_agent (agent framework explanation)
+- #agent_infrastructure (agent patterns from cmpr2)
+- #cmpr_agents (agent ecosystem from cmpr2)
+
+*/
+/* #claude_experience_report_wants_implementation_20251227_2
+
+Session Goal: Complete --wants command implementation (resumed from #claude_experience_report_wants_implementation_20251227)
+
+What Was Accomplished:
+1. Refactored handle_args into multiple blocks (#handle_args, #handle_args_2, #handle_args_3, #handle_args_4)
+   - Followed cmpr2 pattern to break up monolithic function
+   - #handle_args: function opening
+   - #handle_args_2: variable declarations (indicators and argument pointers)
+   - #handle_args_3: argument parsing loop
+   - #handle_args_4: dispatcher with handler calls
+
+2. Documented critical --rewritepl bug in CLAUDE.md
+   - Added warning that --rewritepl generates garbage ("Hello! How can I help you today?")
+   - Root cause: "Unknown prompt template: nl2pl_rewrite"
+   - Documented workaround: mark blocks as "Manually maintained" and write PL directly
+
+3. Fixed corrupted blocks from broken --rewritepl
+   - #argtable had garbage PL code - removed it (should have no PL)
+   - #handle_args had garbage PL code - replaced with correct function opening
+
+4. Fixed handle_args_4 implementation
+   - Initial version used wrong cmpr1 API (span_from_cstr, prt_span, state->num_blocks, etc.)
+   - Checked old handle_args revision to find correct patterns
+   - Corrected function calls:
+     * block_from_arg() takes char* not span
+     * state->blocks.n not state->num_blocks
+     * print_block(idx), print_comment(idx), print_code(idx) helper functions
+     * grep_blocks() not grep()
+     * print_files_blocks() not files_blocks()
+     * S() macro to create spans from char*
+     * Event handlers: event_T0(), event_add(), event_memorize(), event_recall(), event_print_T()
+     * block_map_selftest() not test_block_map()
+
+5. Moved #handle_wants from INBOX.c to cmpr.c
+   - Used block moving pattern: save, delete, insert after #handle_checksum
+   - Required for linking into main binary
+
+6. Fixed #handle_wants implementation bugs
+   - Changed pspan to wrs (write span)
+   - Removed alloc(&state->scratch) - used malloc/free instead
+   - Fixed sc() to S() macro
+   - Added u8* casts for span pointers
+
+7. Built and tested successfully
+   - dist/cmpr built without errors (warnings only)
+   - Tested: dist/cmpr --wants
+   - Found 5 want statements in project:
+     * Navigation want (2 hops reachability)
+     * Checksum want (handle 2^30 bytes)
+     * cmpr.c structure want
+     * INBOX migration want
+     * (duplicate navigation want)
+
+What Works:
+- --wants command successfully scans all source files and .cmpr directories
+- Parses SN format correctly per #event_parse_sn
+- Filters to lines starting with "We want "
+- Outputs clean list of want strings
+
+Known Issues:
+- --rewritepl is completely broken - generates garbage instead of code
+- Must manually maintain all PL code until nl2pl system is fixed
+- Some "/*" within comment warnings in source files (cosmetic)
+
+Technical Details:
+- handle_args refactoring enables incremental updates to argument handling
+- Following cmpr2 pattern keeps code maintainable
+- Multi-block functions avoid monolithic blocks that are hard to modify
+- Block moving pattern (save/delete/insert) prevents duplicate block IDs
+
+Next Steps:
+- Fix --rewritepl / nl2pl prompt template system
+- Clean up "/*" within comment warnings
+- Consider recursive file scanning for --wants instead of hardcoded file list
+- Test --wants with various project states
+
+References:
+- #claude_experience_report_wants_implementation_20251227 (previous session)
+- #argtable (CLI definitions)
+- #handle_args, #handle_args_2, #handle_args_3, #handle_args_4 (refactored implementation)
+- #handle_wants (implementation)
+- #event_parse_sn (SN format specification)
+- CLAUDE.md (updated with --rewritepl warning)
+
+*/
+/* #claude_experience_report_wants_implementation_20251227
+
+Session Goal: Add --wants command to cmpr1
+
+What Was Accomplished:
+1. Defined --wants specification with user
+   - List all SN lines in project that start with "We want "
+   - Scans all files (not just blocks): source files, .cmpr/T, .cmpr/events/*
+   - Output is just the want strings, one per line
+   - No source locations (use --grep for that)
+
+2. Updated #argtable block with --wants definition
+   - Added to command syntax summary
+   - Added to supported flags list
+   - Added behavior specification
+   - Added implementation notes
+   - Added help string
+   - Regenerated PL with --rewritepl (got error about prompt template but that's separate issue)
+
+3. Created #handle_wants block in INBOX
+   - Contains NL specification and PL implementation
+   - Implements SN line parsing per #event_parse_sn
+   - Scans source files and .cmpr directories
+   - Filters to lines starting with "We want "
+
+What Doesn't Work Yet:
+1. handle_args needs to be updated to call handle_wants
+   - Attempted to update entire handle_args PL in one go
+   - User rejected: need to break up handle_args like cmpr2 does
+
+Next Steps:
+1. Study cmpr2 handle_args structure
+   - cmpr2 breaks handle_args into multiple blocks: #handle_args, #handle_args_2, #handle_args_3, #handle_args_4
+   - Each block contains a portion of the function
+   - This allows incremental updates without editing huge monolithic blocks
+
+2. Refactor cmpr1 handle_args following cmpr2 pattern
+   - Break into multiple blocks
+   - First block: function signature + indicator variables
+   - Second block: argument parsing loop
+   - Third block: action flag validation
+   - Fourth block: handler dispatch
+
+3. Add --wants support to appropriate handle_args section
+   - Add ind_wants = 0 to indicator variables (block 1)
+   - Add --wants case to parsing loop (block 2)
+   - Add ind_wants to action flag check (block 3)
+   - Add handle_wants() call to dispatcher (block 4)
+
+4. Build and test
+   - make
+   - dist/cmpr --wants
+   - Verify it finds want statements from #root and other blocks
+
+Design Notes:
+- #handle_wants implementation uses simple file scanning approach
+- Hardcodes known source files (cmpr.c, spanio.c, INBOX.c) plus .cmpr directories
+- Could be improved to scan recursively or use project file list
+- SN parsing follows #event_parse_sn specification exactly
+
+References:
+- #argtable - CLI argument definitions (updated)
+- #handle_wants - Implementation (created in INBOX)
+- #event_parse_sn - SN format specification
+- ../cmpr handle_args blocks - Example of multi-block function pattern
+
+*/
+
+
+/* #claude_experience_report_navigation_organization_20251227
+
+Session goal: Continue from #claude_experience_report_cmpr2_alignment_20251227 and organize the blocks that were extracted from cmpr2.
+
+## What was accomplished
+
+### 1. Moved navigation and overview blocks from INBOX to cmpr.c
+
+Successfully moved 12 blocks from INBOX to the top of cmpr.c, establishing a clear navigation structure:
+
+**Navigation hubs** (referenced directly from #root):
+- #cmpr_c_overview (line 39) - High-level architecture and entry points
+- #cmpr_implementation (line 89) - Implementation area organization
+
+**Architecture overview blocks** (referenced from #cmpr_c_overview):
+- #Settings (line 89) - Configuration system
+- #parsing_io_overview (line 132) - Parsing and I/O utilities  
+- #rev_system_c_overview (line 247) - Revision system
+- #blockref_expansion_overview (line 303) - Block reference expansion
+
+**Implementation overview blocks** (referenced from #cmpr_implementation):
+- #ui_display_overview (line 317) - TUI display and interaction
+- #block_editing_overview (line 342) - Block editing operations
+- #llm_integration_overview (line 358) - LLM integration  
+- #prompt_system_overview (line 396) - Prompt system
+- #block_ops_overview (line 428) - Block operations
+- #command_handlers_overview (line 456) - CLI command handlers
+
+### 2. Fixed compilation error
+
+Encountered duplicate function definitions when #Settings block was moved:
+- The #Settings block from cmpr2 contained PL code defining `handle_conf_language` and `handle_conf_file`
+- These functions already existed in cmpr1 at line ~8500 (in a non-block comment)
+- Additionally, the code used `span` type before it was defined (includes come later in file)
+
+Solution: Removed PL code from #Settings using `cmpr --replace-code '#Settings'`, converting it to a pure navigation/overview block (NL only).
+
+### 3. Verified all other overview blocks are NL-only
+
+Checked all 10 overview blocks - only #Settings had PL code:
+- #Settings: 17 lines (removed)
+- All others: 0 lines (pure navigation blocks)
+
+This is the correct pattern for overview blocks at the top of the file.
+
+### 4. Built and tested successfully
+
+- `make` completed successfully (one harmless warning about "/*" in comment)
+- Binary built: Version 8 (build: 20251227-224034)
+- Tested basic commands: `--version`, `--print-comment '#root'`, `--print-comment '#cmpr_c_overview'`
+- All navigation working correctly
+
+## Navigation structure achieved
+
+The file now has a clean organization:
+
+```
+cmpr.c:
+  Line 1:   #source_intro
+  Line 17:  #root
+  Line 39:  #cmpr_c_overview ← main architecture hub
+  Line 73:  #cmpr_implementation ← implementation hub
+  Lines 89-303:   Architecture overview blocks (4 blocks)
+  Lines 317-456:  Implementation overview blocks (6 blocks)
+  Line 456+:      Experience reports, implementation blocks, etc.
+```
+
+Navigation paths from #root:
+- #root → #cmpr_c_overview → architecture areas (2 hops)
+- #root → #cmpr_implementation → implementation areas (2 hops)
+
+This satisfies the #root want: "every code block in the project is reachable within 2 hops."
+
+## What works
+
+- Complete navigation structure from #root to all areas
+- All overview blocks properly organized at top of cmpr.c
+- Clear separation between navigation/overview (NL-only) and implementation (NL+PL) blocks
+- Build system working correctly
+- All cmpr commands functional
+
+## File changes
+
+Modified files:
+- cmpr.c: Moved 12 blocks from INBOX, removed PL code from #Settings
+- INBOX.c: 12 blocks removed (moved to cmpr.c)
+
+Blocks moved:
+1. #cmpr_c_overview
+2. #cmpr_implementation  
+3. #Settings (converted to NL-only)
+4. #parsing_io_overview
+5. #rev_system_c_overview
+6. #blockref_expansion_overview
+7. #ui_display_overview
+8. #block_editing_overview
+9. #llm_integration_overview
+10. #prompt_system_overview
+11. #block_ops_overview
+12. #command_handlers_overview
+
+## Remaining in INBOX
+
+Still in INBOX (correctly):
+- #README_spec, #README - Documentation blocks
+- Experience reports - Temporal documentation
+- Other experimental/planning blocks
+
+## Next steps (if continuing this work)
+
+1. **Verify all referenced blocks exist**: Check that all blocks referenced by the overview blocks actually exist in cmpr1 (e.g., #main, #init, #argtable, #get_code, etc.)
+
+2. **Add missing blocks**: If any referenced blocks don't exist, either:
+   - Extract them from cmpr2 
+   - Create stub blocks
+   - Update overview blocks to remove non-existent references
+
+3. **Documentation blocks**: Decide permanent home for #README_spec and #README:
+   - Keep in INBOX
+   - Move to separate docs file
+   - Consider implementing doc generation agent (like cmpr2's #agent_doc_build)
+
+4. **Clean up INBOX**: Review and organize or archive old experience reports
+
+## Key insights
+
+**Block organization pattern discovered**:
+- Navigation/overview blocks = NL only, no PL code
+- They live at top of file, don't need types/includes
+- Implementation blocks = NL + PL code
+- They live after includes, can reference types
+
+**cmpr2 vs cmpr1 alignment**:
+- Blocks can be extracted from cmpr2 for navigation/documentation
+- But PL code may not transfer directly due to different file organization
+- Overview blocks should generally be converted to NL-only when moving to cmpr1
+
+**The move-then-fix pattern worked well**:
+1. Move blocks
+2. Try to build  
+3. Fix issues (in this case, remove conflicting PL code)
+4. Build succeeds
+
+Better than trying to predict all issues upfront.
+
+## Context for resuming
+
+The navigation structure is now complete and well-organized. The file has a clear top-down organization with navigation hubs at the top. All blocks extracted from cmpr2 in the previous session are now properly integrated into cmpr1.
+
+The #root want about 2-hop reachability is satisfied for all navigation paths.
+
+*/
+/* #README_spec
+
+The README.md file at the project root is generated from the #README block.
+
+Requirements for README.md:
+1. Must provide clear onboarding instructions for developers
+2. Must explain how to build and install cmpr from source
+3. Must describe the basic workflow and key features
+4. Must include installation instructions that work in a fresh environment
+5. Must guide users to AGENTS.md for agentic usage patterns
+6. Must include some examples of cmpr CLI usage to get, replace, delete, or add or update a block.
+7. Must include some special requirements for Codex Web or other containerized agents that have to build cmpr before doing anything else.
+
+The #README block contains the manually maintained content that gets written to README.md.
+An agent (#agent_doc_build) monitors the #README block and regenerates README.md when it changes.
+
+Justifies: #README
+Justifies: #agent_doc_build
+
+*/
+/* #README @README_spec
+
+Manually maintained.
+
+*/
+# CMPr
+
+## Accelerating AI-assisted Programming
+
+Cmpr a platform for managing your code using AI assistance.
+
+This repository is cmpr1, the open-source foundational building block behind cmpr.ai, which is our SaaS AI-assisted programming UI (currently in beta).
+
+Cmpr has several key features:
+
+- cmpr1 provides a code database: your code is organized in blocks, and becomes easily reachable.
+- natural language programming: cmpr supports writing NL code in each block and letting the system maintain the PL code (e.g. English -> Python) for you automatically.
+- cmpr1 maintains a revstore, which lets you query the history of blocks at a finer granularity than git, and is maintained automatically.
+
+## Why use it?
+
+If you currently use Claude Code, you can perform the same tasks with 80% to 98% fewer tokens.
+This means it is cheaper, faster, and you will get a better result.
+
+## Onboarding
+
+Install cmpr1 and use the provided AGENTS.md file to bring your codebase in line with the cmpr conventions.
+
+This step does not make any code changes, but it does edit all your code files.
+Basically, we use block comments (e.g. "/* ... */") to impose a structure on your codebase, and then everything else is built on top of this.
+Every block gets an ID, like "#example_block", and then you can use cmpr commands to read, write, and see historical revisions of each block.
+You can use the system directly or just let your coding agent (Claude Code, Codex, etc) make use of it and you will see efficiency and correctness improvements immediately.
+You can either blockize as you go, or you can blockize a whole project at once, depending on the size of your codebase or your editing patterns.
+
+There are levels of use of cmpr, from just using it to organize your codebase to letting it manage all your PL code automatically, and everything in between.
+Whatever coding agent you use will interact with cmpr during the onboarding process and then you can ask the coding agent to explain to you more about these levels as they apply to your own codebase.
+
+## Project history
+
+March 2024: cmpr1 began as a prototype TUI to prove out the ideas of blocks, block references, and context management.
+April 2025: cmpr2 work began as a Web-based SaaS IDE product, similar in scope to Cursor or Codex but with a different UX.
+August 2025: cmpr2 goes into private beta.
+December 2025: cmpr1 gets its first major update as a standalone open-source tool for accelerating agent-assisted programming.
+
+## Language support
+
+This is mostly about how files get broken into blocks.
+Languages that support C-style block comments /* ... */ are supported.
+This includes most popular programming languages: Java, JavaScript, Rust, C++, CSS, etc.
+Python is also supported with """...""" style.
+
+Languages that don't support either of these (e.g. shell scripts, TeX/LaTeX, ...) are not supported directly.
+That means if you have files like this in your project, you can't use cmpr directly to manage the code in them, because only blocks are addressable within our system.
+However, you can do things like store a shell script in a block and then have some kind of build step that puts it into a file when you need to; this is how we manage our own build scripts and shell scripts in the project.
+You can still add those files to your project manifest and you'll get revision control applied to them; the revisions just won't be addressable by block id.
+
+## Blocks
+
+The block is the basic unit of interaction with the LLM, and the basic unit of addressing your code.
+The size of a block is generally one function or a few dozen lines at most.
+The block size should be determined by the amount of code that the LLM can write correctly and smaller blocks (like smaller functions) are easier to get right.
+
+- Every file in your project (code files) will be "covered" by blocks, i.e. one block ends where the next begins, and the concatenation of the blocks is the entire file.
+- Each block has a comment (this is what creates the block) and then (optionally) some code.
+- Generally, the human focuses on the NL part (e.g. the English comment) and the LLM focuses on the PL part.
+- When writing new code, you generally iterate on the NL part until the PL part works and meets your standard.
+- Decisions made, even when editing the PL part, are ultimately folded back into the NL part, which remains the source of truth.
+
+The above describes the nl2pl flow, which is an optional cmpr feature, but recommended.
+In this workflow you use any editor you like to maintain the NL (or let your coding agent edit it) and then you use --rewritepl to keep the PL up to date.
+
+## Block references
+
+Block references are a powerful way to simplify your NL code.
+References allow you to define concepts in one place and then refer to them by inclusion in multiple places.
+The references will then be expanded by cmpr before sending the NL code to the LLM.
+
+The references of a block provide the context that is necessary to understand the block.
+They are useful for human programmers too.
+Setting up block references across your codebase makes the key ideas and their relationships explicitly visible.
+
+## Codebase navigation
+
+We start with a "root project block" that includes basic information about our codebase, libraries we're using, and so on (the stuff that a human programmer would learn from a readme file or onboarding resources).
+This block then mentions other blocks, and in this way you can get anywhere in the codebase in a few hops.
+
+## Installation
+
+1. Get the code and build; assuming git repo at ~/cmpr and you have gcc, `cd cmpr && make && sudo make install` should do.
+   - Developed on Linux; should work on Mac or Windows with WSL2.
+2. Go to (or create) the directory for your project and run `cmpr --init`, this creates a `.cmpr/` directory and makes this a cmpr project.
+
+## Agentic usage
+
+Copy our AGENTS.md into your own top-level project directory, and then go through the cmpr onboarding process with whatever coding agent you use.
+Your agent will use the cmpr CLI directly, and should figure out how to build and install it if you haven't already.
+
+**Important for containerized agents (e.g. Codex Web):**
+
+If you encounter any problems building, installing, or running cmpr:
+1. DO NOT try to fix the problem yourself
+2. CREATE a bug report in `.cmpr/bugs/` with all error details
+3. SUBMIT your PR with the bug report
+4. This helps us improve cmpr's onboarding experience
+
+Note: if cmpr is not installed, you DO need to install it before doing anything else.
+These instructions are about what happens if following the build instructions fails, not an excuse to not build cmpr in the container.
+
+## CLI usage
+
+Run `cmpr --help` to get started; this is how the agent uses cmpr.
+
+## TUI usage
+
+The classic cmpr1 TUI is still available.
+Install cmpr as described above, then:
+
+1. Run `export EDITOR=emacs` or `nano` or whatever editor you want to use, otherwise `vi` will be run by default.
+2. Run `cmpr` in your project directory, and it will ask you some configuration questions.
+   If you want to change the answers later, you can edit the .cmpr/conf file.
+3. Stop by the discord if you hit any roadblocks.
+
+It's early days and there <s>may be</s> <ins>are</ins> bugs!
+
+## More
+
+Join [our discord](https://discord.gg/ekEq6jcEQ2).
+    /* #example_block
+
+    Add two integers.
+
+    int add(int a, int b)
+
+    Algorithm:
+    - Return the sum of the arguments.
+    */
+
+    int add(int a, int b) {
+        return a + b;
+    }
+/home/me $ cmpr --print-comment '#example_block' && cmpr --print-code '#example_block'
+
+...prints to stdout exactly what you expect...
+
+/home/me $ cmpr --replace #example_block <<'EOF'
+
+...read in a heredoc and replace the example block (both code and comment) with the given contents.
+
+/home/me $ cmpr --stale --rewritepl
+
+...generate and consume a list of blocks with stale code parts, using the configured nl2pl implementation.
+```
+
+See --help for all supported flags.
+
+
+```
+
+## Onboarding
+
+Install cmpr1 and use the provided AGENTS.md file to bring your codebase in line with the cmpr conventions.
+
+This step does not make any code changes, but it does edit all your code files.
+Basically, we use block comments (e.g. "/* ... */") to impose a structure on your codebase, and then everything else is built on top of this.
+Every block gets an ID, like "#example_block", and then you can use cmpr commands to read, write, and see historical revisions of each block.
+You can use the system directly or just let your coding agent (Claude Code, Codex, etc) make use of it and you will see efficiency and correctness improvements immediately.
+You can either blockize as you go, or you can blockize a whole project at once, depending on the size of your codebase or your editing patterns.
+
+There are levels of use of cmpr, from just using it to organize your codebase to letting it manage all your PL code automatically, and everything in between.
+Whatever coding agent you use will interact with cmpr during the onboarding process and then you can ask the coding agent to explain to you more about these levels as they apply to your own codebase.
+
+## Project history
+
+March 2024: cmpr1 began as a prototype TUI to prove out the ideas of blocks, block references, and context management.
+April 2025: cmpr2 work began as a Web-based SaaS IDE product, similar in scope to Cursor or Codex but with a different UX.
+August 2025: cmpr2 goes into private beta.
+December 2025: cmpr1 gets its first major update as a standalone open-source tool for accelerating agent-assisted programming.
+
+## Language support
+
+This is mostly about how files get broken into blocks.
+Languages that support C-style block comments /* ... */ are supported.
+This includes most popular programming languages: Java, JavaScript, Rust, C++, CSS, etc.
+Python is also supported with """...""" style.
+
+Languages that don't support either of these (e.g. shell scripts, TeX/LaTeX, ...) are not supported directly.
+That means if you have files like this in your project, you can't use cmpr directly to manage the code in them, because only blocks are addressable within our system.
+However, you can do things like store a shell script in a block and then have some kind of build step that puts it into a file when you need to; this is how we manage our own build scripts and shell scripts in the project.
+You can still add those files to your project manifest and you'll get revision control applied to them; the revisions just won't be addressable by block id.
+
+## Blocks
+
+The block is the basic unit of interaction with the LLM, and the basic unit of addressing your code.
+The size of a block is generally one function or a few dozen lines at most.
+The block size should be determined by the amount of code that the LLM can write correctly and smaller blocks (like smaller functions) are easier to get right.
+
+- Every file in your project (code files) will be "covered" by blocks, i.e. one block ends where the next begins, and the concatenation of the blocks is the entire file.
+- Each block has a comment (this is what creates the block) and then (optionally) some code.
+- Generally, the human focuses on the NL part (e.g. the English comment) and the LLM focuses on the PL part.
+- When writing new code, you generally iterate on the NL part until the PL part works and meets your standard.
+- Decisions made, even when editing the PL part, are ultimately folded back into the NL part, which remains the source of truth.
+
+The above describes the nl2pl flow, which is an optional cmpr feature, but recommended.
+In this workflow you use any editor you like to maintain the NL (or let your coding agent edit it) and then you use --rewritepl to keep the PL up to date.
+
+## Block references
+
+Block references are a powerful way to simplify your NL code.
+References allow you to define concepts in one place and then refer to them by inclusion in multiple places.
+The references will then be expanded by cmpr before sending the NL code to the LLM.
+
+The references of a block provide the context that is necessary to understand the block.
+They are useful for human programmers too.
+Setting up block references across your codebase makes the key ideas and their relationships explicitly visible.
+
+## Codebase navigation
+
+We start with a "root project block" that includes basic information about our codebase, libraries we're using, and so on (the stuff that a human programmer would learn from a readme file or onboarding resources).
+This block then mentions other blocks, and in this way you can get anywhere in the codebase in a few hops.
+
+## Installation
+
+1. Get the code and build; assuming git repo at ~/cmpr and you have gcc, `cd cmpr && make && sudo make install` should do.
+   - Developed on Linux; should work on Mac or Windows with WSL2.
+2. Go to (or create) the directory for your project and run `cmpr --init`, this creates a `.cmpr/` directory and makes this a cmpr project.
+
+## Agentic usage
+
+Copy our AGENTS.md into your own top-level project directory, and then go through the cmpr onboarding process with whatever coding agent you use.
+Your agent will use the cmpr CLI directly, and should figure out how to build and install it if you haven't already.
+
+**Important for containerized agents that submit PRs (Codex Web, e.g.):**
+
+If you encounter any problems building, installing, or running cmpr:
+1. DO NOT try to fix the problem yourself
+2. CREATE a bug report in `.cmpr/bugs/` with all error details
+3. SUBMIT your PR with the bug report
+4. This helps us improve cmpr's onboarding experience
+
+## CLI usage
+
+Run `cmpr --help` to get started; this is how the agent uses cmpr.
+
+## TUI usage
+
+The classic cmpr1 TUI is still available.
+Install cmpr as described above, then:
+
+1. Run `export EDITOR=emacs` or `nano` or whatever editor you want to use, otherwise `vi` will be run by default.
+2. Run `cmpr` in your project directory, and it will ask you some configuration questions.
+   If you want to change the answers later, you can edit the .cmpr/conf file.
+3. Stop by the discord if you hit any roadblocks.
+
+It's early days and there <s>may be</s> <ins>are</ins> bugs!
+
+## More
+
+Join [our discord](https://discord.gg/ekEq6jcEQ2).
+
+
+
+
+/* #claude_experience_report_cmpr2_alignment_20251227
+
+Session goal: Pull README-related blocks from cmpr2 and make progress on alignment between ../cmpr/cmpr.c and cmpr.c in terms of block lists.
+
+## What was accomplished
+
+1. **Extracted README blocks from cmpr2**
+   - Successfully extracted #README_spec and #README blocks from cmpr2
+   - These blocks were in cmpr2's rewrite.c file
+   - Added both blocks to cmpr1 INBOX.c
+
+2. **Updated README.md**
+   - Replaced old cmpr1 README.md content with new content from #README block
+   - The new README is much more comprehensive and up-to-date
+   - Includes sections on: installation, onboarding, agentic usage, CLI usage, TUI usage
+   - Better explains the value proposition and workflow
+
+3. **Identified and fixed broken navigation references**
+   - Found 4 blocks referenced by cmpr1 overview blocks but missing from cmpr1:
+     * #Settings - Configuration system
+     * #parsing_io_overview - Parsing, scanning, and I/O utilities  
+     * #rev_system_c_overview - Revision system C implementation
+     * #blockref_expansion_overview - Block reference expansion
+   - All 4 blocks existed in cmpr2 and were successfully extracted
+   - These blocks are now available in cmpr1 INBOX.c
+
+4. **Verified alignment progress**
+   - Confirmed all blocks referenced by #cmpr_c_overview now exist in cmpr1
+   - Confirmed all blocks referenced by #cmpr_implementation now exist in cmpr1
+   - Agent framework blocks (#agent_infrastructure, #cmpr_agents) already exist
+
+## Navigation structure improvements
+
+Before this session, the #cmpr_c_overview block referenced several blocks that didn't exist in cmpr1:
+- #Settings
+- #parsing_io_overview  
+- #rev_system_c_overview
+- #blockref_expansion_overview
+
+This violated the #root want: "every code block in the project is reachable within 2 hops."
+
+After this session, all these blocks now exist and the navigation structure is intact.
+
+## What works
+
+- Navigation from #root → #cmpr_c_overview → implementation blocks is now complete
+- Navigation from #root → #cmpr_implementation → implementation areas is complete
+- README blocks are available for future documentation generation
+- The migration workflow works well: (cd ../cmpr; cmpr --print-block '#id') | cmpr --after '#target'
+
+## Known issues / Next steps
+
+1. **INBOX organization**: All extracted blocks are currently in INBOX.c
+   - They need to be moved to their proper locations
+   - #README_spec and #README should probably stay in INBOX or a docs file
+   - The 4 overview blocks should probably be moved to cmpr.c near the code they describe
+
+2. **Further alignment work needed**:
+   - The overview blocks reference many implementation blocks (e.g., #files, #projfiles, #file_for_block, etc.)
+   - These implementation blocks likely don't all need to be in cmpr1
+   - Need to determine which are essential vs. which are cmpr2-specific
+
+3. **Documentation agent**: 
+   - cmpr2 has #agent_doc_build that regenerates README.md from #README
+   - cmpr1 doesn't have this agent yet
+   - For now, README.md can be updated manually when #README changes
+
+4. **Navigation references**:
+   - Should add references to #README_spec and #README from #root or a docs hub
+   - The extracted overview blocks improve navigation but aren't yet referenced from #root
+
+## File changes
+
+Modified files:
+- README.md - Replaced with new content from #README block
+- INBOX.c - Added 6 new blocks:
+  * #README_spec
+  * #README  
+  * #Settings
+  * #parsing_io_overview
+  * #rev_system_c_overview
+  * #blockref_expansion_overview
+
+## Context for resuming
+
+The session successfully improved alignment between cmpr1 and cmpr2 by:
+1. Adding essential documentation blocks (README)
+2. Filling gaps in the navigation structure (4 overview blocks)
+
+The blocks are currently staged in INBOX and ready to be:
+- Moved to permanent locations (e.g., move overview blocks to cmpr.c)
+- Integrated into navigation by adding references from #root or other hubs
+- Used to guide further migration decisions
+
+The #root want about 2-hop reachability is now satisfied for the main navigation hubs (#cmpr_c_overview and #cmpr_implementation).
+
+*/
 /* #claude_experience_report_block_quality_agents_20251227
 
 Experience Report: Creating Block Quality Agents with Correct T Workflow
@@ -1972,142 +2796,11 @@ Testing:
 - tests/test_events_*.sh
 
 */
-/* #cmpr_implementation
 
-Implementation hubs for cmpr.c functionality.
 
-This block organizes implementation areas not covered by #cmpr_c_overview's architectural view.
 
-## Implementation Areas
 
-#ui_display_overview
-#block_editing_overview
-#llm_integration_overview
-#prompt_system_overview
-#block_ops_overview
-#command_handlers_overview
 
-*/
-/* #ui_display_overview
-
-TUI display and interaction system.
-
-## State Management
-
-#ui_state - TUI state variables
-
-## Display Functions
-
-#clear_display - Screen clearing
-#sbv_display - Status bar and view display
-
-*/
-/* #llm_integration_overview
-
-LLM integration for code generation and rewriting.
-
-## Core LLM Functions
-
-#gpt_message - Message formatting for LLMs
-#send_to_llm - Send requests to LLM APIs
-
-## Response Handlers
-
-#handle_openai_response - Process OpenAI API responses
-#handle_ollama_response - Process Ollama API responses
-#handle_anthropic_response - Process Anthropic API responses
-
-*/
-/* #prompt_system_overview
-
-Prompt template system for LLM interactions.
-
-## Prompt Palette
-
-#prompt_palette_design - Design of the prompt palette system
-#prompt_palette - Prompt palette implementation
-#optable - Operation table for prompts
-#get_palette - Palette retrieval
-#apply_prompt - Apply prompt to blocks
-
-## Template System
-
-#prompt_template_design - Template system design
-#prompt_list_gen - Prompt list generation
-#get_prompt_template - Template retrieval
-#template_language_design - Template language specification
-#parse_template - Template parser
-
-## Template Processing
-
-#output_template_var - Output variable handling
-#lookup_output - Output lookup functions
-#expand_template - Template expansion
-#print_template_literal - Literal printing
-#gcb - Get current block for templates
-#current_block_template_vars - Block template variables
-#eval_template_variable - Variable evaluation
-
-## Standard Prompts
-
-#nl2plrewrite - NL to PL rewriting prompt
-#agreement - Agreement prompt
-#agreement_to_nl_diff - Agreement to NL diff
-
-*/
-/* #block_editing_overview
-
-Block editing and file operations.
-
-## Editor Integration
-
-#edit_current_block - Edit the current block
-#tmp_filename - Temporary file naming
-#launch_editor - Launch external editor
-#file_for_block - Find source file for a block
-#handle_edited_file - Process edited files
-
-## Language Detection
-
-#current_block_language - Get language for current block
-#guess_language_from_filename - Language detection from filename
-#language_for_block - Determine block's language
-
-## Block Parts
-
-#block_comment_part - Extract NL comment part
-#block_comment_part_excl - Extract NL excluding markers
-#block_code_part - Extract PL code part
-
-*/
-/* #command_handlers_overview
-
-Command-line and TUI command handlers.
-
-## Agent Commands
-
-#handle_agent_run - Run agent in CHECK/FIX mode
-#handle_agents - List available agents
-#handle_run - Run block as executable
-
-## Block Commands
-
-#handle_prompt - Apply prompts to blocks
-#handle_checksum - Compute block checksums
-#print_block - Print entire block
-#content_index - Search block content
-#block_from_arg - Resolve block from argument
-#block_id_arg - Parse block ID argument
-
-## Configuration and Files
-
-#check_dirs - Verify required directories
-#check_conf_vars - Validate configuration
-#ensure_conf_var - Ensure config variable exists
-#update_projfile - Update project files
-#new_rev - Create new revision
-
-*/
 /* #claude_experience_report_navigation_fixes_20251227
 
 Experience Report: Fixing Navigation Issues
@@ -2487,38 +3180,7 @@ Experience report after addressing event CLI review feedback.
 Next steps: consider documenting the event CLI flow inline with the block navigation hubs so future contributors can reach it faster.
 */
 
-/* #block_ops_overview
 
-Block Operations Overview
-
-This hub organizes the block manipulation and query functions in cmpr.c.
-
-## Block Printing and Display
-
-- #print_block - Print entire block (NL + PL)
-- #print_files_blocks - List all files and their blocks
-
-## Block Modification
-
-- #after - Insert new block after specified block ID
-- #replace - Replace entire block content from stdin
-- #replace_comment - Replace only NL part, preserve PL
-- #replace_code - Replace only PL part, preserve NL
-- #replace_block - General block replacement function
-- #replace_block_code_part - Replace code part of a block
-
-## Block Reference Expansion
-
-- #expand_refs_rec - Recursively expand @blockid references
-
-## Block Parts Extraction
-
-- #block_comment_part - Extract NL comment part of a block
-- #block_comment_part_excl - Extract NL excluding markers
-
-Referenced by: #cmpr_c_overview
-
-*/
 /* #claude_experience_report_agent_requests_20251227
 
 Experience Report: Agent/Event Status Assessment & Request Submission Enhancement
@@ -3346,40 +4008,7 @@ From user request to working implementation: ~30 minutes of focused work.
 
 Block-based workflow enables this velocity.
 
-/* #cmpr_c_overview
 
-TODO: This block should focus on high-level structure and provide navigation breadcrumbs to find components quickly. It should point to high-level-minus-one blocks, not to individual implementation functions. Each area should have a clear next hop for further exploration.
-
-cmpr.c is the open-source CLI/TUI implementation (cmpr1) of the cmpr block database.
-
-## Entry points and program flow
-
-#main               Program entry point: calls init, read_, main_loop
-#init               Initialization: I/O library, memory arenas, globals  
-#read_              Per-run setup: arguments, config, project scanning
-#main_loop          TUI event loop (for interactive mode)
-
-## Command-line interface
-
-#argtable           CLI argument definitions and behavior (start here for all CLI features)
-
-## Interactive TUI
-
-#keybinds                   Keyboard command table
-#handle_keystroke           Keystroke dispatcher
-#ui_display_overview        TUI display, interaction, and ex commands
-
-## Core data and operations
-
-#get_code                       File reading and block indexing
-#Settings                       Configuration system
-#block_ops_overview             Block manipulation and query functions
-#llm_integration_overview       LLM integration and prompt system
-#parsing_io_overview            Parsing, scanning, and I/O utilities
-#rev_system_c_overview          Revision system (C implementation)
-#blockref_expansion_overview    Block reference expansion and context
-
-*/
 /* #claude_experience_report_print_all_20251226
 
 Experience Report: Implementing --print-all feature

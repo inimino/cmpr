@@ -166,6 +166,7 @@ void handle_agent_run(char* agent_name, char* mode);
 void handle_agents();
 void handle_prompt(int block_idx);
 void handle_checksum(void);
+void handle_wants();
 void grep_blocks(span pattern);
 void after(span arg);
 void replace(span arg);

@@ -29,6 +29,20 @@ See #help for the cmpr --help output.
 
 See #makefile for further details.
 
+## CRITICAL ISSUE: --rewritepl is BROKEN
+
+**DO NOT USE `cmpr --rewritepl` - IT IS CURRENTLY BROKEN**
+
+As of 2025-12-27, the `--rewritepl` command generates "Hello! How can I help you today?" instead of actual code.
+
+**Root cause**: The nl2pl prompt template system is broken. Error message: "Unknown prompt template: nl2pl_rewrite"
+
+**What to do**:
+- Mark ALL blocks that need code generation as "Manually maintained."
+- Write PL code directly instead of relying on --rewritepl
+- DO NOT attempt to fix blocks by running --rewritepl - it will replace valid code with garbage
+- Check revision history in `.cmpr/revs/` to restore any blocks that got corrupted
+
 ## Code Updates
 
 **MANDATORY FIRST STEP FOR EVERY TASK**:
@@ -255,6 +269,8 @@ To understand the build system:
 ### Code Conventions
 
 It should be possible to reach any block by following "Justifies: " lines, or explicit blockid mentions, starting from the root block.
+
+**Duplicate Block References**: It is perfectly fine for a block ID to be mentioned multiple times in a parent block (e.g., #root_agent appearing twice in #root). Duplicate references do not cause any problems and are sometimes useful for documentation clarity.
 
 **Important Note**:
 We are still building up the graph from the root block to all the other blocks.
