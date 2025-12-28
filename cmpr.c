@@ -1200,6 +1200,185 @@ cmpr agent: an agent consists of a single function which combines test and any p
 See individual blocks above for detailed definitions of core concepts.
 
 */
+/* #cmpr1_cmpr2_sync_guidance
+
+cmpr1 and cmpr2 Synchronization Guidance
+
+This block documents the relationship between cmpr1 (open-source C implementation) and cmpr2 (reference Python implementation), and provides guidance on when and how to synchronize features between them.
+
+## Purpose of Each Codebase
+
+**cmpr1** (/home/user/cmpr):
+- Open-source implementation (can be published)
+- Active development of agent/event system
+- Experimental features being proven out
+- C implementation with terminal UI
+
+**cmpr2** (../cmpr - Python):
+- Reference implementation
+- More feature-complete in some areas
+- Better-structured navigation (overview blocks)
+- Python implementation
+- May contain proprietary/unpublished code
+
+## DO NOT Auto-Synchronize
+
+The codebases serve different purposes. Wholesale synchronization would:
+- Lose cmpr1's experimental agent/event work
+- Import cmpr2 features not ready for open-source
+- Break cmpr1's active development trajectory
+
+## What cmpr1 Should Pull from cmpr2
+
+### 1. Overview Blocks (Critical for Navigation)
+
+cmpr2 has comprehensive overview blocks that improve discoverability:
+- #cmpr_c_overview
+- #block_ops_overview  
+- #llm_integration_overview
+- #design_docs_overview
+- #parsing_io_overview
+- #ui_display_overview
+- #rev_system_c_overview
+- #blockref_expansion_overview
+
+**Why:** These provide 2-hop navigation from #root to any subsystem. Essential for "all blocks reachable within 2 hops" want.
+
+**How:** Copy blocks from cmpr2, adapt references to cmpr1 block IDs, integrate into #root navigation.
+
+### 2. Refactored Command Handlers
+
+cmpr2 splits monolithic #handle_args into focused blocks:
+- #handle_args_2: Early exits (help, version, init)
+- #handle_args_3: Configuration and preconditions  
+- #handle_args_4: Dispatch to handlers
+
+**Why:** Makes adding new flags simpler - update relevant section, not 245-line monolith.
+
+**How:** Gradually refactor cmpr1's #handle_args using cmpr2's pattern as guide.
+
+### 3. Language-Specific Parser Blocks
+
+cmpr2 has modular block parsers:
+- #find_blocks_language_python
+- #find_blocks_language_c
+- #find_blocks_language_markdown
+- #find_blocks_language_auto
+- #find_blocks_language_none
+- #set_file_language
+
+**Why:** More maintainable than monolithic parser. Easier to add new language support.
+
+**How:** Copy pattern, integrate into cmpr1's parsing system.
+
+### 4. Refactoring Guidance
+
+cmpr2 contains blocks documenting how to migrate patterns:
+- #cmpr1_refactor_guidance
+- #tabular_programming
+- #grep_feature_implementation_strategy
+
+**Why:** Captures design patterns and rationale for cmpr2's structure.
+
+**How:** Read these blocks before making major cmpr1 structural changes.
+
+## What cmpr1 Should Keep Unique
+
+### 1. Agent/Event System
+
+**Blocks:**
+- #cmpr_events, #events_types, #events_functions
+- #root_agent, #root_agent_check, #root_agent_fix
+- #want_maturation_overview and related blocks
+- Event space definitions
+
+**Why:** Active development, design still evolving, not ready for cmpr2.
+
+**When to sync:** After agent/event system stabilizes and proves valuable.
+
+### 2. Experience Reports
+
+**Pattern:** #*_experience_report_*
+
+**Why:** Document cmpr1 development journey, not relevant to cmpr2 users.
+
+**When to sync:** Never. Extract insights into design rationale blocks instead.
+
+### 3. Experimental Features
+
+**Examples:**
+- #nl2algo
+- #block_map_selftest
+- #summarize_block
+
+**Why:** Proving value, may not graduate to cmpr2.
+
+**When to sync:** After feature proves valuable and stabilizes.
+
+## Navigation Structure Comparison (as of Dec 26, 2025)
+
+**Blocks in both:** 188 blocks
+**cmpr1 only:** 47 blocks
+**cmpr2 only:** 37 blocks
+
+**cmpr1 advantages:**
+- Agent/event system infrastructure (15 blocks)
+- Active want tracking and maturation framework
+
+**cmpr2 advantages:**
+- Better navigation (8 overview blocks)
+- Refactored command handling (6 blocks)
+- Language-specific parsers (6 blocks)
+- More modular operations (7 blocks)
+
+## Synchronization Workflow
+
+When pulling features from cmpr2 to cmpr1:
+
+1. **Identify the feature** - What cmpr2 blocks implement it?
+2. **Check dependencies** - What other blocks does it reference?
+3. **Copy blocks** - Use `cmpr --print-block '#id'` from cmpr2
+4. **Adapt references** - Update block IDs to match cmpr1's structure
+5. **Integrate navigation** - Add to appropriate hub blocks
+6. **Verify reachability** - Ensure ≤2 hops from #root
+7. **Test** - Build and verify functionality
+8. **Document** - Note the import in commit message
+
+## Current Status (Dec 28, 2025)
+
+**Completed imports:**
+- --grep feature (Dec 26)
+- --files-blocks fix (Dec 26)
+- --agents command (Dec 26)
+- --print-all feature (Dec 26)
+
+**Recommended next imports:**
+- Overview blocks for navigation
+- #handle_args refactoring pattern
+- Language-specific parser blocks
+
+**Active cmpr1 development (do not import yet):**
+- Want maturation system
+- Event system refinements
+- Agent ecosystem expansion
+
+## Key Principle
+
+**cmpr1 is not a port of cmpr2.**
+
+cmpr1 is an independent open-source implementation that:
+- Learns from cmpr2's good patterns (navigation, structure)
+- Innovates in areas cmpr2 doesn't have (agents, events)
+- Maintains its own development trajectory
+
+Synchronization should be selective, intentional, and preserve cmpr1's unique value.
+
+## References
+
+Source experience report (deleted after extraction):
+- #claude_experience_report_blocklist_20251226
+
+*/
 /* #glossary_agent
 
 Agent: A function that combines CHECK and FIX functionality.
@@ -1332,6 +1511,232 @@ For general agent patterns and infrastructure see #agent_infrastructure and #cmp
 - #extract_block_from_cmpr2 - Helper script for block extraction
 - #want_maturation_overview - Tracks automation state progression
 - #report_wants - System visibility report wants
+
+*/
+/* #reachability_solution_pattern
+
+Reachability Solution Pattern: Making All Blocks Accessible from #root
+
+This block documents the successful pattern for achieving the #root want: "every code block in the project is reachable within 2 hops". Extracted from Dec 27-28 reachability work that reduced unreferenced blocks from 293 to 121 (58% reduction).
+
+## The Want
+
+From #root:
+> "We want this block to contain a list of blocks, such that each block contains another list of at least 2 and at most 16 other blocks, such that every code block in the project is reachable within 2 hops."
+
+**Event Space:** BR (Block Reachability)
+**Agent:** #root_agent (assisted state)
+
+## Solution Pattern: Three-Phase Approach
+
+### Phase 1: Discover Orphaned Hubs
+
+**Problem:** Valid hub blocks exist but aren't referenced from #root
+
+**Discovery command:**
+```bash
+dist/cmpr --grep 'overview|hub' | while read block; do
+  # Check if block appears in #root
+  # Check how many blocks it references
+done
+```
+
+**Result (Dec 28):** Found 11 orphaned hubs:
+- 6 valid hubs (2-16 blocks) ready to add
+- 5 oversized hubs (17-47 blocks) needing splits
+
+**Action:** Add valid orphaned hubs directly to #root
+- Example: #ui_display_overview, #block_editing_overview
+- Immediate impact: 45 blocks became reachable
+
+**Lesson:** Check for existing structure before creating new hubs.
+
+### Phase 2: Split Oversized Hubs
+
+**Problem:** Hub blocks violate 2-16 constraint (too many references)
+
+**Detection:** Root agent CHECK mode reports violations
+```
+Hub #parsing_io_overview has 47 blocks (exceeds 16)
+```
+
+**Strategy:** Split by functional cohesion
+- Example: #parsing_io_overview (47) → 4 hubs:
+  - #file_io_hub (11) - File I/O
+  - #block_finding_hub (8) - Block discovery
+  - #parsing_utils_hub (15) - Parsing utilities
+  - #checksums_validation_hub (8) - Checksums
+
+**Pattern:**
+1. Read oversized hub NL comment
+2. Identify natural groupings (file I/O, parsing, searching, etc.)
+3. Create new hub for each group (keep within 2-16 range)
+4. Move references to appropriate new hubs
+5. Add all new hubs to #root
+6. Delete or repurpose old oversized hub
+
+**Result:** 5 oversized hubs → 11 properly-sized hubs
+- All satisfy 2-16 constraint
+- Better navigation (more specific hub names)
+- 57 additional blocks became reachable
+
+### Phase 3: Create New Hubs for Unreferenced Blocks
+
+**Problem:** Blocks exist but aren't grouped under any hub
+
+**Strategy:** Categorize by subsystem
+- Example hubs created:
+  - #core_data_structures (12 blocks)
+  - #revision_system_hub (13 blocks)
+  - #tui_interaction_hub (13 blocks)
+  - #args_cli_hub (8 blocks)
+
+**Pattern:**
+1. Get unreferenced blocks: root agent CHECK mode
+2. Group blocks by functional area
+3. Create hub block with 2-16 references
+4. Add hub to #root
+5. Verify reachability
+
+**Result:** 7 new hubs created, 73 blocks became reachable
+
+## Metrics: Three Sessions of Progress
+
+**Session 1 (Dec 27):**
+- Starting: 293 unreferenced, 12 hubs
+- Created 7 new hubs
+- Ending: 220 unreferenced, 19 hubs
+- Progress: 73 blocks (24.9%)
+
+**Session 2 (Dec 28):**
+- Starting: 223 unreferenced, 19 hubs
+- Added 6 orphaned hubs
+- Ending: 178 unreferenced, 25 hubs
+- Progress: 45 blocks (20.2%)
+
+**Session 3 (Dec 28):**
+- Starting: 178 unreferenced, 25 hubs
+- Split 5 oversized hubs → 11 new hubs
+- Ending: 121 unreferenced, 37 hubs
+- Progress: 57 blocks (32.0%)
+
+**Overall:**
+- 293 → 121 unreferenced (172 blocks made reachable)
+- 12 → 37 hubs (25 new navigation hubs)
+- 58.7% reduction in unreferenced blocks
+
+## What Worked
+
+**1. Incremental approach**
+- Don't try to solve everything at once
+- Each session made 20-32% progress
+- Momentum builds as structure improves
+
+**2. Use root agent CHECK mode**
+- Automated detection of violations
+- Clear metrics on progress
+- Identifies specific problems (which hubs are oversized)
+
+**3. Preserve existing structure**
+- Don't delete orphaned hubs, reconnect them
+- Don't flatten oversized hubs, split them
+- Build on existing organization
+
+**4. Functional grouping**
+- Group by subsystem purpose (parsing, I/O, UI, etc.)
+- Not by file (leads to non-semantic organization)
+- Not by implementation detail
+
+**5. Hub naming conventions**
+- *_overview: High-level subsystem entry points
+- *_hub: Specific functional areas
+- Names should be discoverable (#file_io_hub > #io_operations)
+
+## What Didn't Work
+
+**1. Per-block event tracking (attempted Dec 27)**
+- Tried to track "Block #X is reachable" for every block
+- Too granular for initial implementation
+- Aggregate metrics (unreferenced count) sufficient
+- Deferred to future enhancement
+
+**2. Ignoring existing hubs**
+- Initial instinct: create all new structure
+- Better: discover orphaned hubs first
+- 45 blocks became reachable instantly by reconnecting
+
+**3. Arbitrary hub splits**
+- Don't split hubs evenly (23 blocks → 11 + 12)
+- Split by function (file I/O separate from parsing)
+- Semantic boundaries > arithmetic balance
+
+## Remaining Work (121 unreferenced blocks)
+
+**INBOX.c (~70 blocks):**
+- Experience reports (temporal documentation)
+- Experimental blocks
+- Correctly left unreferenced per CLAUDE.md
+- Will be triaged/deleted independently
+
+**cmpr.c (~40 blocks):**
+- Need categorization and hub assignment
+- Candidates for new hubs or expansion of existing hubs
+
+**spanio.c (~10 blocks):**
+- May need #spanio_extended_hub or similar
+
+**migration_tools.sh (~1 block):**
+- Edge case, low priority
+
+## Pattern for Future Agents
+
+This reachability work provides a template for other agent implementations:
+
+1. **Define the want clearly** (SN line with event space)
+2. **Implement CHECK mode** (measure current state)
+3. **Iterate incrementally** (don't require perfect solution)
+4. **Use existing structure** (discover before creating)
+5. **Measure progress** (metrics per session)
+6. **Document patterns** (what worked vs what didn't)
+
+The root agent progressed from:
+- Tracked (want documented)
+- → Checked (can measure violations)
+- → Assisted (can suggest fixes)
+- → Working toward Owned (automated maintenance)
+
+## Commands Reference
+
+**Check current state:**
+```bash
+dist/cmpr --print-code '#root_agent_check_impl' | bash
+```
+
+**Get unreferenced blocks:**
+```bash
+# Included in CHECK output
+```
+
+**Add hub to #root:**
+```bash
+# Update #root NL comment to include new hub reference
+```
+
+**Verify reachability:**
+```bash
+# Re-run CHECK to see new unreferenced count
+```
+
+## References
+
+Source experience reports (deleted after extraction):
+- #claude_experience_report_root_agent_protocol_20251226_1
+- #claude_experience_report_root_agent_per_block_plan_20251227
+- #claude_experience_report_root_agent_per_block_attempt_20251227
+- #claude_experience_report_root_agent_t_integration_20251227
+- #claude_experience_report_reachability_20251228_2
+- #claude_experience_report_reachability_20251228_3
+- #claude_experience_report_reachability_20251228_4 (kept - most recent)
 
 */
 /* #root_agent_impl
