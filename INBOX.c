@@ -617,6 +617,17 @@ Never be afraid to go back to the root block and look for something else.
 - Or left in INBOX as temporal documentation
 Test nl2pl
 
+/* #visibility_roadmap
+
+Visibility features. The system generates rich data but lacks observability. Five wants define visibility metrics and modalities.
+
+"We want system metrics defined and queryable: block reference graph with reachability, revision history with diffs and attribution, event snapshots with correlation and trends, agent execution logs with success rates, LLM API usage with tokens and costs, NL/PL synchronization status, system health scores, and build status." 255.
+"We want these metrics visible in a real-time TUI dashboard that updates automatically." 255.
+"We want these metrics visible in a JavaScript-based live web view with interactive exploration." 255.
+"We want these metrics visible in static HTML reports generated automatically." 255.
+"We want these metrics visible in one-off CLI status reports for scripting and monitoring." 255.
+
+*/
 /* #claude_experience_report_event_visualization_20251228
 
 Experience report: Event system visualization implementation and enhancement proposals.
@@ -5410,6 +5421,19 @@ Requirements for README.md:
 5. Must guide users to AGENTS.md for agentic usage patterns
 6. Must include some examples of cmpr CLI usage to get, replace, delete, or add or update a block.
 7. Must include some special requirements for Codex Web or other containerized agents that have to build cmpr before doing anything else.
+8. Must include a Code Health section defining key metrics for codebase quality.
+
+Code Health Metrics:
+
+The Code Health section should define and track:
+
+- **Want Justification Coverage**: Percentage of code blocks justified by wants. Wants justify code, so unjustified blocks represent speculative or legacy code without clear purpose.
+- **Block Reachability**: Percentage of blocks reachable from root in ≤2 hops. Unreachable blocks are effectively lost from the navigation structure.
+- **NL/PL Synchronization**: Percentage of blocks where generated PL remains synchronized with NL specification. Drift indicates stale implementations.
+- **Agent Health**: Percentage of agents passing their check modes. Failing agents indicate violated wants.
+- **Documentation Coverage**: Percentage of blocks with substantive NL comments explaining purpose and context.
+
+These metrics collectively measure how well the codebase adheres to its want-driven architecture.
 
 The #README block contains the manually maintained content that gets written to README.md.
 An agent (#agent_doc_build) monitors the #README block and regenerates README.md when it changes.

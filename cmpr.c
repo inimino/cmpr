@@ -41,6 +41,7 @@ See #ES_BR for the complete event space specification.
 
 The following blocks serve as navigation hubs to reach different parts of the codebase:
 
+#visibility_roadmap
 #cat_core
 #agent_event_navigation
 #cmpr_c_overview
