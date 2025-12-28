@@ -19,6 +19,20 @@ This pattern helps maintain the navigational structure while allowing rapid iter
 
 
 
+/* #codex_experience_report_agents_docs_20251227_1
+
+Goal: document how to run agents from the README and surface the visualization/blog reference for the cmpr workflow.
+
+What changed:
+- Built dist/cmpr to use cmpr navigation commands.
+- Added a README section describing `--agents` listing and `--agent-run` CHECK/FIX usage with root_agent as an example.
+- Linked the README to the #blog_post_blockset_visualization block so readers can find the planned block-graph visualizations.
+- Created .cmpr/revs so cmpr block edits can write revisions locally.
+
+Next steps:
+- Consider adding a helper script that materializes agents/ binaries from the agent blocks to make running them even faster.
+- Flesh out the visualization ideas into an actual blog post or published diagrams linked from the README.
+*/
 /* #claude_experience_report_block_quality_agents_20251227
 
 Experience Report: Creating Block Quality Agents with Correct T Workflow

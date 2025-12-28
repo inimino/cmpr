@@ -156,6 +156,13 @@ With the clipboard "model," you will want to run ":bootstrap", and then paste th
 If you're using the API, this will be done for you, but you still need to run ":bootstrap" manually before using "r".
 If you use the clipboard model with the palette, it will similarly just put the prompt on the clipboard for you.
 
+## Running agents
+
+cmpr ships agent implementations as blocks, so you can run them directly from the built binary without extra installation steps.
+
+- List available agents with `dist/cmpr --agents` (or `cmpr --agents` if installed system-wide). For example, the current repo includes `root_agent` and `migration_agent`.
+- Run an agent in CHECK or FIX mode with `dist/cmpr --agent-run <agent_name> CHECK` or `dist/cmpr --agent-run <agent_name> FIX`. A common check is `dist/cmpr --agent-run root_agent CHECK` to verify the hub coverage want from `#root`.
+- The `--agent-run` command extracts the shell script from the corresponding `<agent_name>_check_impl` or `<agent_name>_fix_impl` block, writes it to a temp file, and executes it, so keeping your repo up to date is enough to keep agents current.
 ### Bonus: cmpr in cmpr
 
 1. We ship our own cmpr conf file, so run cmpr in the cmpr repo to see the code the way we do while building it.
@@ -180,6 +187,7 @@ This is mostly about how files get broken into blocks.
 Languages that support C-style block comments (Java, JavaScript, Rust, C++, ...) should work without much trouble.
 It's not hard to extend the support to other languages, just ask for what you want in the discord and it may happen soon!
 
+For a visual overview of the cmpr1 block graph and navigation goals, see the `#blog_post_blockset_visualization` block (run `dist/cmpr --print-comment '#blog_post_blockset_visualization'`) for proposed diagrams and a blog-style walkthrough of the workflow.
 ## More
 
 Development is sometimes [streamed on twitch](https://www.twitch.tv/inimino2).
