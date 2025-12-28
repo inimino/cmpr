@@ -56,6 +56,24 @@ The following blocks serve as navigation hubs to reach different parts of the co
 #tui_interaction_hub
 #parsing_scanning_hub
 #scanning_search_hub
+#ui_display_overview
+#block_editing_overview
+#llm_integration_overview
+#block_ops_overview
+#command_handlers_overview
+#want_maturation_overview
+#file_io_hub
+#block_finding_hub
+#parsing_utils_hub
+#checksums_validation_hub
+#revision_core_hub
+#revision_output_hub
+#block_expansion_hub
+#config_bootstrap_hub
+#block_utilities_hub
+#prompt_palette_hub
+#template_processing_hub
+#block_quality_agents_overview
 
 ## Build System
 
