@@ -7,7 +7,9 @@ Guidance to Claude Code.
 
 cmpr provides code block database features.
 
-**cmpr1 vs cmpr2**: This is the cmpr1 codebase (C implementation). The parent directory contains cmpr2 (Python implementation), which is more feature-complete. cmpr1 now includes core agent framework documentation (#agent_infrastructure, #cmpr_agents) migrated from cmpr2. See #cmpr2_via_cmpr1 for accessing additional cmpr2 blocks. The cmpr2 root block is #cmpr_project (access via: `cd ../cmpr; cmpr --print-comment '#cmpr_project'`).
+**cmpr1 vs cmpr2**: This is the cmpr1 codebase (C implementation). The parent directory contains cmpr2 (Python implementation), which is more feature-complete. To access cmpr2 blocks from cmpr1: `cd ../cmpr; cmpr --print-comment` followed by the block ID.
+
+**CLAUDE.md Principle**: This file teaches HOW to work with cmpr (commands, workflow, principles), not WHAT the codebase contains (structure, subsystems, features). Code navigability belongs in the navigable block structure itself. Almost no specific block IDs should appear in CLAUDE.md - navigation information lives in the code, accessed by reading the root block and following references.
 
 ## Building and Testing
 
@@ -25,9 +27,7 @@ cmpr
 dist/cmpr
 ```
 
-See #help for the cmpr --help output.
-
-See #makefile for further details.
+The cmpr --help output and build system details are documented in blocks accessible from the root block.
 
 ## Code Updates
 
@@ -35,7 +35,7 @@ See #makefile for further details.
 
 When the user asks you to work on ANY task related to this codebase, you MUST:
 
-1. **START by reading the root block**: `cmpr --print-comment '#root'`
+1. **START by reading the root block**: `cmpr --print-comment` with the root block ID
 2. **NAVIGATE using block references**: Follow block IDs mentioned in the output (2-3 hops to reach any part of codebase)
 3. **NEVER use the Task tool with Explore subagent** - it uses traditional tools and defeats the entire cmpr workflow
 4. **NEVER start with grep/find/Read/Glob** - these are fallbacks for when cmpr navigation fails
@@ -43,9 +43,9 @@ When the user asks you to work on ANY task related to this codebase, you MUST:
 **Example of CORRECT workflow**:
 ```
 User: "I want to work on the agent system"
-Assistant: [Immediately runs] cmpr --print-comment '#root'  # Read the root block
-Assistant: [Sees reference to agent blocks, follows them] cmpr --print-comment '#root_agent'
-Assistant: [Now understands the structure and can navigate to specific agent blocks]
+Assistant: [Immediately runs] cmpr --print-comment on the root block
+Assistant: [Sees reference to agent hub, follows it] cmpr --print-comment on that hub
+Assistant: [Now understands the structure and can navigate to specific blocks]
 ```
 
 **Example of WRONG workflow**:
@@ -80,7 +80,8 @@ This grep pipeline extracts just the blocks for a specific file from the `--file
 **Editing Commands**:
 - `cmpr --replace '#id'` - Replace entire block (NL + PL) from stdin; for blocks with no PL part, this effectively replaces just the NL
 - `cmpr --replace-comment '#id'` - Replace only NL part
-- `cmpr --replace-code '#id'` - Replace only PL part (currently required due to --rewritepl being broken)
+- `cmpr --replace-code '#id'` - Replace only PL part
+- `cmpr --rewritepl '#id'` - Regenerate PL from NL using nl2pl
 - `cmpr --after '#id'` - Add a new block after the given block ID, reading contents from stdin
 
 There should be --before but there isn't.
@@ -126,87 +127,27 @@ To move a block to a different position in a file:
 
 **IMPORTANT**: Never create temporary duplicates of blocks (adding before deleting) because having duplicate block IDs results in undefined behavior. Always delete first, then add at the new location.
 
-**Example - Moving #events_types before #ui_state**:
+**Example - Moving a block**:
 ```bash
 # Step 1: Save block
-cmpr --print-block '#events_types' > /tmp/events_types.txt
+cmpr --print-block '#block_to_move' > /tmp/block.txt
 
 # Step 2: Delete from current location
-echo "" | cmpr --replace '#events_types'
+echo "" | cmpr --replace '#block_to_move'
 
 # Step 3: Insert at new location (after the block that should precede it)
-cat /tmp/events_types.txt | cmpr --after '#rev_info'
+cat /tmp/block.txt | cmpr --after '#preceding_block'
 ```
 
 **Navigating the Codebase**:
 
 All navigation MUST start from the root block and follow block references:
 
-1. **Start at the root block**: Read it with `cmpr --print-comment '#root'` to see the main navigation hubs
+1. **Start at the root block**: Read it to see the main navigation hubs
 2. **Use 2-3 hops**: You should be able to reach any area of the codebase in 2-3 `--print-comment` calls by following block references
+3. **The root block is the map**: It provides access to all major subsystem hubs (implementation details, agent framework, event system, libraries, etc.)
 
-**Navigation Structure** (as of 2025-12-27):
-
-The root block (#root) provides access to these main hubs:
-
-- **#cmpr_c_overview** - High-level architecture of cmpr.c
-  - Entry points (#main, #init, #read_, #main_loop)
-  - CLI system (#argtable)
-  - TUI system (#keybinds, #handle_keystroke)
-  - Core operations overview blocks
-
-- **#cmpr_implementation** - Implementation details
-  - #ui_display_overview - TUI display and state
-  - #block_editing_overview - Block editing and language detection
-  - #llm_integration_overview - LLM API integration
-  - #prompt_system_overview - Prompt templates and processing
-  - #block_ops_overview - Block operations
-  - #command_handlers_overview - CLI command implementations
-
-- **#libraryintro** - The spanio I/O library
-  - Core span operations and utilities
-  - Dynamic arrays and data structures
-  - JSON parsing and file I/O
-
-- **#root_agent** - Agent framework for maintaining project wants
-  - Agent infrastructure patterns (#agent_infrastructure)
-  - Executable agents (#root_agent_check, #root_agent_fix)
-  - Agent ecosystem (#cmpr_agents)
-
-- **#cmpr_events** - Event system (T/E/S) for temporal reasoning
-  - Event types and workflow
-  - Memorize/recall functionality
-  - User guide: #event_system_guide
-
-- **#makefile** - Build system
-  - Build targets and process
-  - Dependencies and configuration
-
-**Example Navigation Paths**:
-
-To add a CLI feature:
-- `#root` → `#cmpr_c_overview` → `#argtable` (CLI definitions)
-- Look at similar commands for implementation patterns
-
-To work on block operations:
-- `#root` → `#cmpr_implementation` → `#block_ops_overview`
-- Or: `#root` → `#cmpr_implementation` → `#command_handlers_overview`
-
-To understand the agent system:
-- `#root` → `#root_agent` → `#agent_infrastructure` (patterns)
-- `#root` → `#root_agent` → `#root_agent_check` (CHECK mode implementation)
-
-To work on the event system:
-- `#root` → `#cmpr_events` → referenced implementation blocks
-- `#root` → `#cmpr_events` → `#event_system_guide` (user guide)
-
-To work with spanio library:
-- `#root` → `#libraryintro` → specific span operations
-
-To understand the build system:
-- `#root` → `#makefile`
-
-**Rule**: If you cannot reach the blocks you need from the root block by following direct references, that is a PROBLEM. DO NOT work around it by using search commands. Instead:
+**Navigation Principle**: If you cannot reach the blocks you need from the root block by following direct references, that is a PROBLEM. DO NOT work around it by using search commands. Instead:
 1. STOP and inform the user that navigation is broken
 2. Help fix the navigation structure by adding appropriate overview blocks or references
 3. Only proceed with the original task after navigation is fixed
@@ -236,8 +177,9 @@ To understand the build system:
 - If the generated PL is wrong, the NL was probably ambiguous - fix the NL, not the PL
 
 **Important Notes**:
-- The `cmpr` command in PATH reads the current source files (for inspecting)
-- The `dist/cmpr` binary is the built executable (for testing)
+- `cmpr` (usually `/usr/local/bin/cmpr`) is the installed system version - use for reading/inspecting
+- `dist/cmpr` is the locally built binary from `make` - use for testing your changes
+- After modifying source code, always test with `dist/cmpr`, not the system `cmpr`
 - The interactive `r` command in the TUI does the same as `--rewritepl`
 
 ### Testing Changes
@@ -256,7 +198,7 @@ To understand the build system:
 
 It should be possible to reach any block by following "Justifies: " lines, or explicit blockid mentions, starting from the root block.
 
-**Duplicate Block References**: It is perfectly fine for a block ID to be mentioned multiple times in a parent block (e.g., #root_agent appearing twice in #root). Duplicate references do not cause any problems and are sometimes useful for documentation clarity.
+**Duplicate Block References**: It is perfectly fine for a block ID to be mentioned multiple times in a parent block. Duplicate references do not cause any problems and are sometimes useful for documentation clarity.
 
 **Important Note**:
 We are still building up the graph from the root block to all the other blocks.
@@ -282,7 +224,7 @@ We're using cmpr to build cmpr itself here, so if cmpr doesn't work right, then 
 This is a pure C application with no web frontend or HTTP server:
 - **`cmpr.c`** - Main application: block database, CLI commands, and terminal UI (TUI). Includes hardcoded prompt templates for nl2pl code generation.
 - **`spanio.c`** - Custom I/O library using span-based string handling
-- **`Makefile`** - Build system (see #makefile for details)
+- **`Makefile`** - Build system (details documented in blocks)
 
 ### Block-Based Code Organization
 - Code is organized into discrete "blocks" with IDs like `#block_name`
@@ -339,17 +281,16 @@ To list all available agents:
 dist/cmpr --agents
 ```
 
-Example - run the migration agent:
+Example - run an agent:
 ```bash
-cmpr --print-code '#migration_agent' | bash
+cmpr --print-code '#agent_block_id' | bash
 ```
 
 Navigation to agents:
-1. Start at `#root` → follow to `#root_agent`
-2. `#root_agent` lists all agent blocks and explains how to run them
-3. See `#migration_agent` for cmpr2→cmpr1 block migration
+1. Start at root block → follow references to agent hub
+2. The agent hub lists all agent blocks and explains how to run them
 
-**Agent Architecture** (see #agent_framework for details):
+**Agent Architecture**:
 - An agent = **Predicate (Want)** + **Step Function (CHECK/FIX)**
 - Wants establish event spaces: {desired state, complement}
 - Agents verify and maintain wants through CHECK and FIX modes
@@ -360,12 +301,12 @@ Navigation to agents:
 3. **Assisted**: We can offer help with fixing it
 4. **Owned**: We automatically maintain the want
 
-**Implementing Agents** (see #agent_implementation_pattern in cmpr2; #root_agent_check and #root_agent_fix for cmpr1 examples):
+**Implementing Agents**:
 - Create two blocks: predicate block + step function block
 - Both executable via `cmpr --print-code '#blockid' | sh` or `bash`
 - Step functions report state using SN notation
-- Example in cmpr1: `#root` (predicate) + `#root_agent_check` (CHECK mode) + `#root_agent_fix` (FIX mode)
-- Agents integrate with the event system (T) to record activity - see #claude_experience_report_root_agent_t_integration_20251227
+- Example pattern: predicate block + CHECK mode block + FIX mode block
+- Agents integrate with the event system (T) to record activity
 
 **SN Notation** for confidence levels:
 - 255 bits = definitional (statement is defined to be true)
@@ -477,9 +418,10 @@ When designing solutions:
 - **I/O Library**: `spanio.c` (span-based string handling)
 - **Staging Area**: `INBOX.c` (staging area for new blocks)
 - **Configuration**: `.cmpr/conf` (project configuration)
-- **Build System**: `Makefile` (see #makefile for details)
+- **Build System**: `Makefile` (build system details in blocks)
 - **Revisions**: `.cmpr/revs/` (automatic versioning)
 - **Events**: `.cmpr/events/` (event system snapshots), `.cmpr/T` (current transient memory)
+- **Reports**: `public_html/` (generated HTML reports for system visibility)
 - **Build Output**: `dist/cmpr` (compiled binary)
 
 ## Common Pitfalls and Process Reminders
@@ -507,12 +449,12 @@ After exiting planning mode or when context-switching, it's easy to forget cmpr 
 
 **CRITICAL: Navigation Structure**
 
-Every block MUST be reachable from #root in ≤2 hops. This is the #root want that root_agent maintains.
+Every block MUST be reachable from #root in ≤2 hops. This is a core want maintained by the root agent.
 
 When creating new blocks:
 1. ❌ **WRONG**: Create block in INBOX, leave it there permanently
 2. ✅ **CORRECT**: Create block AND immediately integrate it into navigation:
-   - Add reference to relevant hub block (e.g., #cmpr_events, #root_agent)
+   - Add reference to relevant hub block
    - OR create new hub if starting a new subsystem
    - OR use INBOX only for temporary/experimental blocks
 
@@ -538,8 +480,8 @@ Fix navigation BEFORE implementing anything else. If you cannot reach the blocks
 **When working with existing infrastructure**:
 - DON'T reimplement helpers that already exist (like checksum functions)
 - DO navigate from root block to find existing functionality
-- DO check #rvs_index_catalog before designing new indices
-- DO look at similar command blocks for patterns (e.g., #rvs_history for new rvs commands)
+- DO check existing index catalogs before designing new indices
+- DO look at similar command blocks for patterns
 
 Never be afraid to go back to the root block and look for something else.
 
@@ -573,10 +515,10 @@ dist/cmpr --T  # View loaded context
 **Ending a session:**
 
 1. Write experience report (see Experience Reports section below)
-2. Add experience report to INBOX: `cat report.txt | cmpr --after '#INBOX'`
+2. Add experience report to INBOX: `cat report.txt | cmpr --after <inbox_block_id>`
 3. Add event to T with block ID:
    ```bash
-   dist/cmpr --event "The experience report is: #claude_experience_report_topic_20251228" --strength 255
+   dist/cmpr --event "The experience report is: #experience_report_block_id" --strength 255
    ```
 4. Save snapshot:
    ```bash
@@ -609,11 +551,11 @@ This creates a queryable checkpoint. Future sessions can use `--recall` to load 
 **Naming Pattern**:
 - Format: `#<agent>_experience_report_<topic>_YYYYMMDD_N`
 - Agent names: claude, codex, or other agents
-- Examples: `#claude_experience_report_root_agent_per_block_plan_20251227`
+- Example: `#claude_experience_report_<descriptive_topic>_YYYYMMDD`
 
 **Response Format**:
 - Chat responses should be ONE LINE referencing the experience report
-- Example: "See #claude_experience_report_root_agent_per_block_plan_20251227"
+- Example: "See #experience_report_block_id"
 - ALL details, summaries, and context go in the experience report block
 - Keep conversation clean and searchable - detail lives in blocks
 

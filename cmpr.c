@@ -2068,8 +2068,7 @@ Algorithm:
 - Return the sum of the arguments.
 */
 
-int add(int a, int b)
-{
+int add(int a, int b) {
     return a + b;
 }
 
@@ -2111,7 +2110,7 @@ Here we have a table of languages that we support.
 
 1. Supported Language:
 
-C, Python, JavaScript, Markdown
+C, Python, JavaScript, Markdown, none
 
 2. Filename extension:
 
@@ -2119,6 +2118,7 @@ C: .c
 Python: .py
 JavaScript: .js
 Markdown: .md
+none: (no file extension, used for projects with no code blocks)
 
 3. Find blocks implementation:
 
@@ -2126,6 +2126,7 @@ C: find_blocks_language_c
 Python: find_blocks_language_python
 JavaScript: find_blocks_language_c
 Markdown: find_blocks_language_markdown
+none: find_blocks_language_none
 
 4. Find blocks description string:
 
@@ -2133,6 +2134,7 @@ C: Blocks start with a C-style block comment at the beginning of a line (no lead
 Python: Blocks start with a triple-quoted string, also at the beginning of a line.
 JavaScript: Uses the same rules as C (block comment flush left starts a block).
 Markdown: Blocks start with a heading of any level.
+none: Produces exactly one block per file, covering the entire file contents.
 
 5. Block comment end description:
 
@@ -2140,6 +2142,7 @@ C: Comment part ends with a C-style block comment that can end anywhere on a lin
 Python: The triple-quote end also has to be at the start of a line.
 JavaScript: Same as C.
 Markdown: There is no comment part, markdown blocks are often all prose.
+none: N/A (no comment/code separation)
 
 6. Markdown code block tag (langtag):
 
@@ -2147,6 +2150,27 @@ C: c
 Python: py
 JavaScript: js
 Markdown: md
+none: (none)
+*/
+
+/* #find_blocks_language_none @gcb
+
+spans find_blocks_language_none(span file)
+
+Block finder for language "none".
+Produces exactly one block per file, covering the entire file contents.
+Used for files where we do not blockize by comments or headings (Makefiles, conf, small scripts, etc.).
+
+Behavior:
+- If the file is empty, returns a single empty span whose .buf and .end exactly match those of the input span (not nullspan()).
+- Otherwise, returns a single-element spans where the sole span has .buf = file.buf and .end = file.end.
+- No scanning loops or pattern detection are used.
+
+Implementation:
+- Allocate a spans with count = 1.
+- Assign the only element to the input span (preserving its exact boundaries).
+- Return the spans.
+
 */
 /* #config_fields #conftable ->gpt3.5
 
@@ -3896,7 +3920,7 @@ We present the supported arguments and flags in a tabular form (as with langtabl
 
 Command syntax summary:
 
-cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--agents-wants]
+cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--agents-wants] [--wants-dashboard] [--event-report]
 
 Command argument and flag table:
 
@@ -3937,6 +3961,8 @@ Command argument and flag table:
 --event-spaces
 --wants
 --agents-wants
+--wants-dashboard
+--event-report
 
 2. Behavior of arguments and flags:
 
@@ -4141,6 +4167,30 @@ agents-wants:
   Each want shows: want text, block ID, agent ID (if any), and implementation blocks.
   Requires code to be loaded.
   Call get_code() first, then handle_agents_wants(), then flush and exit successfully.
+
+wants-dashboard:
+  Generate the All Wants Dashboard HTML report in public_html/wants_dashboard.html.
+  Checks if the report exists and is current (generated today).
+  If stale or missing:
+    - Creates public_html/ directory if needed
+    - Executes #generate_wants_dashboard block as shell script
+    - Pipes output (markdown) to pandoc for HTML conversion
+    - Saves result to public_html/wants_dashboard.html
+  Outputs the path to the generated HTML file.
+  Requires code to be loaded (for executing generator block).
+  Requires pandoc to be installed for HTML conversion.
+
+event-report:
+  Generate the Event System Activity Report HTML in public_html/event_activity.html.
+  Checks if the report exists and is current (generated today).
+  If stale or missing:
+    - Creates public_html/ directory if needed
+    - Executes #generate_event_report block as shell script
+    - Pipes output (markdown) to pandoc for HTML conversion
+    - Saves result to public_html/event_activity.html
+  Outputs the path to the generated HTML file.
+  Requires code to be loaded (for executing generator block).
+  Requires pandoc to be installed for HTML conversion.
 
 3. Implementation notes:
 
@@ -4366,6 +4416,32 @@ wants:
   if event string starts with "We want ", print the event string (one per line)
   flush and exit successfully
 
+wants-dashboard:
+  requires code be loaded, so call get_code() first
+  check staleness: stat public_html/wants_dashboard.html and compare mtime with current date
+  if file doesn't exist or was modified before today (different date):
+    - create public_html/ directory if needed (mkdir -p)
+    - find #generate_wants_dashboard block
+    - extract PL code from block
+    - write PL to temporary file
+    - execute: temp_script | pandoc -f markdown -t html --standalone --metadata title="All Wants Dashboard" -o public_html/wants_dashboard.html
+    - check for errors (pandoc not installed, generator failures)
+  print "Generated: public_html/wants_dashboard.html" or "Current: public_html/wants_dashboard.html" (if not regenerated)
+  flush and exit successfully
+
+event-report:
+  requires code be loaded, so call get_code() first
+  check staleness: stat public_html/event_activity.html and compare mtime with current date
+  if file doesn't exist or was modified before today (different date):
+    - create public_html/ directory if needed (mkdir -p)
+    - find #generate_event_report block
+    - extract PL code from block
+    - write PL to temporary file
+    - execute: temp_script | pandoc -f markdown -t html --standalone --metadata title="Event System Activity" -o public_html/event_activity.html
+    - check for errors (pandoc not installed, generator failures)
+  print "Generated: public_html/event_activity.html" or "Current: public_html/event_activity.html" (if not regenerated)
+  flush and exit successfully
+
 4. Help strings:
 
 conf:
@@ -4467,7 +4543,15 @@ wants:
 agents-wants:
   Show relationship between wants and agents. Display decision state (tracked/checked/assisted/owned) for each want.
 
+wants-dashboard:
+  Generate All Wants Dashboard HTML report. Checks staleness and regenerates if needed. Outputs path to public_html/wants_dashboard.html.
+
+event-report:
+  Generate Event System Activity HTML report. Checks staleness and regenerates if needed. Outputs path to public_html/event_activity.html.
+
 */
+
+
 /* #handle_args @argtable @gcb
 
 In handle_args we handle any command-line arguments.
@@ -4551,7 +4635,9 @@ Manually maintained.
 	int ind_test_block_map = 0;
 	int ind_wants = 0;
 	int ind_agents_wants = 0;
-	
+	int ind_wants_dashboard = 0;
+	int ind_event_report = 0;
+
 	char *conf_filepath = NULL;
 	char *content_index_search = NULL;
 	char *grep_pattern = NULL;
@@ -4570,6 +4656,7 @@ Manually maintained.
 	char *event_strength_str = NULL;
 	
 	int action_arg = 0;
+
 /* #handle_args_3 @handle_args_2:all @block_from_arg
 
 Now we iterate argv and parse the flags.
@@ -4703,11 +4790,16 @@ Manually maintained.
 			ind_wants = 1;
 		} else if (strcmp(arg, "--agents-wants") == 0) {
 			ind_agents_wants = 1;
+		} else if (strcmp(arg, "--wants-dashboard") == 0) {
+			ind_wants_dashboard = 1;
+		} else if (strcmp(arg, "--event-report") == 0) {
+			ind_event_report = 1;
 		} else if (arg[0] == '-' && arg[1] == '-') {
 			prt("Unknown flag: "); prt(arg); prt("\n");
 			flush_exit(1);
 		}
 	}
+
 /* #handle_args_4 @handle_args_3:all @blocks
 
 Here we dispatch using the indicators, and finally close the handle_args function.
@@ -4793,7 +4885,9 @@ Manually maintained.
 	             ind_run + ind_agents + ind_checksum +
 	             ind_map_error + ind_test_block_map +
 	             ind_wants +
-	             ind_agents_wants;
+	             ind_agents_wants +
+	             ind_wants_dashboard +
+	             ind_event_report;
 	
 	if (action_arg > 1) {
 		prt("Error: Only one action argument may be used at a time.\n");
@@ -4993,9 +5087,20 @@ Manually maintained.
 		handle_agents_wants();
 		flush_exit(0);
 	}
-	
+
+	if (ind_wants_dashboard) {
+		handle_wants_dashboard();
+		flush_exit(0);
+	}
+
+	if (ind_event_report) {
+		handle_event_report();
+		flush_exit(0);
+	}
+
 	// No action arg - return to enter interactive mode
 }
+
 /* #print_files_blocks @gcb @ids_for_block
 
 void print_files_blocks();
@@ -7331,6 +7436,32 @@ spans find_blocks_language_markdown(span file) {
     return blocks;
 }
 
+/* #find_blocks_language_none
+
+spans find_blocks_language_none(span file)
+
+Block finder for language "none".
+Produces exactly one block per file, covering the entire file contents.
+Used for files where we do not blockize by comments or headings (Makefiles, conf, small scripts, etc.).
+
+Behavior:
+- If the file is empty, returns a single empty span whose .buf and .end exactly match those of the input span (not nullspan()).
+- Otherwise, returns a single-element spans where the sole span has .buf = file.buf and .end = file.end.
+- No scanning loops or pattern detection are used.
+
+Implementation:
+- Allocate a spans with count = 1.
+- Assign the only element to the input span (preserving its exact boundaries).
+- Return the spans.
+
+*/
+
+spans find_blocks_language_none(span file) {
+    spans blocks = spans_alloc(1);
+    spans_push(&blocks, file);
+    return blocks;
+}
+
 /* #find_blocks_language @langtable
 
 In `spans find_blocks_language(span,span)`, we take a span (a file's contents) and a language, which is any of the supported languages.
@@ -7351,6 +7482,8 @@ spans find_blocks_language(span file_contents, span language) {
         return find_blocks_language_c(file_contents);  // Note: JavaScript uses C rules.
     } else if (span_eq(language, S("Markdown"))) {
         return find_blocks_language_markdown(file_contents);
+    } else if (span_eq(language, S("none"))) {
+        return find_blocks_language_none(file_contents);
     } else {
         prt("Error: Unsupported language.");
         flush();
@@ -11704,6 +11837,210 @@ void handle_agents_wants() {
     
     flush();
 }
+/* #handle_wants_dashboard
+
+Handler for --wants-dashboard command.
+
+Generates or updates the All Wants Dashboard HTML report at public_html/wants_dashboard.html.
+
+Implementation:
+1. Check if public_html/wants_dashboard.html exists and get its modification date (YYYYMMDD format)
+2. Get today's date (YYYYMMDD format)
+3. If file doesn't exist OR file date != today's date:
+   a. Create public_html/ directory if needed: system("mkdir -p public_html")
+   b. Find #generate_wants_dashboard block: block_idx = block_by_id(S("generate_wants_dashboard"))
+   c. Extract code part using block_code_part()
+   d. Write code to temp file /tmp/gen_dash_<pid>.sh
+   e. Make executable: chmod +x
+   f. Execute and pipe to pandoc:
+      system("temp_file | pandoc -f markdown -t html --standalone --metadata title='All Wants Dashboard' -o public_html/wants_dashboard.html")
+   g. Check exit code - if non-zero, print error and flush_exit(1)
+   h. Clean up temp file
+   i. Print "Generated: public_html/wants_dashboard.html"
+4. Else:
+   Print "Current: public_html/wants_dashboard.html"
+
+Use system functions: stat(), time(), localtime_r(), strftime() for date handling.
+Use prt() for output, flush() before exit.
+Return type: void
+
+Justifies: #command_handlers_overview
+
+*/
+
+void handle_wants_dashboard() {
+    const char *html_path = "public_html/wants_dashboard.html";
+    struct stat st;
+    char file_date[16] = "";
+    char today[16];
+    
+    // Get today's date
+    time_t now = time(NULL);
+    struct tm *tm_now = localtime(&now);
+    strftime(today, sizeof(today), "%Y%m%d", tm_now);
+    
+    int needs_regen = 0;
+    if (stat(html_path, &st) == 0) {
+        struct tm *tm_file = localtime(&st.st_mtime);
+        strftime(file_date, sizeof(file_date), "%Y%m%d", tm_file);
+        if (strcmp(file_date, today) != 0) {
+            needs_regen = 1;
+        }
+    } else {
+        needs_regen = 1;
+    }
+    
+    if (!needs_regen) {
+        prt("Current: %s\n", html_path);
+        flush();
+        return;
+    }
+    
+    // Create public_html directory
+    system("mkdir -p public_html");
+    
+    // Find generator block
+    int block_idx = block_by_id(S("generate_wants_dashboard"));
+    if (block_idx == -1) {
+        prt("Error: Block #generate_wants_dashboard not found\n");
+        flush_exit(1);
+    }
+    
+    span block = state->blocks.a[block_idx];
+    span comment_part = block_comment_part(block);
+    span code_part = block;
+    code_part.buf = comment_part.end;
+    
+    if (empty(code_part)) {
+        prt("Error: Block #generate_wants_dashboard has no code\n");
+        flush_exit(1);
+    }
+    
+    // Write code to temp file
+    char tmp_path[256];
+    snprintf(tmp_path, sizeof(tmp_path), "/tmp/gen_dash_%d.sh", getpid());
+    write_to_file_span(code_part, S(tmp_path), 1);
+    
+    // Make executable
+    char chmod_cmd[512];
+    snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod +x %s", tmp_path);
+    system(chmod_cmd);
+    
+    // Execute and pipe to pandoc
+    char gen_cmd[1024];
+    snprintf(gen_cmd, sizeof(gen_cmd),
+        "%s | pandoc -f markdown -t html --standalone --metadata title='All Wants Dashboard' -o %s",
+        tmp_path, html_path);
+    
+    int result = system(gen_cmd);
+    unlink(tmp_path);
+    
+    if (result != 0) {
+        prt("Error: Dashboard generation failed\n");
+        flush_exit(1);
+    }
+    
+    prt("Generated: %s\n", html_path);
+    flush();
+}
+/* #handle_event_report
+
+Handler for --event-report command.
+
+Generates or updates the Event System Activity Report HTML at public_html/event_activity.html.
+
+Implementation:
+1. Check if public_html/event_activity.html exists and get its modification date (YYYYMMDD format)
+2. Get today's date (YYYYMMDD format)
+3. If file doesn't exist OR file date != today's date:
+   a. Create public_html/ directory if needed: system("mkdir -p public_html")
+   b. Find #generate_event_report block: block_idx = block_by_id(S("generate_event_report"))
+   c. Extract code part using block_code_part()
+   d. Write code to temp file /tmp/gen_evt_<pid>.sh
+   e. Make executable: chmod +x
+   f. Execute and pipe to pandoc:
+      system("temp_file | pandoc -f markdown -t html --standalone --metadata title='Event System Activity' -o public_html/event_activity.html")
+   g. Check exit code - if non-zero, print error and flush_exit(1)
+   h. Clean up temp file
+   i. Print "Generated: public_html/event_activity.html"
+4. Else:
+   Print "Current: public_html/event_activity.html"
+
+Use system functions: stat(), time(), localtime_r(), strftime() for date handling.
+Use prt() for output, flush() before exit.
+Return type: void
+
+Justifies: #command_handlers_overview
+
+*/
+
+void handle_event_report() {
+    const char *report_path = "public_html/event_activity.html";
+    struct stat st;
+    char file_date[9] = {0};
+    char today_date[9] = {0};
+    time_t t = time(NULL);
+    struct tm tm_now;
+    localtime_r(&t, &tm_now);
+    strftime(today_date, sizeof(today_date), "%Y%m%d", &tm_now);
+
+    int need_generate = 0;
+    if (stat(report_path, &st) != 0) {
+        need_generate = 1;
+    } else {
+        struct tm tm_mod;
+        localtime_r(&st.st_mtime, &tm_mod);
+        strftime(file_date, sizeof(file_date), "%Y%m%d", &tm_mod);
+        if (strcmp(file_date, today_date) != 0) {
+            need_generate = 1;
+        }
+    }
+
+    if (need_generate) {
+        system("mkdir -p public_html");
+        int block_idx = block_by_id(S("generate_event_report"));
+        if (block_idx < 0) {
+            prt("Error: #generate_event_report block not found\n");
+            flush();
+            flush_exit(1);
+        }
+        Str code = block_code_part(block_idx);
+        int pid = (int)getpid();
+        char temp_file[64];
+        snprintf(temp_file, sizeof(temp_file), "/tmp/gen_evt_%d.sh", pid);
+        FILE *f = fopen(temp_file, "w");
+        if (!f) {
+            prt("Error: cannot create temp file\n");
+            flush();
+            flush_exit(1);
+        }
+        fwrite(S_ptr(code), 1, S_len(code), f);
+        fclose(f);
+        char chmod_cmd[128];
+        snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod +x %s", temp_file);
+        if (system(chmod_cmd) != 0) {
+            prt("Error: chmod failed\n");
+            unlink(temp_file);
+            flush();
+            flush_exit(1);
+        }
+        char pipe_cmd[512];
+        snprintf(pipe_cmd, sizeof(pipe_cmd),
+            "%s | pandoc -f markdown -t html --standalone --metadata title='Event System Activity' -o %s",
+            temp_file, report_path);
+        int ret = system(pipe_cmd);
+        unlink(temp_file);
+        if (ret != 0) {
+            prt("Error: report generation failed\n");
+            flush();
+            flush_exit(1);
+        }
+        prt("Generated: public_html/event_activity.html\n");
+    } else {
+        prt("Current: public_html/event_activity.html\n");
+    }
+}
+
 /* #grep_blocks
 
 Search all blocks using POSIX Extended Regular Expression pattern.
@@ -11866,7 +12203,7 @@ This function is responsible for storing a new rev and updating the projfile on 
 void after(span arg) {
     int block_idx = block_id_arg(arg);
     if (block_idx == -1) {
-        prt("Block not found: %S\n", arg);
+        prt("Block not found: %.*s\n", len(arg), arg.buf);
         flush_err();
         exit(1);
     }
@@ -11916,7 +12253,7 @@ This should be similar to #after, above, except that we replace the block instea
 void replace(span arg) {
     int block_idx = block_id_arg(arg);
     if (block_idx == -1) {
-        prt("Block not found: %S\n", arg);
+        prt("Block not found: %.*s\n", len(arg), arg.buf);
         flush_err();
         exit(1);
     }
@@ -11974,7 +12311,7 @@ Modify the above code as follows: after we read stdin into the cmp space, we sho
 void replace(span arg) {
     int block_idx = block_id_arg(arg);
     if (block_idx == -1) {
-        prt("Block not found: %S\n", arg);
+        prt("Block not found: %.*s\n", len(arg), arg.buf);
         flush_err();
         exit(1);
     }
@@ -12052,7 +12389,7 @@ Manually maintained.
 void replace_comment(span arg) {
     int block_idx = block_id_arg(arg);
     if (block_idx == -1) {
-        prt("Block not found: %S\n", arg);
+        prt("Block not found: %.*s\n", len(arg), arg.buf);
         flush_err();
         exit(1);
     }
@@ -12128,7 +12465,7 @@ void replace_comment(span arg) {
 void replace_code(span arg) {
     int block_idx = block_id_arg(arg);
     if (block_idx == -1) {
-        prt("Block not found: %S\n", arg);
+        prt("Block not found: %.*s\n", len(arg), arg.buf);
         flush_err();
         exit(1);
     }

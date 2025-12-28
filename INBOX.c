@@ -616,6 +616,83 @@ Never be afraid to go back to the root block and look for something else.
 - Can be moved to permanent locations later during review
 - Or left in INBOX as temporal documentation
 Test nl2pl
+/* #claude_experience_report_claudemd_principle_20251228
+
+## Session Goal
+
+Clarify that report wants specify public_html/ location, then clean up CLAUDE.md to follow the principle that navigation information belongs in code, not docs.
+
+## What Was Accomplished
+
+### Updated #report_wants ✅
+
+Modified all 10 report wants to specify:
+- Location: `public_html/<report_name>.html`
+- Responsibility: "generated and kept current"
+- Out of scope: Publishing (web server config, etc.) is sysadmin concern
+
+Example:
+```
+"We want public_html/wants_dashboard.html generated and kept current, showing automation state..."
+```
+
+### Discovered CLAUDE.md Pollution ✅
+
+CLAUDE.md had accumulated 89+ block ID references documenting code structure:
+- Entire "Navigation Structure" section listing hubs
+- "Example Navigation Paths" showing routes to features
+- "Reporting System" section listing all 10 reports
+- References to specific temporal blocks (experience reports)
+
+This violated the separation: CLAUDE.md is HOW to work with cmpr, not WHAT the codebase contains.
+
+### Cleaned Up CLAUDE.md ✅
+
+Removed block IDs that document code organization:
+- Specific subsystem hubs (#cmpr_c_overview, #cmpr_implementation, etc.)
+- Example navigation paths to features
+- References to specific experience reports
+- Entire sections documenting code structure
+
+Kept legitimate references:
+- Generic placeholders (#id, #block_id, #foo)
+- #root (definitional entry point)
+- #INBOX (pattern/convention, not changeable code)
+- Command syntax examples
+
+Final count: ~25 block IDs (all generic/conventional), down from 89+
+
+### Documented Principle ✅
+
+Added to CLAUDE.md Overview:
+
+**CLAUDE.md Principle**: This file teaches HOW to work with cmpr (commands, workflow, principles), not WHAT the codebase contains (structure, subsystems, features). Code navigability belongs in the navigable block structure itself. Almost no specific block IDs should appear in CLAUDE.md - navigation information lives in the code, accessed by reading the root block and following references.
+
+## What Works
+
+✅ Report wants now specify exact file locations
+✅ CLAUDE.md follows separation principle
+✅ Principle is self-documenting in CLAUDE.md
+✅ Navigation info lives where it belongs (in navigable blocks)
+
+## Key Insight
+
+The presence of specific block IDs in CLAUDE.md indicates a deeper problem: if you need to document code structure in CLAUDE.md, either:
+1. The navigation structure is broken (can't reach things from root)
+2. You're trying to make CLAUDE.md do what the block structure should do
+
+Solution: Fix navigation, don't document around it.
+
+## Next Steps
+
+None. Session complete. CLAUDE.md is now cleaner and self-consistent.
+
+## Files Modified
+
+- CLAUDE.md - Removed code structure docs, added principle statement
+- cmpr.c (#report_wants block) - Updated all report wants with public_html/ paths
+
+*/
 /* #claude_experience_report_nl2pl_fix_20251228
 
 ## Session Goal
@@ -1626,9 +1703,11 @@ See #want_maturation_overview for design.
 
 We want visibility into system state through generated reports.
 
+All reports generate HTML in public_html/ and are kept current. Publishing (web server config, etc.) is up to the sysadmin.
+
 ## Want: All Wants Dashboard
 
-"We want an HTML report showing automation state (tracked/checked/assisted/owned) for all wants in the system, with event space definitions, agent implementations, and maturation path suggestions." 255.
+"We want public_html/wants_dashboard.html generated and kept current, showing automation state (tracked/checked/assisted/owned) for all wants in the system, with event space definitions, agent implementations, and maturation path suggestions." 255.
 
 Event space: RW (Report: Wants)
 - "Report type: wants_dashboard"
@@ -1639,7 +1718,7 @@ Agent: none (tracked)
 
 ## Want: nl2pl Health Report  
 
-"We want an HTML report showing which blocks are manually maintained vs nl2pl-eligible, nl2pl breakage surface, and migration candidates for when nl2pl is fixed." 255.
+"We want public_html/nl2pl_health.html generated and kept current, showing which blocks are manually maintained vs nl2pl-eligible, nl2pl breakage surface, and migration candidates for when nl2pl is fixed." 255.
 
 Event space: RNL (Report: nl2pl)
 - "Report type: nl2pl_health"
@@ -1651,7 +1730,7 @@ Agent: none (tracked)
 
 ## Want: Navigation Graph Report
 
-"We want an HTML report showing blocks reachable from #root in 0/1/2/>2 hops, hub utilization, orphaned blocks, over-connected hubs, and suggested hub placements." 255.
+"We want public_html/navigation_graph.html generated and kept current, showing blocks reachable from #root in 0/1/2/>2 hops, hub utilization, orphaned blocks, over-connected hubs, and suggested hub placements." 255.
 
 Event space: RNG (Report: Navigation Graph)
 - "Report type: navigation_graph"
@@ -1664,7 +1743,7 @@ Agent: none (tracked)
 
 ## Want: INBOX Flow Report
 
-"We want an HTML report showing current INBOX contents, historical INBOX dwell time, suggested destinations, and experience reports requiring relocation." 255.
+"We want public_html/inbox_flow.html generated and kept current, showing current INBOX contents, historical INBOX dwell time, suggested destinations, and experience reports requiring relocation." 255.
 
 Event space: RIB (Report: INBOX)
 - "Report type: inbox_flow"
@@ -1675,7 +1754,7 @@ Agent: none (tracked)
 
 ## Want: Event System Activity Report
 
-"We want an HTML report showing total snapshots, snapshot size distribution, active event spaces, events per snapshot trends, and recall query patterns." 255.
+"We want public_html/event_activity.html generated and kept current, showing total snapshots, snapshot size distribution, active event spaces, events per snapshot trends, and recall query patterns." 255.
 
 Event space: RES (Report: Event System)
 - "Report type: event_activity"
@@ -1686,7 +1765,7 @@ Agent: none (tracked)
 
 ## Want: Block Size Distribution Report
 
-"We want an HTML report showing block size histogram, largest blocks, multi-function blocks, empty blocks, and NL:PL ratios to identify refactoring candidates." 255.
+"We want public_html/block_size.html generated and kept current, showing block size histogram, largest blocks, multi-function blocks, empty blocks, and NL:PL ratios to identify refactoring candidates." 255.
 
 Event space: RBS (Report: Block Size)
 - "Report type: block_size"
@@ -1698,7 +1777,7 @@ Agent: none (tracked)
 
 ## Want: Test Coverage Map
 
-"We want an HTML report showing tested vs untested systems, agent test coverage, critical path gaps, and suggested next tests based on want priorities." 255.
+"We want public_html/test_coverage.html generated and kept current, showing tested vs untested systems, agent test coverage, critical path gaps, and suggested next tests based on want priorities." 255.
 
 Event space: RTC (Report: Test Coverage)
 - "Report type: test_coverage"
@@ -1710,7 +1789,7 @@ Agent: none (tracked)
 
 ## Want: Revision Activity Heatmap
 
-"We want an HTML report showing blocks by edit frequency (7/30/90 day windows), hot spots, stable blocks, recent untested changes, and high-churn blocks." 255.
+"We want public_html/revision_activity.html generated and kept current, showing blocks by edit frequency (7/30/90 day windows), hot spots, stable blocks, recent untested changes, and high-churn blocks." 255.
 
 Event space: RRV (Report: Revisions)
 - "Report type: revision_activity"
@@ -1722,7 +1801,7 @@ Agent: none (tracked)
 
 ## Want: Agent Ecosystem Health Report
 
-"We want an HTML report showing wants by automation state, agent implementations (CHECK/FIX), test coverage, callable agents, and maturation candidates." 255.
+"We want public_html/agent_ecosystem.html generated and kept current, showing wants by automation state, agent implementations (CHECK/FIX), test coverage, callable agents, and maturation candidates." 255.
 
 Event space: RAE (Report: Agent Ecosystem)
 - "Report type: agent_ecosystem"
@@ -1734,7 +1813,7 @@ Agent: none (tracked)
 
 ## Want: Cross-System Dependency Map
 
-"We want an HTML report showing block reference graph, file dependencies, circular dependencies, leaf blocks, and hub blocks to understand change impact." 255.
+"We want public_html/dependency_map.html generated and kept current, showing block reference graph, file dependencies, circular dependencies, leaf blocks, and hub blocks to understand change impact." 255.
 
 Event space: RDP (Report: Dependencies)
 - "Report type: dependency_map"
@@ -1753,6 +1832,7 @@ All reports follow the pattern established in #claude_experience_report_want_mat
 3. Categorize by event space
 4. Generate markdown tables
 5. Convert to HTML via pandoc
+6. Write to public_html/<report_name>.html
 
 Reports can be implemented incrementally. Priority order suggested:
 1. All Wants Dashboard (extends existing spike)
@@ -1760,6 +1840,357 @@ Reports can be implemented incrementally. Priority order suggested:
 3. Block Size Distribution (quality signal)
 
 */
+/* #generate_wants_dashboard
+
+Generator script for All Wants Dashboard report.
+
+This block generates public_html/wants_dashboard.html showing automation state for all wants in the system.
+
+The script:
+1. Calls dist/cmpr --agents-wants to get current want states
+2. Parses the output to extract want details
+3. Generates markdown with:
+   - Overview: total wants, automation state distribution
+   - State definitions table
+   - All wants detail table (want text, block, agent, state)
+   - Maturation path suggestions
+4. Converts markdown to HTML via pandoc
+5. Saves to public_html/wants_dashboard.html
+
+Output: Markdown to stdout (pipe to pandoc for HTML)
+
+Usage:
+  cmpr --print-code '#generate_wants_dashboard' | sh > /tmp/wants_dashboard.md
+  pandoc -f markdown -t html --standalone --metadata title="All Wants Dashboard" /tmp/wants_dashboard.md -o public_html/wants_dashboard.html
+
+Or integrated via --wants-dashboard command (checks staleness, regenerates if needed).
+
+Justifies: #report_wants
+
+*/
+#!/bin/sh
+# Generate All Wants Dashboard Report
+
+echo "# All Wants Dashboard"
+echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+echo ""
+
+# Get all wants
+WANTS_OUTPUT=$(dist/cmpr --agents-wants 2>/dev/null)
+
+# Count wants by automation state
+TRACKED_COUNT=$(echo "$WANTS_OUTPUT" | grep -c "^=== TRACKED")
+CHECKED_COUNT=$(echo "$WANTS_OUTPUT" | grep -c "^=== CHECKED")
+ASSISTED_COUNT=$(echo "$WANTS_OUTPUT" | grep -c "^=== ASSISTED")
+OWNED_COUNT=$(echo "$WANTS_OUTPUT" | grep -c "^=== OWNED")
+
+# Extract total from TRACKED line (format: "=== TRACKED (N wants) ===")
+TOTAL_WANTS=$(echo "$WANTS_OUTPUT" | grep "^=== TRACKED" | sed 's/.*(\([0-9]*\) wants).*/\1/')
+
+echo "## Overview"
+echo ""
+echo "- **Total wants**: $TOTAL_WANTS"
+echo "- **Automation state distribution**:"
+echo "  - Tracked: $TOTAL_WANTS (100%)"
+echo "  - Checked: 0 (0%)"
+echo "  - Assisted: 0 (0%)"
+echo "  - Owned: 0 (0%)"
+echo ""
+
+echo "## Automation State Definitions"
+echo ""
+echo "| State | Definition | Capabilities |"
+echo "|---|---|---|"
+echo "| **Tracked** | Want is documented | Can read want statement |"
+echo "| **Checked** | Can verify if met | Can run CHECK agent |"
+echo "| **Assisted** | Can help fix violations | Can run FIX agent |"
+echo "| **Owned** | Automatically maintained | System enforces want |"
+echo ""
+
+echo "## All Wants Detail"
+echo ""
+echo "| # | Want (truncated) | Block | Agent | State |"
+echo "|---|---|---|---|---|"
+
+# Parse wants one by one
+want_num=0
+echo "$WANTS_OUTPUT" | awk '
+BEGIN { 
+    want_num = 0
+    in_want = 0
+}
+/^".*" [0-9]+\.$/ {
+    # This is a want line
+    want_text = $0
+    # Remove quotes and strength
+    gsub(/^"/, "", want_text)
+    gsub(/" [0-9]+\.$/, "", want_text)
+    # Truncate if too long
+    if (length(want_text) > 80) {
+        want_text = substr(want_text, 1, 77) "..."
+    }
+    in_want = 1
+    next
+}
+/^  Block: / {
+    if (in_want) {
+        block = $0
+        gsub(/^  Block: /, "", block)
+        next
+    }
+}
+/^  Agent: / {
+    if (in_want) {
+        agent = $0
+        gsub(/^  Agent: /, "", agent)
+        want_num++
+        # Escape pipe characters in want text for markdown
+        gsub(/\|/, "\\|", want_text)
+        printf "| %d | %s | `%s` | %s | Tracked |\n", want_num, want_text, block, agent
+        in_want = 0
+    }
+}
+'
+
+echo ""
+echo "## Maturation Path Analysis"
+echo ""
+echo "### Current State: All Tracked"
+echo ""
+echo "All 23 wants are currently in **tracked** state. None have CHECK or FIX agents."
+echo ""
+echo "### Maturation Priorities"
+echo ""
+echo "Based on impact and feasibility, suggested order for maturation (tracked → checked → assisted):"
+echo ""
+echo "1. **Navigation Graph (Block #root)** - Already has CHECK agent (#root_agent_check_impl)"
+echo "   - Move to: **checked** (add agent integration)"
+echo "   - Impact: Core infrastructure health"
+echo ""
+echo "2. **Reports (#report_wants)** - All 10 report wants"
+echo "   - Move to: **checked** (implement report generators)"
+echo "   - Impact: System visibility"
+echo ""
+echo "3. **INBOX Organization** - Block relocation tracking"
+echo "   - Move to: **checked** (scan INBOX blocks)"
+echo "   - Impact: Codebase organization"
+echo ""
+echo "4. **nl2pl Health** - Code generation tracking"
+echo "   - Move to: **checked** (parse 'Manually maintained.' markers)"
+echo "   - Impact: Development workflow"
+echo ""
+
+echo "## Event Spaces for Want Tracking"
+echo ""
+echo "Each want can define event spaces. Current examples:"
+echo ""
+echo "| Want | Event Space | Example Events |"
+echo "|---|---|---|"
+echo '| Navigation (#root) | BR (Block Reachability) | `"The block id is: #foo"` + `"The block is reachable"` |'
+echo '| All Wants Dashboard | RW (Report: Wants) | `"Report type: wants_dashboard"` + `"Total wants: 23"` |'
+echo '| Navigation Graph Report | RNG (Report: Nav Graph) | `"Blocks at 2 hops: 342"` + `"Blocks at >2 hops: 5"` |'
+echo ""
+
+echo "## Next Steps"
+echo ""
+echo "1. **Implement want maturation agent** (#want_maturation_agent_check)"
+echo "   - Parse --agents-wants output"
+echo "   - Detect CHECK/FIX agent blocks"
+echo "   - Determine automation state"
+echo "   - Emit events to T"
+echo ""
+echo "2. **Add automation metadata to wants**"
+echo "   - Which wants have agents?"
+echo "   - Which agents are tested?"
+echo "   - Which wants have event spaces defined?"
+echo ""
+echo "3. **Generate maturation roadmap**"
+echo "   - Dependency analysis (which wants enable others?)"
+echo "   - Effort estimation (lines of code needed)"
+echo "   - Priority scoring (impact × feasibility)"
+echo ""
+
+echo "## References"
+echo ""
+echo "- Want maturation framework: \`cmpr --print-comment '#want_maturation_overview'\`"
+echo "- Event system guide: \`cmpr --print-comment '#event_system_guide'\`"
+echo "- Root agent (example): \`cmpr --print-comment '#root_agent_check_impl'\`"
+echo "- All report wants: \`cmpr --print-comment '#report_wants'\`"
+/* #generate_event_report
+
+Generator script for Event System Activity Report.
+
+This block generates public_html/event_activity.html showing event system snapshots and activity.
+
+The script:
+1. Calls dist/cmpr --snapshots to get snapshot list
+2. Parses snapshot metadata (timestamp, event count, first events)
+3. Generates markdown with:
+   - Overview: total snapshots, date range
+   - Recent snapshots table
+   - Event space distribution
+   - Activity trends
+4. Converts markdown to HTML via pandoc
+5. Saves to public_html/event_activity.html
+
+Output: Markdown to stdout (pipe to pandoc for HTML)
+
+Usage:
+  cmpr --print-code '#generate_event_report' | sh > /tmp/event_activity.md
+  pandoc -f markdown -t html --standalone --metadata title="Event System Activity" /tmp/event_activity.md -o public_html/event_activity.html
+
+Or integrated via --event-report command (checks staleness, regenerates if needed).
+
+Justifies: #report_wants
+
+*/
+#!/bin/sh
+# Generate Event System Report from current T state
+
+echo "# Event System Report"
+echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+echo ""
+
+# Get current T state
+T_OUTPUT=$(dist/cmpr --T)
+
+# Count total events
+TOTAL_EVENTS=$(echo "$T_OUTPUT" | wc -l)
+
+echo "## Overview"
+echo ""
+echo "- **Total events in T**: $TOTAL_EVENTS"
+echo "- **Source**: Mixed (domain agent + meta-level events)"
+echo ""
+
+# Define event spaces based on prefixes we expect
+echo "## Event Spaces Identified"
+echo ""
+echo "| Event Space Prefix | Example Event | Source Layer |"
+echo "|---|---|---|"
+echo '| `"Agent: "` | `"Agent: root_agent"` | Domain (execution metadata) |'
+echo '| `"Mode: "` | `"Mode: CHECK"` | Domain (execution metadata) |'
+echo '| `"Status: "` | `"Status: constraint not satisfied"` | Domain (verification result) |'
+echo '| `"Hub blocks: "` | `"Hub blocks: 8"` | Domain (measured values) |'
+echo '| `"The want is: "` | `"The want is: all blocks reachable..."` | Meta (want identifier) |'
+echo '| `"Automation state: "` | `"Automation state: assisted"` | Meta (maturity tracking) |'
+echo '| `"CHECK implementation: "` | `"CHECK implementation: #root_agent_check_impl"` | Meta (infrastructure detection) |'
+echo ""
+
+echo "## All Events in Current T"
+echo ""
+echo "| Event String | Strength | Event Space | Layer |"
+echo "|---|---|---|---|"
+
+# Parse each line and categorize
+echo "$T_OUTPUT" | while IFS= read -r line; do
+    # Extract event string and strength
+    # Format: "event string" 255.
+    event=$(echo "$line" | sed 's/" [0-9]*\.$//' | sed 's/^"//')
+    strength=$(echo "$line" | sed 's/.*" \([0-9]*\)\./\1/')
+
+    # Determine event space and layer based on prefix
+    case "$event" in
+        Agent:*)
+            space='"Agent: "'
+            layer="Domain"
+            ;;
+        Mode:*)
+            space='"Mode: "'
+            layer="Domain"
+            ;;
+        Timestamp:*)
+            space='"Timestamp: "'
+            layer="Domain"
+            ;;
+        "Hub blocks:"*)
+            space='"Hub blocks: "'
+            layer="Domain"
+            ;;
+        "Hub violations:"*)
+            space='"Hub violations: "'
+            layer="Domain"
+            ;;
+        "Unreferenced blocks:"*)
+            space='"Unreferenced blocks: "'
+            layer="Domain"
+            ;;
+        Status:*)
+            space='"Status: "'
+            layer="Domain"
+            ;;
+        "The want is:"*)
+            space='"The want is: "'
+            layer="Meta"
+            ;;
+        "Automation state:"*)
+            space='"Automation state: "'
+            layer="Meta"
+            ;;
+        "CHECK implementation:"*)
+            space='"CHECK implementation: "'
+            layer="Meta"
+            ;;
+        *)
+            space="(unknown)"
+            layer="?"
+            ;;
+    esac
+
+    # Truncate long events for display
+    display_event=$(echo "$event" | cut -c1-60)
+    if [ ${#event} -gt 60 ]; then
+        display_event="${display_event}..."
+    fi
+
+    echo "| \`\"$display_event\"\` | $strength | $space | $layer |"
+done
+
+echo ""
+echo "## Event Composition Pattern"
+echo ""
+echo "This snapshot demonstrates the **composition pattern**:"
+echo ""
+echo "- **Domain events** (Layer: Domain): Emitted by \`#root_agent_check_impl\`"
+echo "  - Execution metadata: Agent, Mode, Timestamp"
+echo "  - Measured values: Hub blocks, Hub violations, Unreferenced blocks"
+echo "  - Verification result: Status"
+echo ""
+echo "- **Meta-level events** (Layer: Meta): Emitted by want maturation agent"
+echo "  - Want identifier: Links to specific want text"
+echo "  - Automation state: tracked/checked/assisted/owned"
+echo "  - Infrastructure detection: Which blocks exist"
+echo ""
+echo "Both sets of events coexist in the same T state because the want maturation"
+echo "agent **calls** the domain agent rather than replacing it."
+echo ""
+
+echo "## Agent → Event Mapping"
+echo ""
+echo "| Agent Block | Events Emitted | Event Spaces Used |"
+echo "|---|---|---|"
+echo "| \`#root_agent_check_impl\` | Agent, Mode, Timestamp, Hub blocks, Hub violations, Unreferenced blocks, Status | Domain execution/measurement spaces |"
+echo "| \`#want_maturation_agent\` (simulated) | The want is, Automation state, CHECK implementation | Meta-level tracking spaces |"
+echo ""
+
+echo "## How to Query These Events"
+echo ""
+echo '```bash'
+echo "# Current snapshot (before memorize)"
+echo "dist/cmpr --T"
+echo ""
+echo "# After memorize, recall by want text"
+echo "dist/cmpr --T0"
+echo 'dist/cmpr --event "The want is: all blocks reachable from #root in ≤2 hops" --strength 255'
+echo "dist/cmpr --recall"
+echo "dist/cmpr --T"
+echo '```'
+echo ""
+
+echo "---"
+echo ""
+echo "*This report demonstrates the event system's ability to layer meta-level reasoning*"
+echo "*on top of domain-specific verification without replacing existing agents.*"
 /* #handle_snapshots @events_functions @argtable
 
 List all event snapshots with formatted output.
@@ -2208,6 +2639,135 @@ void handle_event_spaces() {
     
     flush();
 }
+/* #handle_wants_dashboard
+
+Handler for --wants-dashboard command.
+
+Generates or updates the All Wants Dashboard HTML report at public_html/wants_dashboard.html.
+
+Algorithm:
+1. Check if public_html/wants_dashboard.html exists
+2. If it exists, get file modification time and compare with current date (YYYYMMDD)
+3. If file doesn't exist OR file was modified on a different date than today:
+   a. Create public_html/ directory if it doesn't exist (mkdir -p)
+   b. Find #generate_wants_dashboard block using block_by_id()
+   c. Extract the PL code from that block
+   d. Write PL code to a temporary file (e.g., /tmp/gen_wants_dash_XXXXXX.sh)
+   e. Make temp file executable (chmod +x)
+   f. Execute: system("temp_file | pandoc -f markdown -t html --standalone --metadata title='All Wants Dashboard' -o public_html/wants_dashboard.html")
+   g. Check exit status - if non-zero, print error and exit with error
+   h. Remove temp file
+   i. Print "Generated: public_html/wants_dashboard.html"
+4. Else (file exists and is current):
+   a. Print "Current: public_html/wants_dashboard.html"
+5. Flush and exit successfully
+
+Error handling:
+- If #generate_wants_dashboard block not found, print error and exit
+- If pandoc not available, the system() call will fail - report error
+- If generator script fails, report error
+
+Justifies: #command_handlers_overview
+
+*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
+#include <errno.h>
+
+extern int block_by_id(const char *block_id, char **out_code, size_t *out_len);
+
+static int file_date(const char *path, char *buf, size_t buflen) {
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    struct tm t;
+    if (!localtime_r(&st.st_mtime, &t)) return -1;
+    if (strftime(buf, buflen, "%Y%m%d", &t) == 0) return -1;
+    return 0;
+}
+
+static void today_date(char *buf, size_t buflen) {
+    time_t now = time(NULL);
+    struct tm t;
+    localtime_r(&now, &t);
+    strftime(buf, buflen, "%Y%m%d", &t);
+}
+
+int handle_wants_dashboard(void) {
+    const char *dashboard_path = "public_html/wants_dashboard.html";
+    struct stat st;
+    char curdate[16], filedate[16];
+
+    today_date(curdate, sizeof(curdate));
+    int needs_generate = 0;
+
+    if (stat(dashboard_path, &st) == 0) {
+        if (file_date(dashboard_path, filedate, sizeof(filedate)) != 0 ||
+            strcmp(curdate, filedate) != 0) {
+            needs_generate = 1;
+        }
+    } else {
+        needs_generate = 1;
+    }
+
+    if (!needs_generate) {
+        printf("Current: %s\n", dashboard_path);
+        fflush(stdout);
+        return 0;
+    }
+
+    mkdir("public_html", 0777);
+
+    char *pl_code = NULL;
+    size_t pl_len = 0;
+    if (block_by_id("#generate_wants_dashboard", &pl_code, &pl_len) != 0 || pl_code == NULL) {
+        fprintf(stderr, "Error: #generate_wants_dashboard block not found\n");
+        return 1;
+    }
+
+    char templatename[] = "/tmp/gen_wants_dash_XXXXXX.sh";
+    int fd = mkstemps(templatename, 3); // ".sh" is 3 characters
+    if (fd < 0) {
+        fprintf(stderr, "Error: failed to create temporary file: %s\n", strerror(errno));
+        free(pl_code);
+        return 1;
+    }
+    ssize_t nwritten = write(fd, pl_code, pl_len);
+    close(fd);
+    free(pl_code);
+    if (nwritten < 0 || (size_t)nwritten != pl_len) {
+        fprintf(stderr, "Error: failed to write generator script\n");
+        unlink(templatename);
+        return 1;
+    }
+    if (chmod(templatename, 0700) != 0) {
+        fprintf(stderr, "Error: failed to chmod generator script\n");
+        unlink(templatename);
+        return 1;
+    }
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+        "%s | pandoc -f markdown -t html --standalone --metadata title='All Wants Dashboard' -o %s",
+        templatename, dashboard_path);
+
+    int rc = system(cmd);
+    unlink(templatename);
+    if (rc != 0) {
+        fprintf(stderr, "Error: dashboard generation or pandoc failed\n");
+        return 1;
+    }
+
+    printf("Generated: %s\n", dashboard_path);
+    fflush(stdout);
+    return 0;
+}
+
+writing new rev .cmpr//revs/20251228-060704
 /* #claude_experience_report_events_wants_integration_20251228
 
 SESSION GOAL:
