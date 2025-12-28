@@ -6858,6 +6858,17 @@ See #block_quality_agents_overview for agents that track block quality using the
 
 Build system for cmpr.
 
+## Bootstrap Process (First Build)
+
+**Circular Dependency**: The Makefile requires `cmpr` to generate bootstrap_content.c, but you need bootstrap_content.c to build cmpr.
+
+**Solution**: One of:
+1. `sudo make install` from a working build (copies dist/cmpr to /usr/local/bin/cmpr)
+2. Keep the stub bootstrap_content.c checked in (minimal version for building)
+3. Use a pre-built binary temporarily as system `cmpr`
+
+The checked-in bootstrap_content.c stub allows fresh builds without requiring a system cmpr installation.
+
 ## Build Targets
 
 - `make` or `make all` - Production build (O2 optimization)
@@ -6904,53 +6915,6 @@ To regenerate Makefile from this block:
 Manually maintained.
 
 */
-CC := gcc
-
-.PHONY: all clean debug dev install
-
-all: dist/cmpr
-
-CFLAGS := -O2 -Wall
-LDFLAGS := -lm
-
-debug: CFLAGS := -g -O0 -Wall -fsanitize=address
-debug: dist/cmpr
-
-dev: CFLAGS := -g -O2 -Wall -Werror -fsanitize=address
-dev: dist/cmpr
-
-dist/cmpr: cmpr.c fdecls.h spanio.c bootstrap_content.c prompt_templates.c siphash/siphash.o siphash/halfsiphash.o
-	mkdir -p dist
-	(VER=8; D=$$(date +%Y%m%d-%H%M%S); GIT=$$(git log -1 --pretty="%h %f"); echo '#line 1 "cmpr.c"' >cmpr-sed.c; sed 's/\$$VERSION\$$/'"$$VER"' (build: '"$$D"' '"$$GIT"')/' <cmpr.c >>cmpr-sed.c; echo "Version: $$VER (build: $$D $$GIT)"; $(CC) -o dist/cmpr-$$D cmpr-sed.c bootstrap_content.c siphash/siphash.o siphash/halfsiphash.o $(CFLAGS) $(LDFLAGS) && rm -f dist/cmpr && ln -s cmpr-$$D dist/cmpr)
-
-bootstrap_content.c: INBOX.c
-	cmpr --print-code '#generate_bootstrap' | bash > bootstrap_content.c
-
-prompt_list: cmpr.c fdecls.h spanio.c siphash/siphash.o siphash/halfsiphash.o
-	$(CC) -o prompt_list -D PROMPT_LIST cmpr.c siphash/siphash.o siphash/halfsiphash.o $(CFLAGS) $(LDFLAGS)
-
-prompt_templates.c: prompt_list prompts/*
-	rm -f prompts/*.bak
-	(echo "// GENERATED CODE, do not edit (see Makefile)"; ./prompt_list) > prompt_templates.c
-
-siphash/siphash.o: siphash/siphash.c
-	$(CC) -c siphash/siphash.c $(CFLAGS) -o siphash/siphash.o
-
-siphash/halfsiphash.o: siphash/halfsiphash.c
-	$(CC) -c siphash/halfsiphash.c $(CFLAGS) -o siphash/halfsiphash.o
-
-fdecls.h: cmpr.c
-	cat $^ | python3 extract_decls.py > fdecls.h
-
-clean:
-	rm -f dist/cmpr dist/cmpr-* cmpr-sed.c
-	rm -f prompt_list prompt_templates.c
-	rm -f bootstrap_content.c
-	rm -f fdecls.h
-	rm -f siphash/*.o
-
-install: dist/cmpr
-	install -m 755 dist/cmpr /usr/local/bin/cmpr
 /* #claude_experience_report_build_system_cleanup_20251227
 
 Experience report: Makefile cleanup and build system simplification
