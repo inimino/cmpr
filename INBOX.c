@@ -617,6 +617,343 @@ Never be afraid to go back to the root block and look for something else.
 - Or left in INBOX as temporal documentation
 Test nl2pl
 
+/* #claude_experience_report_reachability_20251228_3
+
+Session Goal: Continue reachability work to reduce unreferenced blocks
+
+## What Was Accomplished
+
+### Discovered Orphaned Hubs
+
+Found 11 existing hub blocks that were not referenced from #root:
+- 6 valid hubs (2-16 blocks): Ready to add to #root
+- 5 oversized hubs (17-47 blocks): Required splitting
+
+### Valid Orphaned Hubs Added to #root
+
+Added 6 existing hubs directly to #root:
+1. #ui_display_overview (3 blocks)
+2. #block_editing_overview (11 blocks)
+3. #llm_integration_overview (14 blocks)
+4. #block_ops_overview (12 blocks)
+5. #command_handlers_overview (16 blocks)
+6. #want_maturation_overview (7 blocks)
+
+This immediately made 45 blocks reachable (223 → 178 unreferenced).
+
+### Oversized Hubs Split
+
+Split 5 oversized hubs into 11 new properly-sized hubs:
+
+**#parsing_io_overview (47 blocks) → 4 new hubs:**
+- #file_io_hub (11 blocks) - File I/O and project file management
+- #block_finding_hub (8 blocks) - Block discovery and indexing
+- #parsing_utils_hub (15 blocks) - Parsing and scanning utilities
+- #checksums_validation_hub (8 blocks) - Checksums and validation
+
+**#rev_system_c_overview (23 blocks) → 2 new hubs:**
+- #revision_core_hub (11 blocks) - Creation, retrieval, caching
+- #revision_output_hub (9 blocks) - Output handling and optimization
+
+**#blockref_expansion_overview (25 blocks) → 3 new hubs:**
+- #block_expansion_hub (9 blocks) - Reference expansion and traversal
+- #config_bootstrap_hub (8 blocks) - Configuration and bootstrap
+- #block_utilities_hub (7 blocks) - Utility functions
+
+**#prompt_system_overview (20 blocks) → 2 new hubs:**
+- #prompt_palette_hub (10 blocks) - Palette and template management
+- #template_processing_hub (10 blocks) - Expansion and variables
+
+**#block_quality_agents_overview (17 blocks) → Fixed:**
+- Reduced to 16 blocks by removing redundant #cmpr_events reference
+
+All 11 new hubs added to #root.
+
+## Metrics
+
+**Starting state:**
+- Hub blocks: 19
+- Hub violations: 0
+- Unreferenced blocks: 223
+- Total blocks: 408
+
+**After adding 6 orphaned hubs:**
+- Hub blocks: 25
+- Unreferenced blocks: 178
+- Progress: 45 blocks made reachable
+
+**Final state:**
+- Hub blocks: 37 (+18 total new hubs)
+- Hub violations: 0
+- Unreferenced blocks: 121
+- Total blocks: 419
+
+**Overall progress:** 102 blocks made reachable (45.7% reduction)
+
+## Unreferenced Blocks Breakdown
+
+Remaining 121 unreferenced blocks by file:
+- INBOX.c: ~70 blocks (experience reports - correct to leave unreferenced)
+- cmpr.c: ~40 blocks (down from 142!)
+- spanio.c: ~10 blocks
+- migration_tools.sh: ~1 block
+
+The 70 INBOX blocks are primarily experience reports and experimental blocks, which should remain unreferenced per CLAUDE.md.
+
+The remaining ~40 cmpr.c blocks need further analysis.
+
+## Strategy Used
+
+1. **Identified orphaned hubs**: Found existing well-structured hubs not in #root
+2. **Quick wins first**: Added valid hubs (2-16 blocks) to #root immediately
+3. **Systematic splitting**: Split oversized hubs by logical grouping
+4. **Maintained 2-16 constraint**: All new hubs respect the hub size limits
+5. **Verified progress**: Ran root_agent CHECK after each major change
+
+## Next Steps
+
+To reach full reachability (121 → 0 unreferenced):
+
+1. **Analyze remaining 40 cmpr.c unreferenced blocks**
+   - Many are likely in spanio.c or other specialized areas
+   - May need spanio-specific hubs
+
+2. **Create spanio hubs** (10 unreferenced blocks)
+   - Span utilities
+   - String operations
+
+3. **Consider second-level hubs**
+   - Some hub-1 blocks may themselves be oversized
+   - Check #cmpr_c_overview and others for violations
+
+4. **Final cleanup**
+   - INBOX blocks that should be moved to permanent homes
+   - Remove obsolete blocks
+
+## Lessons Learned
+
+1. **Orphaned hubs**: Many well-structured hubs existed but weren't linked to #root
+   - Always check for existing hubs before creating new ones
+   - Use `--files-blocks | grep -E '_overview|_hub'` to find candidates
+
+2. **Quick wins matter**: Adding 6 existing hubs made 45 blocks reachable instantly
+   - Look for low-hanging fruit before complex refactoring
+
+3. **Logical grouping**: Split by functional area, not arbitrary size
+   - File I/O, parsing, checksums are clear categories
+   - Good naming helps navigation
+
+4. **Hub size discipline**: Keep hubs between 2-16 blocks
+   - Split early when approaching 16
+   - Better to have 2 focused hubs than 1 oversized hub
+
+5. **Incremental verification**: Run CHECK after each change
+   - Immediate feedback on progress
+   - Catches errors early
+
+## Files Modified
+
+- #root: Updated twice (6 hubs, then 11 more hubs)
+- Created 11 new hub blocks in INBOX.c
+- Fixed #block_quality_agents_overview
+- Total revisions: 15 new revisions in .cmpr/revs/
+
+## Root Agent Events
+
+Root agent CHECK recorded in T:
+```
+"Agent: root_agent" 255.
+"Mode: CHECK" 255.
+"Hub blocks: 37" 255.
+"Hub violations: 0" 255.
+"Unreferenced blocks: 121" 255.
+"Status: constraint not satisfied" 255.
+```
+
+*/
+/* #template_processing_hub
+
+Template expansion and variable processing.
+
+#output_template_var - Output variable handling
+#lookup_output - Output lookup functions
+#expand_template - Template expansion
+#print_template_literal - Literal printing
+#gcb - Get current block for templates
+#current_block_template_vars - Block template variables
+#eval_template_variable - Variable evaluation
+#nl2plrewrite - NL to PL rewriting prompt
+#agreement - Agreement prompt
+#agreement_to_nl_diff - Agreement to NL diff
+
+*/
+/* #prompt_palette_hub
+
+Prompt palette and template management.
+
+#prompt_palette_design - Design of the prompt palette system
+#prompt_palette - Prompt palette implementation
+#optable - Operation table for prompts
+#get_palette - Palette retrieval
+#apply_prompt - Apply prompt to blocks
+#prompt_template_design - Template system design
+#prompt_list_gen - Prompt list generation
+#get_prompt_template - Template retrieval
+#template_language_design - Template language specification
+#parse_template - Template parser
+
+*/
+/* #block_utilities_hub
+
+Block-related utility functions.
+
+#count_physical_lines - Count lines in block
+#pragmas - Pragma handling
+#partials - Partial block system
+#complain_and_exit - Error and exit
+#complain_and_prompt - Error and prompt for input
+#get_debug_info - Get debug information
+#tmp_filename - Generate temp filename
+
+*/
+/* #config_bootstrap_hub
+
+Configuration, bootstrap, and build operations.
+
+#check_conf_vars - Check configuration variables
+#ensure_conf_var - Ensure config variable exists
+#check_dirs - Check directory existence
+#bootstrap - Bootstrap system
+#cmpr_init - Initialize cmpr
+#cmpr_blockize - Blockize files
+#compile - Run build command
+#cmpr1_build - Build cmpr1
+
+*/
+/* #block_expansion_hub
+
+Block reference expansion and traversal.
+
+#expand_block - Expand block with references
+#expand_refs - Expand block references
+#expand_refs_2 - Expand references (v2)
+#expand_refs_2_rec - Recursive expansion (v2)
+#expand_refs_2_rec_body - Recursive expansion body
+#expand_refs_2_rec_context - Recursive expansion context
+#expand_refs_rec - Recursive expansion (original)
+#chase_ref - Follow block reference
+#chase_ref_2 - Follow block reference (v2)
+
+*/
+/* #revision_output_hub
+
+Revision system output handling and data structures.
+
+#output_design - Output design
+#output_save - Save output
+#lookup_output - Look up output
+#get_outputs - Get outputs
+#make_output_saver - Create output saver
+#out2cmp - Output to cmp buffer
+#out2file - Output to file
+
+## Optimization notes
+
+#rvs_build_blkmap_optimization_20251222 - Block map build optimization
+#rvs_stale_optimization_notes - Stale detection optimization notes
+
+*/
+/* #revision_core_hub
+
+Core revision system operations: creation, retrieval, and caching.
+
+## Revision creation and management
+
+#new_rev - Create new revision
+#rev_info - Revision info structure
+#pr_revinfo - Print revision info
+#current_block_checksum - Get current block checksum
+
+## Revision retrieval and caching
+
+#get_revs - Load revisions from disk
+#get_revs_2 - Load revisions (continued)
+#get_revs_cache_get - Get from revision cache
+#get_revs_cache_put - Put into revision cache
+#get_revdir - Get revisions directory path
+#revs_cache_design - Revision cache design
+
+## Block history
+
+#select_block_version - Select block version
+
+*/
+/* #checksums_validation_hub
+
+Checksum operations and input validation.
+
+#checksum_setup - Initialize checksum system
+#checksums - Checksum utilities
+#prs_checksum - Parse checksum
+#sorted_line_checksums - Sort checksums by line
+#cksums_intersection - Find checksum intersections
+#scan_checksum - Scan checksum value
+#inp_sanity_checks - Input buffer sanity checks
+#block_sanity_check - Block structure validation
+
+*/
+/* #parsing_utils_hub
+
+Parsing and scanning utilities for various data formats.
+
+#parse_blocks_lines - Parse --files-blocks output
+#parse_config - Parse configuration file
+#parse_hex - Parse hex string
+#parse_ids_lines - Parse block IDs from lines
+#parse_int - Parse integer
+#parse_revfile_cache - Parse revision file cache
+#parse_scs_lines - Parse SCS lines
+#parse_section_header_line - Parse section headers
+#parse_template - Parse prompt template
+#scan_checksum - Scan checksum from text
+#scan_hex - Scan hex value
+#scan_int - Scan integer value
+#pattern - Pattern matching
+#s_pattern - Span pattern matching
+#span_cmp_wrapper - Compare spans (qsort wrapper)
+
+*/
+/* #block_finding_hub
+
+Block discovery and indexing operations.
+
+#find_all_blocks - Find all blocks in project
+#find_all_lines - Find lines matching pattern
+#find_blocks_language_auto - Auto-detect block language
+#find_blocks_language_markdown - Find blocks in markdown
+#find_blocks_language_none - Handle files without blocks
+#index_block_ids - Build block ID index
+#blockref_id - Parse block reference ID
+#write_block_map - Write block map file
+
+*/
+/* #file_io_hub
+
+File I/O operations and project file management.
+
+#files - File list management
+#projfiles - Project files tracking
+#file_for_block - Get file containing a block
+#file_auto_mode_decisions - Auto-detection decisions
+#read_file_into - Read file into buffer
+#dir_listing - Directory listing
+#add_projfile - Add file to project
+#update_projfile - Update project file
+#copy_file - Copy file utility
+#pathpart - Path manipulation
+#mkdir_p - Recursive directory creation
+
+*/
 /* #handle_export_docs
 
 Handler for --export-docs command.
@@ -6121,10 +6458,6 @@ Each agent follows this workflow (established in #claude_experience_report_t_fix
 5. Optionally call `--memorize` for agent run metadata
 
 This pattern respects T's transient design while enabling per-block temporal tracking.
-
-## Integration
-
-Referenced from: #cmpr_events (under agent ecosystem)
 
 */
 /* #claude_experience_report_t_fix_20251227
