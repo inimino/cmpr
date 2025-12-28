@@ -37,6 +37,7 @@ See #ES_BR for the complete event space specification.
 
 The following blocks serve as navigation hubs to reach different parts of the codebase:
 
+#agent_event_navigation
 #cmpr_c_overview
 #cmpr_implementation
 #libraryintro
@@ -47,6 +48,25 @@ The following blocks serve as navigation hubs to reach different parts of the co
 
 #makefile
 
+*/
+/* #agent_event_navigation
+
+Quick navigation paths for the agent system and event system.
+
+## Agent system
+- Start with #root_agent for goals, running agents, and links to implementations.
+- See #cmpr_agents for the agent ecosystem and agent vs script roles.
+- See #agent_infrastructure for the shared interface, state storage, and dashboard patterns.
+
+## Event system
+- Start with #cmpr_events for the high-level description and related blocks.
+- Use #event_system_guide for the step-by-step T/E/S workflow and terminology.
+- Implementation details live in #events_types and #events_functions (CLI operations).
+
+## Quick commands
+- dist/cmpr --print-comment '#root_agent'
+- dist/cmpr --print-comment '#cmpr_events'
+- dist/cmpr --print-comment '#event_system_guide'
 */
 /* #cmpr_c_overview
 
@@ -12004,7 +12024,8 @@ void handle_event_report() {
             flush();
             flush_exit(1);
         }
-        Str code = block_code_part(block_idx);
+        span block = state->blocks.a[block_idx];
+        span code = block_code_part(block);
         int pid = (int)getpid();
         char temp_file[64];
         snprintf(temp_file, sizeof(temp_file), "/tmp/gen_evt_%d.sh", pid);
@@ -12014,7 +12035,7 @@ void handle_event_report() {
             flush();
             flush_exit(1);
         }
-        fwrite(S_ptr(code), 1, S_len(code), f);
+        fwrite(code.buf, 1, len(code), f);
         fclose(f);
         char chmod_cmd[128];
         snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod +x %s", temp_file);
