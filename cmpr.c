@@ -74,6 +74,13 @@ The following blocks serve as navigation hubs to reach different parts of the co
 #prompt_palette_hub
 #template_processing_hub
 #block_quality_agents_overview
+#ui_search_nav_hub
+#nl2pl_generation_hub
+#spanio_extended_hub
+#clipboard_fileops_hub
+#export_reporting_hub
+#agents_system_hub
+#misc_utilities_hub
 
 ## Build System
 
@@ -413,6 +420,11 @@ LLM integration for code generation and rewriting.
 #call_ollama - Call Ollama models  
 #call_anthropic - Call Anthropic models
 
+## curl-based API Callers
+
+#call_gpt_curl - Direct curl wrapper for GPT API
+#call_ollama_curl - Direct curl wrapper for Ollama API
+
 ## Response Handlers
 
 #handle_openai_response - Process OpenAI API responses
@@ -493,9 +505,17 @@ This hub organizes the block manipulation and query functions in cmpr.c.
 - #block_comment_part - Extract NL comment part of a block
 - #block_comment_part_excl - Extract NL excluding markers
 
+## Block Indexing and Lookup
+
+- #block_by_id - Look up block by ID
+- #block_indexing - Block indexing utilities
+- #ids_for_block - Get IDs associated with a block
+- #ingest - Ingest and parse blocks from files
+
 Referenced by: #cmpr_c_overview
 
 */
+
 /* #command_handlers_overview
 
 Command-line and TUI command handlers.
