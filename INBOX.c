@@ -616,6 +616,79 @@ Never be afraid to go back to the root block and look for something else.
 - Can be moved to permanent locations later during review
 - Or left in INBOX as temporal documentation
 Test nl2pl
+
+/* #handle_export_docs
+
+Handler for --export-docs command.
+
+Generates markdown reports in docs/ directory for GitHub visibility.
+
+Implementation:
+1. Find #generate_export_docs block: block_idx = block_by_id(S("generate_export_docs"))
+2. Extract code part using block_code_part()
+3. Write code to temp file /tmp/export_docs_<pid>.sh
+4. Make executable: chmod +x
+5. Execute: system(temp_file)
+6. Check exit code - if non-zero, print error and flush_exit(1)
+7. Clean up temp file
+8. Print "Generated docs/ directory with markdown reports"
+
+Use prt() for output, flush() before exit.
+Return type: void
+
+Justifies: #wants_events_commands
+
+*/
+
+void handle_export_docs() {
+    // Find the generator block
+    int idx = block_by_id(S("generate_export_docs"));
+    if (idx < 0) {
+        prt("Error: #generate_export_docs block not found\n");
+        flush();
+        exit(1);
+    }
+    
+    // Extract the code part
+    span code = block_code_part(idx);
+    if (code.buf == code.end) {
+        prt("Error: #generate_export_docs has no code part\n");
+        flush();
+        exit(1);
+    }
+    
+    // Write to temp file
+    char temp_file[256];
+    snprintf(temp_file, sizeof(temp_file), "/tmp/export_docs_%d.sh", getpid());
+    FILE* f = fopen(temp_file, "w");
+    if (!f) {
+        prt("Error: failed to create temp file\n");
+        flush();
+        exit(1);
+    }
+    fwrite(code.buf, 1, code.end - code.buf, f);
+    fclose(f);
+    
+    // Make executable
+    char chmod_cmd[512];
+    snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod +x %s", temp_file);
+    system(chmod_cmd);
+    
+    // Execute
+    int result = system(temp_file);
+    
+    // Clean up
+    unlink(temp_file);
+    
+    if (result != 0) {
+        prt("Error: export docs generator failed\n");
+        flush();
+        exit(1);
+    }
+    
+    flush();
+}
+
 /* #claude_experience_report_reachability_20251228_2
 
 Session Goal: Continue reachability work to reduce unreferenced blocks
@@ -1095,6 +1168,9 @@ These commands provide CLI access to the wants tracking, event system, and agent
 #handle_agent_run - Execute agent in CHECK/FIX mode
 
 */
+
+#handle_export_docs - Export markdown reports to docs/ directory
+
 /* #codex_experience_report_agent_event_navigation_20251228_1
 
 Summary:
@@ -2681,6 +2757,88 @@ echo "---"
 echo ""
 echo "*This report demonstrates the event system's ability to layer meta-level reasoning*"
 echo "*on top of domain-specific verification without replacing existing agents.*"
+/* #generate_export_docs
+
+Generator script to export markdown reports to docs/ directory for GitHub visibility.
+
+This script generates markdown versions of safe reports and saves them to docs/ directory:
+- docs/wants_dashboard.md - All wants and automation states
+- docs/event_activity.md - Recent event system activity
+
+The docs/ directory can be committed to GitHub to provide visibility into project state.
+
+Usage:
+  dist/cmpr --print-code '#generate_export_docs' | sh
+
+Output: Creates/updates docs/*.md files
+
+Safety: These reports contain only project metadata (wants, goals, event patterns) - no secrets or sensitive data.
+
+Justifies: #report_wants
+
+*/
+
+#!/bin/sh
+# Export markdown reports to docs/ directory
+
+echo "Exporting markdown reports to docs/..."
+
+# Create docs/ directory if needed
+mkdir -p docs
+
+# Generate wants dashboard markdown
+echo "Generating wants_dashboard.md..."
+dist/cmpr --print-code '#generate_wants_dashboard' | sh > docs/wants_dashboard.md
+
+# Generate event activity markdown
+echo "Generating event_activity.md..."
+dist/cmpr --print-code '#generate_event_report' | sh > docs/event_activity.md
+
+# Create README for docs/
+cat > docs/README.md << 'DOCREADME'
+# cmpr System Reports
+
+This directory contains auto-generated markdown reports providing visibility into the cmpr project state.
+
+## Reports
+
+- **wants_dashboard.md** - All wants in the system and their automation states
+- **event_activity.md** - Recent event system activity and agent executions
+
+## Generation
+
+Reports are generated using:
+```bash
+dist/cmpr --print-code '#generate_export_docs' | sh
+```
+
+Or via the CLI command:
+```bash
+dist/cmpr --export-docs
+```
+
+## Safety
+
+These reports contain only project metadata:
+- Wants (goals and constraints)
+- Automation state tracking
+- Agent execution patterns
+- Event system activity
+
+No secrets, credentials, or sensitive data are included.
+
+## Freshness
+
+Reports are snapshots and may be outdated. Check generation timestamps in each report.
+DOCREADME
+
+echo "Exported reports:"
+echo "  - docs/wants_dashboard.md"
+echo "  - docs/event_activity.md"
+echo "  - docs/README.md"
+echo "Done."
+
+
 /* #handle_snapshots @events_functions @argtable
 
 List all event snapshots with formatted output.
