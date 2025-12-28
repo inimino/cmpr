@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Event System Timeline</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    body { font-family: monospace; margin: 20px; background: #1e1e1e; color: #d4d4d4; }
+    h1 { color: #4ec9b0; }
+    #container { max-width: 1400px; margin: 0 auto; }
+    canvas { background: #252526; border-radius: 4px; }
+    .stats { margin: 20px 0; padding: 15px; background: #252526; border-radius: 4px; }
+    .stats div { display: inline-block; margin-right: 30px; }
+    .legend { margin: 10px 0; }
+    .legend span { display: inline-block; width: 20px; height: 20px; margin: 0 5px; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h1>Event System Timeline</h1>
+    <div class="stats" id="stats"></div>
+    <div class="legend">
+      <span style="background: #4ec9b0;"></span> Agent Run
+      <span style="background: #569cd6;"></span> Work Session
+      <span style="background: #dcdcaa;"></span> Metric Update
+      <span style="background: #ce9178;"></span> Other Event
+    </div>
+    <canvas id="timeline"></canvas>
+  </div>
+  <script>
+const snapshots = [
+  {
+    timestamp: '2025-12-28T08:56:55',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 312,
+    file: '20251228-085655-771561952'
+  },
+  {
+    timestamp: '2025-12-28T08:58:15',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 312,
+    file: '20251228-085815-023626857'
+  },
+  {
+    timestamp: '2025-12-28T08:59:14',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 312,
+    file: '20251228-085914-475696801'
+  },
+  {
+    timestamp: '2025-12-28T09:04:13',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 311,
+    file: '20251228-090413-040099969'
+  },
+  {
+    timestamp: '2025-12-28T09:04:26',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 311,
+    file: '20251228-090426-375996641'
+  },
+  {
+    timestamp: '2025-12-28T09:06:37',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 302,
+    file: '20251228-090637-114453396'
+  },
+  {
+    timestamp: '2025-12-28T09:06:51',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 302,
+    file: '20251228-090651-413565734'
+  },
+  {
+    timestamp: '2025-12-28T09:09:12',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 302,
+    file: '20251228-090912-630613629'
+  },
+  {
+    timestamp: '2025-12-28T09:11:01',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 292,
+    file: '20251228-091101-730858565'
+  },
+  {
+    timestamp: '2025-12-28T09:12:49',
+    type: 'other',
+    label: 'Event',
+    color: '#ce9178',
+    events: 1,
+    agent: '',
+    mode: '', 
+    status: '',
+    unreferenced: null,
+    file: '20251228-091249-960774171'
+  },
+  {
+    timestamp: '2025-12-28T09:20:59',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 293,
+    file: '20251228-092059-614002382'
+  },
+  {
+    timestamp: '2025-12-28T09:23:09',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 293,
+    file: '20251228-092309-220123790'
+  },
+  {
+    timestamp: '2025-12-28T09:29:46',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 293,
+    file: '20251228-092946-553774986'
+  },
+  {
+    timestamp: '2025-12-28T09:31:18',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 274,
+    file: '20251228-093118-952386052'
+  },
+  {
+    timestamp: '2025-12-28T09:33:34',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 221,
+    file: '20251228-093334-235325317'
+  },
+  {
+    timestamp: '2025-12-28T09:34:52',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 220,
+    file: '20251228-093452-652214834'
+  },
+  {
+    timestamp: '2025-12-28T10:17:16',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 223,
+    file: '20251228-101716-590595974'
+  },
+  {
+    timestamp: '2025-12-28T10:20:29',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 178,
+    file: '20251228-102029-877583102'
+  },
+  {
+    timestamp: '2025-12-28T10:24:27',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 121,
+    file: '20251228-102427-011019049'
+  },
+  {
+    timestamp: '2025-12-28T10:25:29',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 8,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 121,
+    file: '20251228-102529-634003505'
+  },
+  {
+    timestamp: '2025-12-28T10:38:29',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 122,
+    file: '20251228-103829-480341990'
+  },
+  {
+    timestamp: '2025-12-28T10:49:31',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 52,
+    file: '20251228-104931-562465059'
+  },
+  {
+    timestamp: '2025-12-28T10:50:58',
+    type: 'agent',
+    label: 'root_agent (MANUAL_IMPROVEMENT)',
+    color: '#4ec9b0',
+    events: 10,
+    agent: 'root_agent',
+    mode: 'MANUAL_IMPROVEMENT', 
+    status: 'significant progress (122 \342\206\222 52 unreferenced)',
+    unreferenced: 52,
+    file: '20251228-105058-903429663'
+  },
+  {
+    timestamp: '2025-12-28T10:57:00',
+    type: 'agent',
+    label: 'root_agent (CHECK)',
+    color: '#4ec9b0',
+    events: 7,
+    agent: 'root_agent',
+    mode: 'CHECK', 
+    status: 'constraint not satisfied',
+    unreferenced: 53,
+    file: '20251228-105700-968002820'
+  },
+  {
+    timestamp: '2025-12-28T11:00:23',
+    type: 'other',
+    label: 'Event',
+    color: '#ce9178',
+    events: 1,
+    agent: '',
+    mode: '', 
+    status: '',
+    unreferenced: null,
+    file: '20251228-110023-839695504'
+  },
+  {
+    timestamp: '2025-12-28T12:05:48',
+    type: 'other',
+    label: 'Event',
+    color: '#ce9178',
+    events: 4,
+    agent: '',
+    mode: '', 
+    status: '',
+    unreferenced: null,
+    file: '20251228-120548-358883936'
+  },
+];
+
+// Calculate stats
+const stats = {
+  total: snapshots.length,
+  agents: snapshots.filter(s => s.type === 'agent').length,
+  sessions: snapshots.filter(s => s.type === 'session').length,
+  metrics: snapshots.filter(s => s.type === 'metric').length,
+  dateRange: snapshots.length > 0 ? `${snapshots[0].timestamp.split('T')[0]} to ${snapshots[snapshots.length-1].timestamp.split('T')[0]}` : 'N/A'
+};
+
+document.getElementById('stats').innerHTML = `
+  <div><strong>Total Snapshots:</strong> ${stats.total}</div>
+  <div><strong>Agent Runs:</strong> ${stats.agents}</div>
+  <div><strong>Work Sessions:</strong> ${stats.sessions}</div>
+  <div><strong>Date Range:</strong> ${stats.dateRange}</div>
+`;
+
+// Prepare chart data
+const chartData = {
+  datasets: [{
+    label: 'Events',
+    data: snapshots.map(s => ({
+      x: new Date(s.timestamp),
+      y: 1,
+      eventCount: s.events,
+      ...s
+    })),
+    backgroundColor: snapshots.map(s => s.color),
+    pointRadius: snapshots.map(s => Math.min(4 + s.events / 5, 20)),
+    pointHoverRadius: snapshots.map(s => Math.min(6 + s.events / 5, 25))
+  }]
+};
+
+// Create timeline chart
+const ctx = document.getElementById('timeline').getContext('2d');
+new Chart(ctx, {
+  type: 'scatter',
+  data: chartData,
+  options: {
+    responsive: true,
+    maintainAspectRatio: true,
+    aspectRatio: 3,
+    scales: {
+      x: {
+        type: 'time',
+        time: {
+          unit: 'hour',
+          displayFormats: {
+            hour: 'MMM d HH:mm'
+          }
+        },
+        title: {
+          display: true,
+          text: 'Time',
+          color: '#d4d4d4'
+        },
+        grid: {
+          color: '#3e3e42'
+        },
+        ticks: {
+          color: '#d4d4d4'
+        }
+      },
+      y: {
+        display: false,
+        min: 0,
+        max: 2
+      }
+    },
+    plugins: {
+      legend: {
+        display: false
+      },
+      tooltip: {
+        backgroundColor: '#252526',
+        titleColor: '#4ec9b0',
+        bodyColor: '#d4d4d4',
+        borderColor: '#3e3e42',
+        borderWidth: 1,
+        callbacks: {
+          title: function(items) {
+            return items[0].raw.label;
+          },
+          label: function(context) {
+            const data = context.raw;
+            const lines = [
+              `Time: ${data.timestamp}`,
+              `Events: ${data.eventCount}`
+            ];
+            if (data.agent) lines.push(`Agent: ${data.agent}`);
+            if (data.mode) lines.push(`Mode: ${data.mode}`);
+            if (data.status) lines.push(`Status: ${data.status}`);
+            if (data.unreferenced !== null) lines.push(`Unreferenced: ${data.unreferenced}`);
+            return lines;
+          }
+        }
+      }
+    }
+  }
+});
+  </script>
+</body>
+</html>
