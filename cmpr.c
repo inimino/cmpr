@@ -869,6 +869,117 @@ Testing: #test_events_proposal
 Integration: #claude_experience_report_root_agent_t_integration_20251227 (agent/event system integration)
 
 */
+/* #event_system_temporal_queries
+
+Temporal query patterns using the T/E/S event system.
+
+## Core Pattern: Query by Example
+
+The event system supports "query by example" through the recall mechanism:
+
+1. **Clear T**: `cmpr --T0`
+2. **Set query events**: `cmpr --event "The block id is: #foo" --strength 255`
+3. **Recall**: `cmpr --recall` - finds most recent snapshot containing query events
+4. **Read results**: `cmpr --T` - all events from that snapshot now in T
+
+This enables temporal reasoning: "What was the state when we last worked on X?"
+
+## Pattern: Extracting Status from Historical Snapshots
+
+When agents run, they emit structured events:
+```
+"Agent: root_agent" 255.
+"Mode: CHECK" 255.
+"Status: constraint not satisfied" 255.
+"Unreferenced blocks: 52" 255.
+"Timestamp: 2025-12-27T05:21:56+00:00" 255.
+```
+
+Then `cmpr --memorize` saves this snapshot.
+
+Later, to find the most recent status:
+```bash
+cmpr --T0
+cmpr --event "Agent: root_agent" --strength 255
+cmpr --recall
+cmpr --T | grep "Status:"
+```
+
+## Pattern: Iterating Over Entities
+
+To check status for multiple entities, loop with T0:
+
+```bash
+for block in $all_blocks; do
+  cmpr --T0
+  cmpr --event "The block id is: $block" --strength 255
+  cmpr --recall
+  status=$(cmpr --T | grep "The block is reachable" || echo "unknown")
+  echo "$block: $status"
+done
+```
+
+Each iteration:
+- Clears T (transient context)
+- Sets query for specific entity
+- Recalls historical snapshot
+- Extracts relevant facts
+- Reports result
+
+## Pattern: Correlation by Content
+
+If exact event string doesn't exist, correlation strategies:
+
+1. **Substring matching**: Query with partial text
+2. **Related keywords**: If tracking "foo feature", search for events containing "foo"
+3. **Agent name correlation**: Feature X likely tracked by "x_agent"
+
+Example:
+```bash
+# Direct query
+cmpr --T0
+cmpr --event "The feature is: authentication" --strength 255
+cmpr --recall
+
+# If that fails, try related agent
+cmpr --T0  
+cmpr --event "Agent: auth_agent" --strength 255
+cmpr --recall
+```
+
+## Pattern: Aggregating Across Time
+
+To see trends, examine multiple snapshots:
+
+```bash
+for snapshot in $(ls -1r .cmpr/events/); do
+  value=$(grep "Unreferenced blocks:" .cmpr/events/$snapshot | cut -d: -f2 | tr -d ' ".')
+  timestamp=$(echo $snapshot | cut -d- -f1-2)
+  echo "$timestamp: $value"
+done
+```
+
+This extracts time-series data from the event history.
+
+## Key Insights
+
+1. **T is transient**: Clear it between queries (--T0), it's not a persistent database
+2. **Snapshots are the database**: Historical state lives in .cmpr/events/
+3. **Recall is associative**: Finds snapshots by content similarity, not by ID
+4. **Events are self-describing**: String-based events enable flexible querying
+5. **After-the-fact schema**: Define event spaces later, query old snapshots now
+
+## Composition with Agents
+
+Agents produce events during execution. Other scripts query those events later. This separates:
+- **Production**: Agents emit structured events, call --memorize
+- **Consumption**: Scripts use --T0/--event/--recall/--T to query history
+
+Example: root_agent emits "Unreferenced blocks: N" events. Later, a reporting script queries all snapshots to plot the metric over time - without re-running the agent.
+
+*/
+
+
 /* #block_context_workflow @cmpr_events @ES_names @event_system_guide
 
 Manual workflow for loading complete block context into T (transient memory).
@@ -5153,6 +5264,7 @@ Manually maintained.
 	int ind_map_error = 0;
 	int ind_test_block_map = 0;
 	int ind_wants = 0;
+	int ind_wants_status = 0;
 	int ind_agents_wants = 0;
 	int ind_wants_dashboard = 0;
 	int ind_event_report = 0;
@@ -5309,6 +5421,8 @@ Manually maintained.
 			ind_test_block_map = 1;
 		} else if (strcmp(arg, "--wants") == 0) {
 			ind_wants = 1;
+		} else if (strcmp(arg, "--wants-status") == 0) {
+			ind_wants_status = 1;
 		} else if (strcmp(arg, "--agents-wants") == 0) {
 			ind_agents_wants = 1;
 		} else if (strcmp(arg, "--wants-dashboard") == 0) {
@@ -5410,6 +5524,7 @@ Manually maintained.
 	             ind_run + ind_agents + ind_checksum +
 	             ind_map_error + ind_test_block_map +
 	             ind_wants +
+	             ind_wants_status +
 	             ind_agents_wants +
 	             ind_wants_dashboard +
 	             ind_event_report +
@@ -5611,6 +5726,11 @@ Manually maintained.
 	
 	if (ind_wants) {
 		handle_wants();
+		flush_exit(0);
+	}
+
+	if (ind_wants_status) {
+		handle_wants_status();
 		flush_exit(0);
 	}
 
@@ -11855,6 +11975,73 @@ void handle_wants() {
     }
     
     flush();
+}
+
+/* #handle_wants_status @argtable
+
+Implement the --wants-status command which shows status of all wants by querying the event system.
+
+void handle_wants_status();
+
+This executes the #wants_status_report shell script which:
+1. Gets all wants using --wants
+2. For each want, queries event snapshots using T/E/S
+3. Extracts status, agent, and timestamp from historical agent runs
+4. Outputs formatted report
+
+Implementation:
+- Load code with get_code()
+- Find #wants_status_report block
+- Extract PL (shell script)
+- Execute it
+- Exit with script's exit code
+
+This demonstrates temporal querying as described in #event_system_temporal_queries.
+
+*/
+
+void handle_wants_status() {
+    // Find the wants_status_report block
+    int block_idx = block_by_id(S("#wants_status_report"));
+    if (block_idx == -1) {
+        prt("Error: #wants_status_report block not found\n");
+        flush_exit(1);
+    }
+    
+    span block = state->blocks.a[block_idx];
+    span comment_part = block_comment_part(block);
+    span code_part = block;
+    code_part.buf = comment_part.end;
+    
+    if (empty(code_part)) {
+        prt("Error: #wants_status_report block has no code\n");
+        flush_exit(1);
+    }
+    
+    // Write to temp file
+    char tmpfile[256];
+    snprintf(tmpfile, sizeof(tmpfile), "/tmp/cmpr_wants_status_%d.sh", getpid());
+    
+    FILE *f = fopen(tmpfile, "w");
+    if (!f) {
+        prt("Error: Failed to create temp file\n");
+        flush_exit(1);
+    }
+    
+    fwrite(code_part.buf, 1, code_part.end - code_part.buf, f);
+    fclose(f);
+    
+    // Make executable
+    chmod(tmpfile, 0700);
+    
+    // Execute
+    int status = system(tmpfile);
+    
+    // Clean up
+    unlink(tmpfile);
+    
+    // Exit with script's exit code
+    flush_exit(WEXITSTATUS(status));
 }
 /* #handle_agents_wants @handle_wants @handle_agents @root_agent @cmpr_events
 

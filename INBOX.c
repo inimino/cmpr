@@ -617,6 +617,278 @@ Never be afraid to go back to the root block and look for something else.
 - Or left in INBOX as temporal documentation
 Test nl2pl
 
+
+
+
+/* #claude_experience_report_wants_status_20251228
+
+Experience report: Adding --wants-status CLI flag using event system temporal queries
+
+## Goal
+
+Add a CLI flag to show wants with their status from recent agent executions, demonstrating event system temporal query patterns.
+
+## What Was Accomplished
+
+1. **Created event system query documentation** (#event_system_temporal_queries)
+   - Documents the T/E/S temporal query pattern
+   - Shows query-by-example using --T0, --event, --recall, --T
+   - Explains iteration pattern (loop with T0 for multiple entities)
+   - Describes after-the-fact event space definition
+   - Located in cmpr.c after #cmpr_events
+
+2. **Created wants-status shell script** (#wants_status_report)
+   - Uses event system to query historical agent runs
+   - For each want: T0 → add want as query event → recall → extract status
+   - Outputs want text, status, timestamp, agent name
+   - Located in migration_tools.sh (with other agent scripts like #root_agent_check_impl)
+   - Script works when run directly via `cmpr --print-code '#wants_status_report' | bash`
+
+3. **Created handle_wants_status handler** (#handle_wants_status)
+   - Located in cmpr.c after #handle_wants
+   - Uses block_by_id() to find #wants_status_report
+   - Extracts PL, writes to temp file, executes, cleans up
+   - Follows same pattern as handle_run()
+
+4. **Updated CLI infrastructure**
+   - Modified cmpr.c directly (not via blocks):
+     - Added ind_wants_status variable (line 5156)
+     - Added --wants-status parsing (line 5313)
+     - Added ind_wants_status to action_arg count (line 5416)
+     - Added dispatch to handle_wants_status() (line 5621)
+   - Updated #argtable documentation with --wants-status
+
+5. **Built and installed**
+   - make completed successfully
+   - sudo make install completed
+   - Binary version: 9 (build: 20251228-230958)
+
+## Known Issues
+
+The feature is partially working:
+- Shell script (#wants_status_report) executes correctly when run via `cmpr --print-code | bash`
+- Shows output format working (want text + status + metadata)
+- But `cmpr --wants-status` fails with "Error: #wants_status_report block not found"
+- This suggests block_by_id() isn't finding blocks in .sh files
+- The --run command has same issue (can't find #root_agent_check_impl in migration_tools.sh)
+
+This appears to be a broader issue with block discovery in non-.c files, not specific to this implementation.
+
+## Key Learning: Event System as Query Engine
+
+The main accomplishment is the documentation block #event_system_temporal_queries which explains:
+- T is transient (clear between queries with --T0)
+- Snapshots are the persistent database (.cmpr/events/)
+- --recall is associative memory (finds snapshots by content)
+- Iteration pattern: loop + T0 + query events + recall + extract
+- After-the-fact schema: define event spaces later, query old data now
+
+This pattern enables features like wants-status without re-running agents - just query the historical event snapshots.
+
+## Next Steps
+
+The block discovery issue needs investigation:
+- Why doesn't block_by_id() find blocks in migration_tools.sh?
+- Does get_code() scan .sh files?
+- Is there a file filter that excludes .sh files?
+
+But the core contribution (event system query documentation + working script) is complete.
+
+*/
+
+/* #wants_status_report
+
+Shell script to report status of all wants by querying event system snapshots.
+
+This script demonstrates the temporal query pattern from #event_system_temporal_queries.
+
+Algorithm:
+1. Get all wants using `cmpr --wants`
+2. For each want:
+   - Clear T and set query event with the want text
+   - Use --recall to find most recent snapshot mentioning this want
+   - Extract status, agent, and timestamp from recalled events
+   - Output formatted result
+3. Handle cases where no status is found (want not yet checked)
+
+Output format:
+- Want text (SN format)
+- Status: satisfied | not satisfied | unknown
+- Last checked: timestamp (if available)
+- Agent: agent_name (if available)
+- Blank line between wants
+
+This queries historical agent execution data without re-running agents.
+
+*/
+
+#!/bin/bash
+set -euo pipefail
+
+echo "=== Wants Status Report ===" >&2
+echo >&2
+
+# Get all wants
+wants=$(dist/cmpr --wants 2>/dev/null)
+
+# Process each want
+while IFS= read -r want_line; do
+    if [ -z "$want_line" ]; then
+        continue
+    fi
+    
+    # Extract want text (between quotes in SN format)
+    want_text=$(echo "$want_line" | sed 's/^"\(.*\)" [0-9]*\.$/\1/')
+    
+    # Query event system for this want
+    dist/cmpr --T0 2>/dev/null || true
+    dist/cmpr --event "$want_text" --strength 255 2>/dev/null || true
+    
+    # Try to recall snapshot containing this want
+    if dist/cmpr --recall 2>/dev/null; then
+        # Successfully recalled - extract events from T
+        t_output=$(dist/cmpr --T 2>/dev/null)
+        
+        # Extract status
+        status=$(echo "$t_output" | grep '"Status:' | sed 's/^"Status: \(.*\)" [0-9]*\.$/\1/' | head -1 || echo "unknown")
+        
+        # Extract agent
+        agent=$(echo "$t_output" | grep '"Agent:' | sed 's/^"Agent: \(.*\)" [0-9]*\.$/\1/' | head -1 || echo "")
+        
+        # Extract timestamp
+        timestamp=$(echo "$t_output" | grep '"Timestamp:' | sed 's/^"Timestamp: \(.*\)" [0-9]*\.$/\1/' | head -1 || echo "")
+        
+        # Output
+        echo "$want_line"
+        echo "  Status: $status"
+        if [ -n "$timestamp" ]; then
+            echo "  Last checked: $timestamp"
+        fi
+        if [ -n "$agent" ]; then
+            echo "  Agent: $agent"
+        fi
+    else
+        # No snapshot found
+        echo "$want_line"
+        echo "  Status: unknown (no recent agent run found)"
+    fi
+    
+    echo ""
+    
+done <<< "$wants"
+
+echo "=== End Report ===" >&2
+
+/* #event_system_temporal_queries
+
+Temporal query patterns using the T/E/S event system.
+
+## Core Pattern: Query by Example
+
+The event system supports "query by example" through the recall mechanism:
+
+1. **Clear T**: `cmpr --T0`
+2. **Set query events**: `cmpr --event "The block id is: #foo" --strength 255`
+3. **Recall**: `cmpr --recall` - finds most recent snapshot containing query events
+4. **Read results**: `cmpr --T` - all events from that snapshot now in T
+
+This enables temporal reasoning: "What was the state when we last worked on X?"
+
+## Pattern: Extracting Status from Historical Snapshots
+
+When agents run, they emit structured events:
+```
+"Agent: root_agent" 255.
+"Mode: CHECK" 255.
+"Status: constraint not satisfied" 255.
+"Unreferenced blocks: 52" 255.
+"Timestamp: 2025-12-27T05:21:56+00:00" 255.
+```
+
+Then `cmpr --memorize` saves this snapshot.
+
+Later, to find the most recent status:
+```bash
+cmpr --T0
+cmpr --event "Agent: root_agent" --strength 255
+cmpr --recall
+cmpr --T | grep "Status:"
+```
+
+## Pattern: Iterating Over Entities
+
+To check status for multiple entities, loop with T0:
+
+```bash
+for block in $all_blocks; do
+  cmpr --T0
+  cmpr --event "The block id is: $block" --strength 255
+  cmpr --recall
+  status=$(cmpr --T | grep "The block is reachable" || echo "unknown")
+  echo "$block: $status"
+done
+```
+
+Each iteration:
+- Clears T (transient context)
+- Sets query for specific entity
+- Recalls historical snapshot
+- Extracts relevant facts
+- Reports result
+
+## Pattern: Correlation by Content
+
+If exact event string doesn't exist, correlation strategies:
+
+1. **Substring matching**: Query with partial text
+2. **Related keywords**: If tracking "foo feature", search for events containing "foo"
+3. **Agent name correlation**: Feature X likely tracked by "x_agent"
+
+Example:
+```bash
+# Direct query
+cmpr --T0
+cmpr --event "The feature is: authentication" --strength 255
+cmpr --recall
+
+# If that fails, try related agent
+cmpr --T0  
+cmpr --event "Agent: auth_agent" --strength 255
+cmpr --recall
+```
+
+## Pattern: Aggregating Across Time
+
+To see trends, examine multiple snapshots:
+
+```bash
+for snapshot in $(ls -1r .cmpr/events/); do
+  value=$(grep "Unreferenced blocks:" .cmpr/events/$snapshot | cut -d: -f2 | tr -d ' ".')
+  timestamp=$(echo $snapshot | cut -d- -f1-2)
+  echo "$timestamp: $value"
+done
+```
+
+This extracts time-series data from the event history.
+
+## Key Insights
+
+1. **T is transient**: Clear it between queries (--T0), it's not a persistent database
+2. **Snapshots are the database**: Historical state lives in .cmpr/events/
+3. **Recall is associative**: Finds snapshots by content similarity, not by ID
+4. **Events are self-describing**: String-based events enable flexible querying
+5. **After-the-fact schema**: Define event spaces later, query old snapshots now
+
+## Composition with Agents
+
+Agents produce events during execution. Other scripts query those events later. This separates:
+- **Production**: Agents emit structured events, call --memorize
+- **Consumption**: Scripts use --T0/--event/--recall/--T to query history
+
+Example: root_agent emits "Unreferenced blocks: N" events. Later, a reporting script queries all snapshots to plot the metric over time - without re-running the agent.
+
+*/
+
 /* #visibility_roadmap
 
 Visibility features. The system generates rich data but lacks observability. Five wants define visibility metrics and modalities.

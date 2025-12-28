@@ -123,6 +123,90 @@ awk -v blockid="$BLOCKID" '
     flag {print}
     flag && $0 == "*/" {flag=0; exit}
 ' "$CMPR2" | cmpr --after "$AFTER"
+/* #wants_status_report
+
+Shell script to report status of all wants by querying event system snapshots.
+
+This script demonstrates the temporal query pattern from #event_system_temporal_queries.
+
+Algorithm:
+1. Get all wants using `cmpr --wants`
+2. For each want:
+   - Clear T and set query event with the want text
+   - Use --recall to find most recent snapshot mentioning this want
+   - Extract status, agent, and timestamp from recalled events
+   - Output formatted result
+3. Handle cases where no status is found (want not yet checked)
+
+Output format:
+- Want text (SN format)
+- Status: satisfied | not satisfied | unknown
+- Last checked: timestamp (if available)
+- Agent: agent_name (if available)
+- Blank line between wants
+
+This queries historical agent execution data without re-running agents.
+
+*/
+
+#!/bin/bash
+set -euo pipefail
+
+echo "=== Wants Status Report ===" >&2
+echo >&2
+
+# Get all wants
+wants=$(dist/cmpr --wants 2>/dev/null)
+
+# Process each want
+while IFS= read -r want_line; do
+    if [ -z "$want_line" ]; then
+        continue
+    fi
+    
+    # Extract want text (between quotes in SN format)
+    want_text=$(echo "$want_line" | sed 's/^"\(.*\)" [0-9]*\.$/\1/')
+    
+    # Query event system for this want
+    dist/cmpr --T0 2>/dev/null || true
+    dist/cmpr --event "$want_text" --strength 255 2>/dev/null || true
+    
+    # Try to recall snapshot containing this want
+    if dist/cmpr --recall 2>/dev/null; then
+        # Successfully recalled - extract events from T
+        t_output=$(dist/cmpr --T 2>/dev/null)
+        
+        # Extract status
+        status=$(echo "$t_output" | grep '"Status:' | sed 's/^"Status: \(.*\)" [0-9]*\.$/\1/' | head -1 || echo "unknown")
+        
+        # Extract agent
+        agent=$(echo "$t_output" | grep '"Agent:' | sed 's/^"Agent: \(.*\)" [0-9]*\.$/\1/' | head -1 || echo "")
+        
+        # Extract timestamp
+        timestamp=$(echo "$t_output" | grep '"Timestamp:' | sed 's/^"Timestamp: \(.*\)" [0-9]*\.$/\1/' | head -1 || echo "")
+        
+        # Output
+        echo "$want_line"
+        echo "  Status: $status"
+        if [ -n "$timestamp" ]; then
+            echo "  Last checked: $timestamp"
+        fi
+        if [ -n "$agent" ]; then
+            echo "  Agent: $agent"
+        fi
+    else
+        # No snapshot found
+        echo "$want_line"
+        echo "  Status: unknown (no recent agent run found)"
+    fi
+    
+    echo ""
+    
+done <<< "$wants"
+
+echo "=== End Report ===" >&2
+
+
 /* #root_agent_check_impl
 
 Executable agent that checks if the #root want is satisfied.
