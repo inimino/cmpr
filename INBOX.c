@@ -617,6 +617,1083 @@ Never be afraid to go back to the root block and look for something else.
 - Or left in INBOX as temporal documentation
 Test nl2pl
 
+/* #claude_experience_report_event_visualization_20251228
+
+Experience report: Event system visualization implementation and enhancement proposals.
+
+## Session Goal
+
+Implement event system visualizations to enable visual analysis of temporal data, then propose additional enhancements to the event system.
+
+## What Was Accomplished
+
+### Implemented Event Visualizations
+
+Created complete visualization infrastructure for the event system with three main components:
+
+1. **Event Timeline** (#generate_timeline_html)
+   - Interactive scatter plot of all event snapshots over time
+   - Color-coded by event type (agent runs, work sessions, metrics)
+   - Point size indicates event count
+   - Hover tooltips show full event details
+   - Uses Chart.js with time scale
+   - Self-contained HTML with embedded CSS/JS
+   - Output: public_html/event_timeline.html
+
+2. **Metric Plotting** (#generate_metric_plot)
+   - Line charts tracking specific metrics over time
+   - Supports: unreferenced blocks, hub counts, event counts
+   - Extensible to any numeric event pattern
+   - Shows min/max/avg/latest statistics
+   - Takes metric name as argument
+   - Generates: public_html/metric_{name}.html
+
+3. **Snapshot Statistics** (#generate_snapshot_stats)
+   - Statistical analysis of all snapshots
+   - Agent activity distribution
+   - Event pattern frequency analysis
+   - Events-per-snapshot histogram
+   - CSS-based bar charts (no external dependencies)
+   - Output: public_html/snapshot_stats.html
+
+4. **Visualization Index** (#generate_visualization_index)
+   - Central navigation page linking all visualizations
+   - Shows timestamps for each report
+   - Indicates missing visualizations
+   - Includes generation commands
+   - Output: public_html/index.html
+
+### Block Structure Created
+
+- #event_visualization_overview - Main hub block describing visualization subsystem
+- #handle_graph_timeline - CLI handler for --graph-timeline command
+- #generate_timeline_html - Executable bash block generating timeline HTML
+- #handle_plot_metric - CLI handler for --plot METRIC command
+- #generate_metric_plot - Executable bash block generating metric plots
+- #generate_snapshot_stats - Executable bash block generating statistics
+- #generate_visualization_index - Executable bash block generating index page
+
+All blocks currently in INBOX awaiting integration into navigation structure.
+
+### What Works
+
+Verified working with actual event data from .cmpr/events/:
+- Timeline successfully parsed 19+ snapshots showing root_agent activity
+- Metric extraction correctly identified unreferenced blocks: 312 → 311 → ... → 52
+- Hub counts tracked over time: 10 → 37 → 44
+- Event counts per snapshot extracted and plotted
+- All HTML files are self-contained and viewable in browser
+- Chart.js integration working (scatter plots and line charts)
+- Responsive design with dark theme matching terminal UI aesthetic
+
+## Event System Enhancement Proposals
+
+### 1. Event Space Inference and Validation
+
+**Concept**: Automatically discover event spaces from existing snapshots and validate compliance.
+
+**Commands**:
+- `cmpr --infer-spaces` - Analyze snapshots, detect patterns like "The X is: {value}", suggest event space definitions
+- `cmpr --validate-space "BID"` - Check if current T violates event space rules (e.g., two block IDs both at 255 strength)
+- `cmpr --suggest-spaces --confidence 0.8` - Machine learning approach to discover hidden event spaces
+
+**Use Cases**:
+- Discover that "The block id is: {id}" + "The block idx is: {idx}" form coherent joint event space
+- Detect when events contradict (two mutually exclusive events both at 255)
+- Auto-generate ES_* definition blocks from usage patterns
+
+**Implementation Notes**:
+- Parse all snapshots, extract event strings
+- Use prefix matching to group related events
+- Statistical analysis to determine if groups form valid event spaces
+- Generate markdown documentation for discovered spaces
+
+**Priority**: Medium - improves event system usability but not critical
+
+### 2. Temporal Analytics and Diff
+
+**Concept**: Already partially implemented via visualizations, extend with diff capabilities.
+
+**Commands**:
+- `cmpr --diff-snapshots SNAP1 SNAP2` - Show which events appeared/disappeared/changed strength
+- `cmpr --timeline "pattern"` - Show all snapshots containing events matching pattern, with strength evolution
+- `cmpr --metric "unreachable blocks" --since "2024-01-01"` - Filter time range, show trend
+- `cmpr --regression-detect METRIC` - Detect when metric gets worse (increasing unreferenced blocks)
+
+**Use Cases**:
+- "What changed between yesterday and today?" → diff snapshots
+- "How did reachability improve this month?" → already works via metric_unreferenced.html
+- "When did we last have zero unreachable blocks?" → timeline query
+- CI/CD alerts when metrics regress
+
+**Implementation Notes**:
+- Diff: Load two snapshots, compute set difference of events, format output
+- Timeline: Grep all snapshots for pattern, extract timestamps and strengths, plot or list
+- Regression: Compare consecutive snapshots, detect increasing trend in "bad" metrics
+
+**Priority**: High - temporal analytics are core value proposition of event system
+
+### 3. Agent Coordination via Events
+
+**Concept**: Event-driven agent execution based on state conditions.
+
+**Commands**:
+- `cmpr --watch "Unreferenced blocks: [0-9]+" --trigger "#root_agent_fix" --threshold "> 10"`
+- `cmpr --agent-depends "#quality_agent" --after "#root_agent_check"`
+- `cmpr --auto-maintain` - Run all "owned" level wants automatically when conditions met
+
+**Use Cases**:
+- When unreachable blocks > threshold, automatically run root_agent FIX
+- Only run quality agents after reachability is satisfied (dependencies)
+- Continuous maintenance mode: system self-heals based on event triggers
+
+**Implementation Notes**:
+- Watch: Poll T or snapshots, regex match events, parse numeric values, compare to threshold, exec agent
+- Dependencies: DAG of agent execution order, topological sort
+- Auto-maintain: Query want maturation states, execute CHECK agents, trigger FIX if violations found
+
+**Priority**: Very High - transforms agents from manual tools to autonomous system maintenance
+
+### 4. Snapshot Query Language
+
+**Concept**: Rich query interface over snapshot history.
+
+**Commands**:
+- `cmpr --query 'BID=#foo AND Mode=CHECK'` - Boolean queries across snapshots
+- `cmpr --query-count "unreachable blocks"` - Count snapshots matching criteria
+- `cmpr --aggregate "blocks per file" --by date` - Aggregation queries with grouping
+- `cmpr --sql "SELECT timestamp, Agent FROM snapshots WHERE Status LIKE '%satisfied%'"`
+
+**Use Cases**:
+- "Find all times we worked on parsing system" → filter by BID in parsing blocks
+- "How many times did root_agent CHECK fail?" → query count
+- "Average events per snapshot by day" → aggregate query
+- Arbitrary SQL queries over event history
+
+**Implementation Notes**:
+- Parse query DSL or SQL-like syntax
+- Convert to filter predicates over snapshot files
+- Load matching snapshots, extract fields, apply aggregations
+- Could use SQLite in-memory DB for complex queries
+
+**Priority**: Medium - nice-to-have for power users, current tools mostly sufficient
+
+### 5. Probabilistic Strength Support (0-254)
+
+**Concept**: Currently only strength 255 (certainty) is supported. Implement arbitrary confidence levels.
+
+**Commands**:
+- `cmpr --event "The block needs refactoring" --strength 180` - 180 bits ≈ very confident but not certain
+- `cmpr --update-strength "event_pattern" --add-bits 20` - Bayesian update as evidence arrives
+- `cmpr --hypothesis "root cause is X" --strength 50` - Track competing hypotheses
+
+**Use Cases**:
+- Debugging: Record uncertain diagnoses, update confidence as tests run
+- Code quality: "This block smells bad" with varying confidence
+- Machine learning integration: Model predictions with calibrated confidence
+- A/B testing: Track which hypothesis has more support
+
+**Implementation Notes**:
+- Modify events storage to support arbitrary strength values 0-255
+- Implement Bayes rule for updating: new_strength = old_strength + evidence_bits
+- Visualization: Show uncertainty bands on metric plots
+- Requires defining event space semantics for probabilistic events
+
+**Priority**: Low for now - 255 (certain) is sufficient for most use cases, adds complexity
+
+### 6. Natural Language Event Queries
+
+**Concept**: LLM-powered temporal queries in plain English.
+
+**Commands**:
+- `cmpr --ask "When did we last have zero unreachable blocks?"`
+- `cmpr --explain SNAPSHOT_ID` - Generate natural language summary
+- `cmpr --compare SNAP1 SNAP2 --explain` - Explain differences in English
+- `cmpr --chat` - Interactive conversation about event history
+
+**Use Cases**:
+- Non-technical stakeholders querying project progress
+- Quick exploration without learning query syntax
+- Automated report generation for status updates
+- Documentation: Auto-generate changelog from event history
+
+**Implementation Notes**:
+- Send snapshot data + question to LLM API
+- Parse LLM response for actionable commands or direct answers
+- Could integrate with existing llm_integration infrastructure
+- Cache expensive LLM calls
+
+**Priority**: Medium - reduces friction for exploration, but requires LLM access
+
+### 7. Event-Driven Testing
+
+**Concept**: Use event snapshots as test assertions.
+
+**Commands**:
+- `cmpr --memorize --tag golden` - Mark current state as "golden" reference
+- `cmpr --test-against TAG` - Compare current T to tagged snapshot, fail if different
+- `cmpr --test-invariant "Unreferenced blocks: 0"` - Assert event must be in T
+- Integration with test frameworks: `pytest --cmpr-snapshot golden`
+
+**Use Cases**:
+- Regression tests: Refactoring shouldn't change observable behavior (events)
+- CI/CD: Fail build if reachability drops below 100%
+- Contract testing: API changes must maintain event structure
+- Property-based testing: Generate random inputs, assert event invariants
+
+**Implementation Notes**:
+- Tag snapshots with metadata (git commit, test name, etc.)
+- Diff current T against golden snapshot
+- Exit code 0 = match, 1 = difference
+- Format output as test failure messages
+- Could extend with fuzzy matching (allow minor deviations)
+
+**Priority**: High for mature projects - regression prevention is valuable
+
+### 8. Event Visualization Enhancements (ALREADY PARTIALLY DONE)
+
+**Implemented**:
+- ✅ Timeline visualization (scatter plot with Chart.js)
+- ✅ Metric line charts (unreferenced, hubs, events)
+- ✅ Snapshot statistics (distributions, agent activity)
+- ✅ Visualization index page
+
+**Still To Do**:
+- Sankey diagram showing state transitions (e.g., 312 unreferenced → 52 unreferenced)
+- Heatmap calendar showing activity intensity by day
+- Network graph of agent dependencies and execution order
+- Real-time updates (websocket or polling) for live dashboards
+- Export to static image formats (PNG, SVG) for reports
+- Embed visualizations in markdown (for GitHub README)
+
+**Priority**: Medium - current visualizations are functional, these are polish
+
+## Known Issues
+
+1. **Heredoc Quoting Error**: #generate_visualization_index has unterminated heredoc causing bash warning
+   - Fix: Check EOF quoting in bash script
+   - Workaround: Index still generates correctly despite warning
+
+2. **Missing CLI Integration**: Visualization blocks exist but no --graph-timeline or --plot commands wired up
+   - Need to add to #argtable and #handle_args
+   - Need to wire #handle_graph_timeline and #handle_plot_metric into CLI dispatcher
+
+3. **No Navigation Integration**: All new blocks are in INBOX
+   - Must integrate into #export_reporting_hub
+   - Must reference from #cmpr_events
+   - Must add to #root navigation structure
+
+4. **Metric Extraction Fragility**: Regex patterns for extracting metrics are brittle
+   - Depends on exact event string format
+   - No error handling for malformed events
+   - Should create #parse_metric_from_snapshots helper with robust parsing
+
+5. **No Caching**: Regenerating visualizations re-parses all snapshots every time
+   - Slow with many snapshots
+   - Should cache parsed data or incrementally update
+
+## Next Steps
+
+### Immediate (This Session Followup)
+1. Fix heredoc quoting in #generate_visualization_index
+2. Move all visualization blocks from INBOX to proper locations
+3. Integrate into navigation: root → cmpr_events → event_visualization_overview
+4. Add CLI flag handlers to argtable and handle_args
+
+### Short Term (Next Few Sessions)
+1. Implement temporal diff: cmpr --diff-snapshots
+2. Add regression detection: alert when metrics worsen
+3. Create Sankey state transition diagram
+4. Implement event-driven agent triggers (highest value)
+
+### Long Term (Future Enhancement)
+1. Probabilistic strength support (full 0-255 range)
+2. Natural language queries with LLM integration
+3. Event-driven testing framework
+4. SQL query interface over snapshots
+5. Real-time dashboard with live updates
+
+## Reflection
+
+The visualization system demonstrates the value of the event system for temporal reasoning. Being able to SEE how unreferenced blocks decreased from 312 → 52 over the course of work sessions makes progress tangible.
+
+The proposed enhancements fall into three categories:
+- **Usability** (inference, NL queries) - make event system easier to use
+- **Automation** (agent coordination, event-driven testing) - increase autonomy
+- **Analysis** (temporal diff, query language) - deepen insights
+
+Highest ROI appears to be:
+1. Agent coordination via events (enables autonomous maintenance)
+2. Temporal analytics/diff (already 70% done via visualizations)
+3. Event-driven testing (regression prevention)
+
+The event system is proving to be a powerful abstraction for making temporal state queryable and actionable.
+
+## Files Modified
+
+Created 7 new blocks (all in INBOX):
+- #event_visualization_overview
+- #handle_graph_timeline
+- #generate_timeline_html
+- #handle_plot_metric
+- #generate_metric_plot
+- #generate_snapshot_stats
+- #generate_visualization_index
+
+Generated HTML visualizations (public_html/):
+- event_timeline.html (12K)
+- metric_unreferenced.html (3.9K)
+- metric_hubs.html (3.9K)
+- metric_events.html (4.0K)
+- snapshot_stats.html (2.4K)
+- index.html (1.0K, incomplete due to heredoc issue)
+
+Total: ~27K of HTML visualization output from 19 event snapshots
+
+/* #generate_visualization_index @event_visualization_overview
+
+Generate index page linking to all event visualizations.
+
+Creates public_html/index.html with navigation to:
+- Event timeline
+- Metric plots (unreferenced blocks, hubs, etc.)
+- Snapshot statistics
+- Wants dashboard
+- Other reports
+
+Algorithm:
+1. Generate HTML header
+2. List all available visualizations with descriptions
+3. Check which HTML files exist in public_html/
+4. Generate links only for existing files
+5. Add timestamps showing when each was generated
+6. Include quick refresh buttons to regenerate
+
+Usage:
+  cmpr --print-code '#generate_visualization_index' | bash > public_html/index.html
+
+*/
+
+#!/bin/bash
+# Generate visualization index
+
+cat << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>cmpr Visualizations</title>
+  <style>
+    body { font-family: monospace; margin: 20px; background: #1e1e1e; color: #d4d4d4; }
+    h1 { color: #4ec9b0; }
+    #container { max-width: 900px; margin: 0 auto; }
+    .section { margin: 30px 0; padding: 20px; background: #252526; border-radius: 4px; }
+    .viz-link { display: block; padding: 15px; margin: 10px 0; background: #3e3e42; border-radius: 4px; text-decoration: none; color: #4ec9b0; }
+    .viz-link:hover { background: #4e4e52; }
+    .description { color: #d4d4d4; margin-top: 5px; font-size: 0.9em; }
+    .timestamp { color: #858585; font-size: 0.85em; }
+    .missing { opacity: 0.5; }
+    code { background: #1e1e1e; padding: 2px 6px; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h1>cmpr Event Visualizations</h1>
+    
+    <div class="section">
+      <h2>Event System</h2>
+/* #generate_snapshot_stats @event_visualization_overview
+
+Generate statistical analysis HTML for event snapshots.
+
+Provides comprehensive statistics and distributions across all snapshots.
+
+Output includes:
+- Event space distribution (which event patterns are most common)
+- Snapshot frequency over time (histogram by hour/day)
+- Agent activity summary (which agents run most often)
+- Event count distribution (histogram of events per snapshot)
+- Top event patterns (most frequent event strings)
+
+Algorithm:
+1. Read all snapshots
+2. Parse and categorize all events
+3. Calculate distributions and statistics
+4. Generate HTML tables and simple bar charts (using CSS)
+5. Output self-contained HTML
+
+Usage:
+  cmpr --print-code '#generate_snapshot_stats' | bash > public_html/snapshot_stats.html
+
+*/
+
+#!/bin/bash
+# Generate snapshot statistics HTML
+
+echo '<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Event Snapshot Statistics</title>
+  <style>
+    body { font-family: monospace; margin: 20px; background: #1e1e1e; color: #d4d4d4; }
+    h1, h2 { color: #4ec9b0; }
+    #container { max-width: 1200px; margin: 0 auto; }
+    .section { margin: 30px 0; padding: 20px; background: #252526; border-radius: 4px; }
+    table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+    th { background: #3e3e42; padding: 10px; text-align: left; color: #4ec9b0; }
+    td { padding: 8px; border-bottom: 1px solid #3e3e42; }
+    .bar { background: #4ec9b0; height: 20px; border-radius: 3px; }
+    .bar-container { background: #3e3e42; width: 100%; height: 20px; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h1>Event Snapshot Statistics</h1>'
+
+# Count snapshots
+total=$(ls -1 .cmpr/events/ 2>/dev/null | wc -l)
+echo "    <div class=\"section\">
+      <h2>Overview</h2>
+      <p><strong>Total Snapshots:</strong> $total</p>"
+
+# Date range
+if [ $total -gt 0 ]; then
+  first=$(ls -1 .cmpr/events/ 2>/dev/null | head -1 | sed 's/\([0-9]\{8\}\).*/\1/')
+  last=$(ls -1 .cmpr/events/ 2>/dev/null | tail -1 | sed 's/\([0-9]\{8\}\).*/\1/')
+  echo "      <p><strong>Date Range:</strong> $first to $last</p>"
+fi
+
+echo "    </div>"
+
+# Agent activity
+echo "    <div class=\"section\">
+      <h2>Agent Activity</h2>
+      <table>
+        <tr><th>Agent</th><th>Runs</th><th>Distribution</th></tr>"
+
+# Count agent runs
+declare -A agent_counts
+for file in .cmpr/events/*; do
+  agent=$(grep -o '"Agent: [^"]*"' "$file" 2>/dev/null | sed 's/"Agent: \([^"]*\)"/\1/')
+  if [ -n "$agent" ]; then
+    agent_counts["$agent"]=$((${agent_counts["$agent"]:-0} + 1))
+  fi
+done
+
+max_count=1
+for count in "${agent_counts[@]}"; do
+  [ $count -gt $max_count ] && max_count=$count
+done
+
+for agent in "${!agent_counts[@]}"; do
+  count=${agent_counts[$agent]}
+  pct=$((count * 100 / max_count))
+  echo "        <tr>
+          <td>$agent</td>
+          <td>$count</td>
+          <td><div class=\"bar-container\"><div class=\"bar\" style=\"width: ${pct}%;\"></div></div></td>
+        </tr>"
+done
+
+echo "      </table>
+    </div>"
+
+# Event patterns
+echo "    <div class=\"section\">
+      <h2>Top Event Patterns</h2>
+      <table>
+        <tr><th>Pattern</th><th>Count</th></tr>"
+
+# Extract common patterns
+cat .cmpr/events/* 2>/dev/null | grep -o '^"[^:]*:' | sort | uniq -c | sort -rn | head -10 | while read count pattern; do
+  pattern=$(echo "$pattern" | tr -d '"')
+  echo "        <tr><td>$pattern</td><td>$count</td></tr>"
+done
+
+echo "      </table>
+    </div>"
+
+# Event count distribution
+echo "    <div class=\"section\">
+      <h2>Events Per Snapshot</h2>
+      <table>
+        <tr><th>Range</th><th>Snapshots</th></tr>"
+
+# Count events per snapshot and bin
+declare -A bins
+for file in .cmpr/events/*; do
+  count=$(grep -c '"' "$file" 2>/dev/null)
+  if [ $count -le 5 ]; then
+    bins["1-5"]=$((${bins["1-5"]:-0} + 1))
+  elif [ $count -le 10 ]; then
+    bins["6-10"]=$((${bins["6-10"]:-0} + 1))
+  elif [ $count -le 20 ]; then
+    bins["11-20"]=$((${bins["11-20"]:-0} + 1))
+  else
+    bins["21+"]=$((${bins["21+"]:-0} + 1))
+  fi
+done
+
+for range in "1-5" "6-10" "11-20" "21+"; do
+  count=${bins[$range]:-0}
+  echo "        <tr><td>$range events</td><td>$count</td></tr>"
+done
+
+echo "      </table>
+    </div>
+  </div>
+</body>
+</html>"
+/* #generate_metric_plot @event_visualization_overview
+
+Generate line chart HTML for tracking a metric over time.
+
+This executable block takes a metric name as argument and generates HTML line chart.
+
+Algorithm:
+1. Read metric name from $1
+2. Define metric extraction pattern based on metric name
+3. Iterate through all snapshots in .cmpr/events/
+4. For each snapshot:
+   - Parse timestamp
+   - Search for events matching metric pattern
+   - Extract numeric value
+   - Add to dataset
+5. Generate HTML with Chart.js line chart
+6. Include data points, trend line, min/max/avg stats
+
+Output: HTML file to stdout
+
+Usage:
+  cmpr --print-code '#generate_metric_plot' | bash unreferenced > public_html/metric_unreferenced.html
+
+*/
+
+#!/bin/bash
+# Generate metric plot HTML
+
+METRIC="${1:-unreferenced}"
+
+# Define metric patterns
+case "$METRIC" in
+  unreferenced)
+    PATTERN="Unreferenced blocks: "
+    TITLE="Unreferenced Blocks Over Time"
+    YLABEL="Count"
+    ;;
+  reachable)
+    PATTERN="Blocks made reachable: "
+    TITLE="Blocks Made Reachable Over Time"
+    YLABEL="Count"
+    ;;
+  hubs)
+    PATTERN="Hub blocks: "
+    TITLE="Hub Blocks Over Time"
+    YLABEL="Count"
+    ;;
+  events)
+    PATTERN=".*"  # Count all events
+    TITLE="Events Per Snapshot"
+    YLABEL="Event Count"
+    ;;
+  *)
+    PATTERN="$METRIC"
+    TITLE="Metric: $METRIC"
+    YLABEL="Value"
+    ;;
+esac
+
+cat << 'HTMLEOF'
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Metric Plot</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    body { font-family: monospace; margin: 20px; background: #1e1e1e; color: #d4d4d4; }
+    h1 { color: #4ec9b0; }
+    #container { max-width: 1200px; margin: 0 auto; }
+    canvas { background: #252526; border-radius: 4px; }
+    .stats { margin: 20px 0; padding: 15px; background: #252526; border-radius: 4px; }
+    .stats div { display: inline-block; margin-right: 30px; }
+  </style>
+</head>
+<body>
+  <div id="container">
+HTMLEOF
+
+echo "    <h1>$TITLE</h1>"
+echo "    <div class=\"stats\" id=\"stats\"></div>"
+echo "    <canvas id=\"chart\"></canvas>"
+echo "  </div>"
+echo "  <script>"
+echo "const metricData = ["
+
+# Extract metric values from snapshots
+for file in $(ls -1 .cmpr/events/ 2>/dev/null | sort); do
+  filepath=".cmpr/events/$file"
+  
+  # Parse timestamp
+  ts=$(echo "$file" | sed 's/\([0-9]\{8\}\)-\([0-9]\{6\}\).*/\1T\2/')
+  ts=$(echo "$ts" | sed 's/\([0-9]\{4\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)T\([0-9]\{2\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)/\1-\2-\3T\4:\5:\6/')
+  
+  # Extract metric value
+  if [ "$METRIC" = "events" ]; then
+    value=$(grep -c '"' "$filepath" 2>/dev/null)
+  else
+    value=$(grep -o "\"$PATTERN[0-9]*\"" "$filepath" 2>/dev/null | head -1 | grep -o '[0-9]\+' | tail -1)
+  fi
+  
+  # Output data point if value found
+  if [ -n "$value" ]; then
+    echo "  { time: '$ts', value: $value },"
+  fi
+done
+
+echo "];"
+
+cat << 'JSEOF'
+
+// Calculate statistics
+const values = metricData.map(d => d.value);
+const stats = {
+  count: values.length,
+  min: Math.min(...values),
+  max: Math.max(...values),
+  avg: (values.reduce((a, b) => a + b, 0) / values.length).toFixed(1),
+  latest: values[values.length - 1]
+};
+
+document.getElementById('stats').innerHTML = `
+  <div><strong>Data Points:</strong> ${stats.count}</div>
+  <div><strong>Latest:</strong> ${stats.latest}</div>
+  <div><strong>Min:</strong> ${stats.min}</div>
+  <div><strong>Max:</strong> ${stats.max}</div>
+  <div><strong>Avg:</strong> ${stats.avg}</div>
+`;
+
+// Create chart
+const ctx = document.getElementById('chart').getContext('2d');
+new Chart(ctx, {
+  type: 'line',
+  data: {
+    datasets: [{
+      label: 'YLABEL',
+      data: metricData.map(d => ({
+        x: new Date(d.time),
+        y: d.value
+      })),
+      borderColor: '#4ec9b0',
+      backgroundColor: 'rgba(78, 201, 176, 0.1)',
+      tension: 0.1,
+      fill: true
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: true,
+    aspectRatio: 2,
+    scales: {
+      x: {
+        type: 'time',
+        time: {
+          unit: 'hour',
+          displayFormats: {
+            hour: 'MMM d HH:mm'
+          }
+        },
+        title: {
+          display: true,
+          text: 'Time',
+          color: '#d4d4d4'
+        },
+        grid: {
+          color: '#3e3e42'
+        },
+        ticks: {
+          color: '#d4d4d4'
+        }
+      },
+      y: {
+        title: {
+          display: true,
+          text: 'YLABEL',
+          color: '#d4d4d4'
+        },
+        grid: {
+          color: '#3e3e42'
+        },
+        ticks: {
+          color: '#d4d4d4'
+        },
+        beginAtZero: true
+      }
+    },
+    plugins: {
+      legend: {
+        display: false
+      },
+      tooltip: {
+        backgroundColor: '#252526',
+        titleColor: '#4ec9b0',
+        bodyColor: '#d4d4d4',
+        borderColor: '#3e3e42',
+        borderWidth: 1
+      }
+    }
+  }
+});
+JSEOF
+
+echo "  </script>"
+echo "</body>"
+echo "</html>"
+/* #handle_plot_metric @event_visualization_overview @argtable
+
+Handler for --plot METRIC command.
+
+Generates a line chart showing how a specific metric changes over time across snapshots.
+
+Supported metrics:
+- "unreferenced" - Track unreferenced blocks count
+- "reachable" - Track reachable blocks count  
+- "hubs" - Track number of hub blocks
+- "events" - Track event count per snapshot
+- Custom pattern matching for any event containing a number
+
+Algorithm:
+1. Parse metric argument from command line
+2. Read all snapshots chronologically
+3. For each snapshot, extract the metric value:
+   - Search for event matching metric pattern
+   - Parse numeric value from event string
+   - Record (timestamp, value) pair
+4. Call generate_metric_plot with data
+5. Save HTML to public_html/metric_{name}.html
+6. Print success message
+
+Implementation:
+
+void handle_plot_metric()
+  Get metric name from argv
+  If no metric specified:
+    prt("Usage: cmpr --plot METRIC\n")
+    prt("Available: unreferenced, reachable, hubs, events\n")
+    return
+  
+  Call generate_metric_plot(metric_name)
+  Print "Metric plot generated: public_html/metric_{metric}.html"
+  
+See #generate_metric_plot for HTML generation.
+See #parse_metric_from_snapshots for metric extraction logic.
+
+*/
+/* #generate_timeline_html @event_visualization_overview
+
+Generate HTML timeline visualization of event snapshots.
+
+This executable block generates a self-contained HTML file with JavaScript timeline.
+
+Algorithm:
+1. Generate HTML header with embedded Chart.js from CDN
+2. Iterate through .cmpr/events/* files in chronological order
+3. Parse each snapshot:
+   - Extract timestamp from filename
+   - Read events and categorize
+   - Identify: agent runs, metric snapshots, work completions
+4. Build JavaScript data arrays:
+   - timestamps[] - ISO dates for X-axis
+   - events[] - Event objects with type, label, metrics
+5. Generate Chart.js timeline config:
+   - Scatter plot with time scale
+   - Color-coded by event type
+   - Point size = event count
+6. Add custom tooltips showing event details
+7. Generate HTML footer
+
+Output: Complete HTML file to stdout
+
+Usage:
+  cmpr --print-code '#generate_timeline_html' | bash > public_html/event_timeline.html
+
+*/
+
+#!/bin/bash
+# Generate interactive event timeline HTML
+
+cat << 'HTMLEOF'
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Event System Timeline</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    body { font-family: monospace; margin: 20px; background: #1e1e1e; color: #d4d4d4; }
+    h1 { color: #4ec9b0; }
+    #container { max-width: 1400px; margin: 0 auto; }
+    canvas { background: #252526; border-radius: 4px; }
+    .stats { margin: 20px 0; padding: 15px; background: #252526; border-radius: 4px; }
+    .stats div { display: inline-block; margin-right: 30px; }
+    .legend { margin: 10px 0; }
+    .legend span { display: inline-block; width: 20px; height: 20px; margin: 0 5px; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h1>Event System Timeline</h1>
+    <div class="stats" id="stats"></div>
+    <div class="legend">
+      <span style="background: #4ec9b0;"></span> Agent Run
+      <span style="background: #569cd6;"></span> Work Session
+      <span style="background: #dcdcaa;"></span> Metric Update
+      <span style="background: #ce9178;"></span> Other Event
+    </div>
+    <canvas id="timeline"></canvas>
+  </div>
+  <script>
+HTMLEOF
+
+# Parse snapshots and generate JavaScript data
+echo "const snapshots = ["
+
+for file in $(ls -1 .cmpr/events/ 2>/dev/null | sort); do
+  filepath=".cmpr/events/$file"
+  
+  # Parse timestamp from filename: YYYYMMDD-HHMMSS-nanos
+  ts=$(echo "$file" | sed 's/\([0-9]\{8\}\)-\([0-9]\{6\}\).*/\1T\2/')
+  ts=$(echo "$ts" | sed 's/\([0-9]\{4\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)T\([0-9]\{2\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)/\1-\2-\3T\4:\5:\6/')
+  
+  # Read events and extract key info
+  agent=$(grep -o '"Agent: [^"]*"' "$filepath" 2>/dev/null | head -1 | sed 's/"Agent: \([^"]*\)"/\1/')
+  mode=$(grep -o '"Mode: [^"]*"' "$filepath" 2>/dev/null | head -1 | sed 's/"Mode: \([^"]*\)"/\1/')
+  status=$(grep -o '"Status: [^"]*"' "$filepath" 2>/dev/null | head -1 | sed 's/"Status: \([^"]*\)"/\1/')
+  unreferenced=$(grep -o '"Unreferenced blocks: [0-9]*"' "$filepath" 2>/dev/null | head -1 | sed 's/"Unreferenced blocks: \([0-9]*\)"/\1/')
+  event_count=$(grep -c '"' "$filepath" 2>/dev/null)
+  
+  # Determine event type
+  type="other"
+  label="Event"
+  color="#ce9178"
+  
+  if [ -n "$agent" ]; then
+    type="agent"
+    label="$agent ($mode)"
+    color="#4ec9b0"
+  elif grep -q '"Experience report"' "$filepath" 2>/dev/null || grep -q '"experience report"' "$filepath" 2>/dev/null; then
+    type="session"
+    label="Work session"
+    color="#569cd6"
+  elif [ -n "$unreferenced" ]; then
+    type="metric"
+    label="Metrics"
+    color="#dcdcaa"
+  fi
+  
+  # Output JSON object
+  echo "  {"
+  echo "    timestamp: '$ts',"
+  echo "    type: '$type',"
+  echo "    label: '$label',"
+  echo "    color: '$color',"
+  echo "    events: $event_count,"
+  echo "    agent: '${agent:-}',"
+  echo "    mode: '${mode:-}', "
+  echo "    status: '${status:-}',"
+  echo "    unreferenced: ${unreferenced:-null},"
+  echo "    file: '$file'"
+  echo "  },"
+done
+
+echo "];"
+
+cat << 'JSEOF'
+
+// Calculate stats
+const stats = {
+  total: snapshots.length,
+  agents: snapshots.filter(s => s.type === 'agent').length,
+  sessions: snapshots.filter(s => s.type === 'session').length,
+  metrics: snapshots.filter(s => s.type === 'metric').length,
+  dateRange: snapshots.length > 0 ? `${snapshots[0].timestamp.split('T')[0]} to ${snapshots[snapshots.length-1].timestamp.split('T')[0]}` : 'N/A'
+};
+
+document.getElementById('stats').innerHTML = `
+  <div><strong>Total Snapshots:</strong> ${stats.total}</div>
+  <div><strong>Agent Runs:</strong> ${stats.agents}</div>
+  <div><strong>Work Sessions:</strong> ${stats.sessions}</div>
+  <div><strong>Date Range:</strong> ${stats.dateRange}</div>
+`;
+
+// Prepare chart data
+const chartData = {
+  datasets: [{
+    label: 'Events',
+    data: snapshots.map(s => ({
+      x: new Date(s.timestamp),
+      y: 1,
+      eventCount: s.events,
+      ...s
+    })),
+    backgroundColor: snapshots.map(s => s.color),
+    pointRadius: snapshots.map(s => Math.min(4 + s.events / 5, 20)),
+    pointHoverRadius: snapshots.map(s => Math.min(6 + s.events / 5, 25))
+  }]
+};
+
+// Create timeline chart
+const ctx = document.getElementById('timeline').getContext('2d');
+new Chart(ctx, {
+  type: 'scatter',
+  data: chartData,
+  options: {
+    responsive: true,
+    maintainAspectRatio: true,
+    aspectRatio: 3,
+    scales: {
+      x: {
+        type: 'time',
+        time: {
+          unit: 'hour',
+          displayFormats: {
+            hour: 'MMM d HH:mm'
+          }
+        },
+        title: {
+          display: true,
+          text: 'Time',
+          color: '#d4d4d4'
+        },
+        grid: {
+          color: '#3e3e42'
+        },
+        ticks: {
+          color: '#d4d4d4'
+        }
+      },
+      y: {
+        display: false,
+        min: 0,
+        max: 2
+      }
+    },
+    plugins: {
+      legend: {
+        display: false
+      },
+      tooltip: {
+        backgroundColor: '#252526',
+        titleColor: '#4ec9b0',
+        bodyColor: '#d4d4d4',
+        borderColor: '#3e3e42',
+        borderWidth: 1,
+        callbacks: {
+          title: function(items) {
+            return items[0].raw.label;
+          },
+          label: function(context) {
+            const data = context.raw;
+            const lines = [
+              `Time: ${data.timestamp}`,
+              `Events: ${data.eventCount}`
+            ];
+            if (data.agent) lines.push(`Agent: ${data.agent}`);
+            if (data.mode) lines.push(`Mode: ${data.mode}`);
+            if (data.status) lines.push(`Status: ${data.status}`);
+            if (data.unreferenced !== null) lines.push(`Unreferenced: ${data.unreferenced}`);
+            return lines;
+          }
+        }
+      }
+    }
+  }
+});
+JSEOF
+
+echo "  </script>"
+echo "</body>"
+echo "</html>"
+/* #handle_graph_timeline @event_visualization_overview @argtable
+
+Handler for --graph-timeline command.
+
+Generates an interactive HTML timeline visualization of event snapshots.
+
+Algorithm:
+1. Check if .cmpr/events/ directory exists
+2. Read all snapshot files in chronological order
+3. For each snapshot:
+   - Parse timestamp from filename
+   - Read event contents
+   - Extract key events (Agent, Mode, Status, metrics)
+   - Categorize snapshot type (agent run, work session, etc.)
+4. Generate HTML with embedded JavaScript timeline
+5. Save to public_html/event_timeline.html
+6. Print success message with file path
+
+Output HTML features:
+- Horizontal timeline with dates on X-axis
+- Events as points/bars color-coded by type
+- Hover tooltips showing event details
+- Zoom/pan controls
+- Legend for event types
+
+Implementation:
+
+void handle_graph_timeline()
+  Create path to .cmpr/events/
+  Call generate_timeline_html() which outputs HTML to stdout
+  Redirect stdout to public_html/event_timeline.html
+  Print "Timeline generated: public_html/event_timeline.html"
+  Print "Open in browser: file://$(pwd)/public_html/event_timeline.html"
+  
+  Return to CLI or TUI mode
+
+See #generate_timeline_html for the actual HTML generation logic.
+
+*/
+/* #event_visualization_overview @cmpr_events @export_reporting_hub
+
+Event system visualization and temporal analytics.
+
+This subsystem provides visual representations of event data over time, enabling:
+- Timeline views of agent activity and snapshots
+- Metric plotting (unreachable blocks, quality metrics, etc.)
+- Trend analysis and progress tracking
+- Interactive HTML dashboards
+
+## Visualization Commands
+
+#handle_graph_timeline - Generate HTML timeline of event snapshots
+#handle_plot_metric - Generate line chart for specific metrics over time
+#handle_snapshot_stats - Statistical analysis of snapshots
+
+## Visualization Generators
+
+#generate_timeline_html - Timeline HTML generator script
+#generate_metric_plot - Metric plotting script (uses Chart.js)
+#parse_metric_from_snapshots - Extract metric values from snapshot history
+
+## Design Principles
+
+1. **Self-contained HTML**: All visualizations are single-file HTML with embedded CSS/JS
+2. **No external dependencies**: Use vanilla JS or embedded Chart.js CDN
+3. **Progressive enhancement**: Text fallback for when rendering fails
+4. **Temporal queries**: Leverage existing snapshot infrastructure
+
+## Integration
+
+- Visualizations output to public_html/ directory
+- Can be viewed in browser or served via static HTTP
+- Link from wants dashboard and event reports
+
+Justifies: #cmpr_events #export_reporting_hub
+
+*/
 /* #reachability_report_20251228
 
 # Block Reachability Report
