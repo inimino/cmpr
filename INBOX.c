@@ -23,6 +23,148 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 
 */
 
+/* #claude_experience_report_agent_qa_20251229_commentary
+
+Programmer feedback.
+
+Accomplished 1-6: great.
+
+Naming convention.
+
+Let's estabish a new convention today as of 20251229 010303.
+The "#cmpra_" prefix means a cmpr agent.
+We will reserve the #cmpra_ namespace for agent implementations.
+
+We're not going to change anything yet, but first we're going to define what a #cmpra_ block implies as an expectation of the cmpr QA team.
+Among other things, it is a hub.
+It must point to other blocks in one hop.
+This means that we have to combine the best of our existing systems into one protocol.
+
+*/
+/* #claude_experience_report_agent_qa_20251229
+
+Session Goal:
+Perform manual QA on all 9 agents listed by `cmpr --agents`.
+
+What Was Accomplished:
+
+1. Ran `cmpr --agents` to get the full list of 9 agents
+2. Used `cmpr --files-blocks` to find all agent-related blocks
+3. Read definitions for all 9 agents using `cmpr --print-comment`
+4. Checked for CHECK and FIX implementations
+5. Verified which agents have installed files in agents/ and scripts/
+6. Checked T for recent agent events and read metrics.json
+
+Key Finding - False Agent Classification:
+
+The `cmpr --agents` command lists 9 items, but only 3 are actual runnable agents:
+- justify (INSTALLED, working)
+- block_names (defined, not installed)
+- nl2pl (defined, not installed)
+
+The other 6 are documentation/infrastructure blocks that happen to use #agent_* prefix:
+- #agent_event_navigation - Navigation links
+- #agent_infrastructure - Design patterns
+- #agent_infrastructure_from_cmpr2 - Imported docs
+- #agent_runner - Utility helper
+- #agent_meta - Manual control script
+- #agent_request_protocol - Protocol spec
+
+This naming convention causes `--agents` to incorrectly identify them as agents.
+
+Agent Status Summary:
+
+| Agent | Installed | CHECK | FIX | Issues |
+|-------|-----------|-------|-----|--------|
+| justify | YES | YES | NO | 116 unjustified blocks |
+| block_names | NO | YES | NO | - |
+| nl2pl | NO | YES | NO | - |
+
+What Works:
+- justify agent is fully operational
+- Agent infrastructure pattern is well-documented
+- CHECK implementations exist for 3 real agents
+
+Known Issues:
+1. Naming confusion: `#agent_*` prefix used for both agents AND documentation
+2. No FIX mode implementations exist for any agent
+3. 2 of 3 real agents not installed (block_names, nl2pl)
+
+Suggested Fixes:
+
+1. Rename documentation blocks to avoid #agent_* prefix:
+   - #agent_event_navigation → #agents_navigation_hub
+   - #agent_infrastructure → #agents_infrastructure_docs
+   - #agent_runner → #agents_runner_utility
+   - #agent_meta → #agents_meta_control
+   - #agent_request_protocol → #agents_request_protocol_spec
+   - #agent_infrastructure_from_cmpr2 → #agents_infrastructure_cmpr2
+
+2. Or modify `--agents` to filter based on presence of CHECK implementation
+
+3. Install block_names and nl2pl agents:
+   ```
+   cmpr --print-code '#agent_block_names' > agents/block_names && chmod +x agents/block_names
+   cmpr --print-code '#cmpr_block_names_check' > scripts/block-names-check && chmod +x scripts/block-names-check
+   cmpr --print-code '#agent_nl2pl' > agents/nl2pl && chmod +x agents/nl2pl
+   cmpr --print-code '#cmpr_nl2pl_check' > scripts/nl2pl-check && chmod +x scripts/nl2pl-check
+   ```
+
+Next Steps:
+- Decide on naming convention fix vs --agents filtering fix
+- Install remaining 2 agents
+- Implement FIX modes for agents
+
+*/
+/* #help_text_agent_qa
+
+Agent QA (Manual Quality Assurance)
+====================================
+
+This topic provides instructions for manually QA'ing an agent.
+Pipe this help text to an assistant: cmpr --help agent-qa | claude
+
+---
+
+ASSISTANT INSTRUCTIONS:
+
+You are performing manual QA on an agent. The user will specify an agent name.
+Follow these steps to assess the agent's status.
+
+STEP 1: Check if agent exists
+  Run: cmpr --agents | grep <agent_name>
+  
+  If no match: The agent does not exist. Report this and stop.
+  If match: Continue to step 2.
+
+STEP 2: Find agent blocks
+  Run: cmpr --files-blocks | grep -i <agent_name>
+  
+  Look for these block patterns:
+    #agent_<name>           - Agent definition (predicate/want)
+    #<name>_agent_check     - CHECK mode implementation
+    #<name>_agent_fix       - FIX mode implementation
+    #<name>_check_impl      - Alternative CHECK pattern
+    #<name>_fix_impl        - Alternative FIX pattern
+  
+  Report which blocks exist and which are missing.
+  If anything other than #agent_<name> exists and whatever that block directly points to, that is probably an error, but just warn about it and carry on.
+
+STEP 3: Read agent definition
+  Run: cmpr --print-comment '#agent_<name>'
+  
+  Check for:
+    - Clear description of what the agent does
+    - Want statement it maintains
+    - Expected behavior in CHECK vs FIX modes
+
+STEP 4: Check if agent can be run
+Once you have cmpr --agents list of agents and cmpr --help you should already be able to figure out how to use an agent.
+Make sure that's the case or complain about it and exit.
+
+---
+
+*/
 /* #claude_experience_report_help_fix_20251229
 
 Session goal: Fix `cmpr --help` and `cmpr --help topics` output.
@@ -93,6 +235,7 @@ generate_help_array '#help_text_events' 'events'
 generate_help_array '#help_text_agents' 'agents'
 generate_help_array '#help_text_reports' 'reports'
 generate_help_array '#help_text_wants' 'wants'
+generate_help_array '#help_text_agent_qa' 'agent_qa'
 
 # Generate the lookup function
 cat << 'EOF'
@@ -134,6 +277,9 @@ span get_help_text(char *topic) {
     } else if (strcmp(topic, "wants") == 0) {
         s.buf = help_wants_data;
         s.end = s.buf + sizeof(help_wants_data) - 1;
+    } else if (strcmp(topic, "agent-qa") == 0) {
+        s.buf = help_agent_qa_data;
+        s.end = s.buf + sizeof(help_agent_qa_data) - 1;
     }
     
     return s;
@@ -222,6 +368,7 @@ Help text blocks:
 #help_text_agents
 #help_text_reports
 #help_text_wants
+#help_text_agent_qa
 
 Implementation notes:
 
@@ -241,6 +388,7 @@ events
 agents
 reports
 wants
+agent-qa
 */
 /* #help_text_summary
 
@@ -594,6 +742,103 @@ Wants establish event spaces (desired state, complement).
 Agents verify and maintain wants through CHECK and FIX modes.
 */
 
+/* #help_text_agent_qa
+
+Agent QA (Manual Quality Assurance)
+====================================
+
+This topic provides instructions for manually QA'ing an agent.
+Pipe this help text to an assistant: cmpr --help agent-qa | claude
+
+---
+
+ASSISTANT INSTRUCTIONS:
+
+You are performing manual QA on an agent. The user will specify an agent name.
+Follow these steps to assess the agent's status.
+
+STEP 1: Check if agent exists
+  Run: cmpr --agents | grep <agent_name>
+  
+  If no match: The agent does not exist. Report this and stop.
+  If match: Continue to step 2.
+
+STEP 2: Find agent blocks
+  Run: cmpr --files-blocks | grep -i <agent_name>
+  
+  Look for these block patterns:
+    #agent_<name>           - Agent definition (predicate/want)
+    #<name>_agent_check     - CHECK mode implementation
+    #<name>_agent_fix       - FIX mode implementation
+    #<name>_check_impl      - Alternative CHECK pattern
+    #<name>_fix_impl        - Alternative FIX pattern
+  
+  Report which blocks exist and which are missing.
+
+STEP 3: Read agent definition
+  Run: cmpr --print-comment '#agent_<name>'
+  
+  Check for:
+    - Clear description of what the agent does
+    - Want statement it maintains
+    - Expected behavior in CHECK vs FIX modes
+
+STEP 4: Check if agent can be run
+  Verify CHECK implementation exists:
+    cmpr --print-comment '#<name>_agent_check'
+    or: cmpr --print-comment '#<name>_check_impl'
+  
+  If no CHECK impl: Agent cannot be run yet. Report as incomplete.
+  If CHECK impl exists: Report the command to run it:
+    cmpr --agent-run <agent_name> CHECK
+    or: cmpr --print-code '#block_id' | bash
+
+STEP 5: Check agent run status
+  Look in current T for recent agent events:
+    cmpr --T | grep -i <agent_name>
+  
+  Look for patterns like:
+    "Agent: <name>" - Indicates recent execution
+    "Status: constraint satisfied" - Passed
+    "Status: constraint violated" - Failed
+  
+  If no events: Agent has not been run recently (in current T).
+
+STEP 6: Summary report
+  Report to the user:
+    - Agent exists: yes/no
+    - Definition block: exists/missing
+    - CHECK implementation: exists/missing  
+    - FIX implementation: exists/missing
+    - Last run status: passed/failed/unknown
+    - Command to run: <command>
+
+---
+
+EXAMPLE QA SESSION:
+
+User: QA the root agent
+Assistant runs: cmpr --agents | grep root
+  Output shows: root_agent
+
+Assistant runs: cmpr --files-blocks | grep -i root_agent
+  Finds: #root_agent, #root_agent_check, #root_agent_fix
+
+Assistant runs: cmpr --print-comment '#root_agent'
+  Reads the definition
+
+Assistant runs: cmpr --T | grep -i root
+  Checks for recent execution
+
+Assistant reports:
+  Agent exists: yes
+  Definition: #root_agent
+  CHECK impl: #root_agent_check
+  FIX impl: #root_agent_fix
+  Run command: cmpr --agent-run root_agent CHECK
+  Last status: constraint satisfied (ran 2 hours ago)
+
+*/
 /* #claude_experience_report_agent_infrastructure_unification_20251229
 
 Experience Report: Agent Infrastructure Unification and Justify Agent Case Study

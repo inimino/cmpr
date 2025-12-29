@@ -13,13 +13,24 @@ If you start from #root, which is the next block, you can reach any block that h
 
 */
 
+/* #roles
 
+It's worth noting two distinct roles in the cmpr system: the programmer and the system itself.
+
+The programmer is responsible for releasing the software and for whether it is fit for purpose, like a civil engineer signing off on something.
+Everything else derives from this.
+The system is responsible for what is delegated to it by the programmer.
+
+*/
 /* #root
 
 "We want this block to contain a list of blocks, such that each block contains another list of at least 2 and at most 16 other blocks, such that every code block in the project is reachable within 2 hops." 255.
 
 We can call this an example of a want line; it states something that we want to be the case, and it is the dual of an agent, which exists to maintain a want, including by verifying that the thing is already the way we want it to be.
 See #root_agent for more.
+
+(We've now achieved this, but there are too many blocks here and so navigation is harder than it needs to be.)
+(We could add another want about how many blocks we have *here* and then maybe we'd add a level... or we could take some other approach.)
 
 ## Documentation
 
