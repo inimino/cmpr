@@ -16,9 +16,260 @@ Workflow:
 This pattern helps maintain the navigational structure while allowing rapid iteration during development.
 
 "We want a --move flag that will make moving blocks easy, probably like --move <id> --after <otherid>." 255.
+"We want a --todo CLI flag that lets us drop wants into the codebase in a defined way without any fuss." 255.
+
+This feature would work only if you have a #TODO block somewhere, which it could offer to set up for you or error out if there isn't such a thing.
+The idea of course is "cmpr --todo "blah blah blah" and it should just post that directly into that #TODO block. Maybe without any change if it's "We want [...]" already, and if not, we could fix it up later, whatever whatever just make it easy to use.
 
 */
 
+/* #claude_experience_report_cmpr2_agent_exploration_20251229_commentary
+
+Programmer commentary.
+
+I like the "bottom line at the bottom" style rather than BLUF.
+In other words, do your thinking as you write, and at the end of the exp rep you include some questions for the programmer.
+I can scroll to the bottom, find action items, and go up from there if I need details.
+
+Quoting:
+
+**Architecture decision pending:**
+The fundamental question is whether to:
+- (A) Port cmpr2's agents/ + scripts/ directory structure into cmpr1
+- (B) Keep cmpr1's block-based agent definitions and generate executables from blocks
+- (C) Hybrid: agent blocks generate both the agent watcher and check script
+
+Option (B) aligns with cmpr philosophy (blocks as source of truth), but needs design work for:
+- How to "install" agent blocks to running processes
+- How to store state when agents are blocks not files
+- How to integrate with Unix process management (systemd? simple PID files?)
+
+End quote.
+
+I like A + B + C.
+Let's have the agents/ and scripts/ directories because for now we need them; we need a place to put things like that.
+Let's keep the block-based definitions and state that every agent has 
+
+Actually.
+
+"Every cmpr agent is defined by one or two blocks (a CHECK predicate and a FIX step function)." 255.
+
+If an agent has only a check function it's still an agent.
+
+Let's also establish that we use pid files.
+This was a mistake in the initial cmpr2 impl of agents.
+
+We should:
+
+run an agent by piping a block code part into /bin/sh or python or whatever, OR by dumping it in a file and making it exec
+the AGENT ITSELF (that means the script) is responsible for putting ...
+no, the system that runs the agents is responsible for putting the pid into a file
+ps tricks are great to recover from the state where this hasn't happened
+to know if an agent is running we need to check the pid file
+
+there needs to be one block (and it's #agent_infrastructure, but we have two versions) that defines all this shit
+
+when an agent runs it can write a report, blah blah
+
+Our immediate target is to figure out how we get from cmpr --agents to "what's running?" "what should I start or stop" etc.
+
+And we want, in cmpr1, to have all the agents that we previously had working in cmpr2 or we want to at least know what they were.
+
+*/
+
+/* #claude_experience_report_cmpr2_agent_exploration_20251229
+
+Experience report: Exploring cmpr2 agent system and importing reference blocks
+
+## Session Goal
+
+Fully explore the cmpr2 agent system architecture, understand how it differs from cmpr1, and copy all relevant agent-related blocks into cmpr1's INBOX.c for future reference.
+
+## What Was Accomplished
+
+### 1. Navigation to cmpr2
+- Started from #root in cmpr1
+- Found #cmpr2_via_cmpr1 block documenting access pattern: `(cd ../cmpr; cmpr --print-comment '#blockid')`
+- Discovered cmpr2 root block is #cmpr_project (not #root)
+- Successfully navigated cmpr2 block structure
+
+### 2. Comprehensive Agent System Exploration
+
+**Architecture discovered:**
+- **Agents vs Scripts separation**: Agents are continuous monitoring processes (loop with `entr` file watching), check scripts are one-shot operations that do the actual work
+- **File structure**:
+  - `agents/` directory contains executable agent files (e.g., `agents/justify`, `agents/nl2pl`)
+  - `scripts/` directory contains check scripts (e.g., `scripts/justify-check`, `scripts/nl2pl-check`)
+  - `.cmpr/agents/<name>/` contains state storage per agent
+- **State storage format**:
+  - `metrics.json` - structured data: `{"agent": "justify", "timestamp": "...", "status": "issues_found", "count": 951, ...}`
+  - `report.txt` - full output (one item per line)
+  - `last-run` - timestamp of last execution
+  - `last-status` - exit code from last run
+- **Interface contract**:
+  - Exit codes: 0 (success), 1 (issues found), 2 (agent error)
+  - stdout: actionable items (one per line)
+  - stderr: diagnostic messages
+  - Invocation modes: no args = check, with args = fix, `-` = read from stdin
+
+**Currently running agents in cmpr2:**
+1. `justify` - Finds blocks unreachable from #cmpr_project via BFS traversal (951 unjustified blocks as of last run)
+2. `nl2pl` - Detects blocks with stale PL code
+3. `block_names` - Finds unnamed blocks
+4. `doc_build` - Documentation building
+5. `cmpr1_build` - Monitors cmpr1 builds
+6. `meta` - Manages other agents (list/status/start/stop commands)
+
+**Agent implementation pattern:**
+- Python scripts using subprocess to call `cmpr` commands
+- BFS traversal for graph-based checks (e.g., justify agent)
+- File watching with `entr` in infinite loop for continuous monitoring
+- JSON metrics output for dashboard integration
+
+**Wants/Decisions framework:**
+- Wants expressed as SN lines: `"We want X" 255.`
+- Each agent maintains a want by defining:
+  - Event space (e.g., BR = Block Reachability)
+  - Predicate (check if want is satisfied)
+  - Step function (fix violations)
+- Connects to CMP model: T (thought/transient memory), P (pattern), E (event spaces)
+- Product patterns track bidirectional relations between event spaces
+
+### 3. Block Import Process
+
+**Methodology:**
+- Used `cmpr --print-block '#blockid' >/dev/null 2>&1` to check for existing blocks
+- Added `_from_cmpr2` suffix to blocks that already existed in cmpr1
+- Copied blocks using: `(cd ../cmpr; cmpr --print-block '#blockid') | cmpr --after '#INBOX'`
+
+**Blocks that already existed (renamed with suffix):**
+1. #cmpr_agents → #cmpr_agents_from_cmpr2
+2. #agent_infrastructure → #agent_infrastructure_from_cmpr2
+3. #ES_names → #ES_names_from_cmpr2
+4. #agreement → #agreement_from_cmpr2
+5. #agreement_SAV → #agreement_SAV_from_cmpr2
+
+**New blocks imported (16 total):**
+- Core documentation: #cmpr_agents_from_cmpr2, #agent_infrastructure_from_cmpr2, #cmpr_agent_202511
+- Agent implementations: #agent_justify, #agent_meta, #agent_nl2pl, #agent_block_names
+- Check scripts: #cmpr_justify_check, #cmpr_block_names_check, #cmpr_nl2pl_check
+- Framework concepts: #decision_feature, #ES_names_from_cmpr2, #Model, #product_pattern_decisions
+- Agreement system: #agreement_from_cmpr2, #agreement_SAV_from_cmpr2
+
+**Current INBOX state:**
+All imported blocks are now in INBOX.c (blocks 315-330), providing complete local reference to cmpr2 agent system without needing to access ../cmpr.
+
+## What Works
+
+- Navigation from cmpr1 to cmpr2 using relative paths works reliably
+- Block import process successfully handles naming conflicts
+- All 16 reference blocks are now accessible in cmpr1's INBOX.c
+- Full understanding of cmpr2 agent architecture documented
+
+## Key Insights
+
+### Architectural Differences cmpr1 vs cmpr2
+
+**cmpr2 (mature):**
+- Agents are executable files in `agents/` directory
+- Continuous monitoring with file watching (entr)
+- Structured state storage with metrics.json
+- Separation of agents (monitors) and scripts (workers)
+- Running agent ecosystem (5 agents currently active)
+- Dashboard integration via JSON metrics
+
+**cmpr1 (developing):**
+- Agent blocks stored in migration_tools.sh
+- Manual execution via `cmpr --print-code '#blockid' | bash`
+- No continuous monitoring yet
+- No structured state storage yet
+- Event system (--T, --event, --memorize, --recall) more developed than cmpr2
+
+### Design Philosophy Alignment
+
+From the commentary on #claude_experience_report_wants_status_20251228_commentary:
+- Need to unify cmpr1 and cmpr2 agent implementations with cmpr1 as source of truth
+- Agent naming should be #agent_* prefix (not #*_agent suffix)
+- `cmpr --agents` should be one-stop shop showing status, reports, running state
+- Every agent corresponds to a want
+- Event spaces define dual outcomes for each want
+
+### The CMP Model Framework
+
+**Core equation**: T_n + P_n → T_{n+1} + P_{n+1}
+- T = thoughts (transient memory, current state)
+- P = patterns (learned rules, constant update function)
+- E = event spaces (provide downward pressure on probabilities)
+
+**Event space definition:**
+- Recognized after the fact (write code first, derive event spaces later)
+- Prefix-based: "The block id is: ..." forms an event space
+- Each event space defines complementary outcomes (satisfied/violated)
+
+**Product patterns:**
+- Bidirectional relations between event spaces
+- Enable queries like: given block ID, find summary (and vice versa)
+- Implemented as closure-based functions in JavaScript
+
+## Known Issues/Blockers
+
+**From previous session (#claude_experience_report_wants_status_20251228):**
+- `cmpr --wants-status` fails with "Error: #wants_status_report block not found"
+- `block_by_id()` doesn't find blocks in .sh files (migration_tools.sh)
+- This blocks both `--wants-status` and `--run` commands from working
+
+**Not addressed in this session:**
+- Still need to fix block discovery issue for .sh files
+- Agent framework unification not started
+- `cmpr --agents` improvements not implemented
+
+## Next Steps
+
+**High priority (from commentary):**
+1. **Fix #agent_* naming convention**: Current cmpr1 uses #*_agent suffix, should be #agent_* prefix for consistency with cmpr2 and tab completion
+2. **Improve `cmpr --agents` command**:
+   - Show which agents are installed
+   - Show which agents are running
+   - Show status (happy/stopped/issues)
+   - Show reports
+3. **Fix block discovery for .sh files**: Investigate why `block_by_id()` doesn't scan migration_tools.sh, affects `--run` and `--wants-status`
+
+**Medium priority:**
+4. **Design unified agent framework**: Compare cmpr1 and cmpr2 implementations, decide on unified approach with cmpr1 as source of truth
+5. **Implement agent state storage**: Add `.cmpr/agents/<name>/` directories with metrics.json following #agent_infrastructure_from_cmpr2 pattern
+6. **Create wants-agent relationship**: Document which agent maintains which want, make this visible in `--agents` output
+
+**Lower priority:**
+7. **Port cmpr2 check scripts**: Adapt Python implementations from #cmpr_justify_check, #cmpr_block_names_check for cmpr1
+8. **Event space documentation**: Formalize event space definitions for cmpr1 agents (BR for block reachability, etc.)
+9. **Dashboard planning**: Consider how to present agent status/metrics in cmpr1 (CLI table? HTML reports? TUI integration?)
+
+## Context for Resuming
+
+**Key blocks to reference:**
+- #cmpr_agents_from_cmpr2 - cmpr2 agent overview
+- #agent_infrastructure_from_cmpr2 - Interface contract and state storage patterns
+- #cmpr_agent_202511 - Agent philosophy and design
+- #agent_justify, #cmpr_justify_check - Working example of agent + check script pattern
+- #claude_experience_report_wants_status_20251228_commentary - Programmer's guidance on unification
+
+**Commands to use:**
+- Check cmpr2 agent status: `(cd ../cmpr; ./agents/meta status)`
+- View cmpr2 agent metrics: `(cd ../cmpr; cat .cmpr/agents/justify/metrics.json)`
+- Run cmpr2 check scripts: `(cd ../cmpr; ./scripts/justify-check)`
+
+**Architecture decision pending:**
+The fundamental question is whether to:
+- (A) Port cmpr2's agents/ + scripts/ directory structure into cmpr1
+- (B) Keep cmpr1's block-based agent definitions and generate executables from blocks
+- (C) Hybrid: agent blocks generate both the agent watcher and check script
+
+Option (B) aligns with cmpr philosophy (blocks as source of truth), but needs design work for:
+- How to "install" agent blocks to running processes
+- How to store state when agents are blocks not files
+- How to integrate with Unix process management (systemd? simple PID files?)
+
+*/
 /* #agreement_SAV_from_cmpr2 @gcb @out2file @filename_template @id_for_block @blocks @output_design
 
 void agreement_SAV(span);
