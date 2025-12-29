@@ -12091,26 +12091,23 @@ void handle_agents() {
 }
 /* #handle_help_topic
 
-Handle --help [topic] command.
+Handle --help [topic] command using compiled-in help text.
 
-If topic is NULL or "topics", print list of all available topics by reading #help_topics_index and extracting topic names.
-
-Otherwise, look up #help_text_<topic> block and print its NL comment.
+This function uses get_help_text() from help_topics.c (generated at build time)
+to retrieve help text without needing to load or scan the codebase.
 
 Algorithm:
-1. If topic is NULL or equals "topics":
-   - Find #help_topics_index block
-   - Extract all block IDs matching #help_text_* from its NL comment
-   - For each help_text_<name> block ID:
-     - Extract topic name by stripping "help_text_" prefix
-     - Print topic name
-   - Exit successfully
+1. Call get_help_text(topic) to retrieve help text span
+   - If topic is NULL or "topics", returns topics index
+   - Otherwise returns specific topic help text
+   
+2. If returned span is empty (s.buf == 0):
+   - Print error "Unknown help topic: <topic>"
+   - Call get_help_text("topics") to show available topics
+   - Exit with error code
 
-2. Otherwise (specific topic requested):
-   - Construct block ID: #help_text_<topic>
-   - Find block by ID
-   - If not found: print error "Unknown help topic: <topic>" and list available topics
-   - If found: print the NL comment of that block
+3. Otherwise:
+   - Print the help text span
    - Exit successfully
 
 Parameters:
@@ -12118,90 +12115,26 @@ Parameters:
 
 Returns: Does not return (calls flush_exit)
 
-Note: Must be called after get_code() since it needs to search blocks.
+Note: Does NOT require get_code() - help text is compiled into binary.
+This is critical so --help works without needing to load the codebase.
+
+Manually maintained.
 */
-
 void handle_help_topic(char *topic) {
-	// Default to "topics" if NULL
-	if (topic == NULL) {
-		topic = "topics";
-	}
-	
-	// Find the help topics index
-	int index_idx = -1;
-	for (int i = 0; i < state->blocks.n; i++) {
-		if (streq(state->blocks.e[i].id, S("help_topics_index"))) {
-			index_idx = i;
-			break;
-		}
-	}
-	
-	if (index_idx < 0) {
-		prt("Error: Help system not initialized (#help_topics_index not found)\n");
-		flush_exit(1);
-	}
-	
-	// If requesting topic list, extract and print all topics
-	if (strcmp(topic, "topics") == 0) {
-		// Print the NL comment of help_text_topics block
-		int topics_idx = -1;
-		for (int i = 0; i < state->blocks.n; i++) {
-			if (streq(state->blocks.e[i].id, S("help_text_topics"))) {
-				topics_idx = i;
-				break;
-			}
-		}
-		
-		if (topics_idx < 0) {
-			prt("Error: #help_text_topics block not found\n");
-			flush_exit(1);
-		}
-		
-		print_comment(topics_idx);
-		flush_exit(0);
-	}
-	
-	// Look up specific topic
-	// Construct block ID: help_text_<topic>
-	char blockid_buf[256];
-	snprintf(blockid_buf, sizeof(blockid_buf), "help_text_%s", topic);
-	span blockid = S(blockid_buf);
-	
-	// Find the block
-	int topic_idx = -1;
-	for (int i = 0; i < state->blocks.n; i++) {
-		if (streq(state->blocks.e[i].id, blockid)) {
-			topic_idx = i;
-			break;
-		}
-	}
-	
-	if (topic_idx < 0) {
-		prt("Unknown help topic: %s\n\n", topic);
-		prt("Available topics:\n");
-		
-		// List all available topics by scanning for help_text_* blocks
-		for (int i = 0; i < state->blocks.n; i++) {
-			span id = state->blocks.e[i].id;
-			if (id.buf != NULL && spanlen(id) > 10) {
-				// Check if starts with "help_text_"
-				if (memcmp(id.buf, "help_text_", 10) == 0) {
-					// Extract topic name (everything after "help_text_")
-					span topic_name = { id.buf + 10, id.end };
-					prt("  %.*s\n", (int)spanlen(topic_name), topic_name.buf);
-				}
-			}
-		}
-		
-		prt("\nFor help on a topic: cmpr --help <topic>\n");
-		flush_exit(1);
-	}
-	
-	// Print the help text
-	print_comment(topic_idx);
-	flush_exit(0);
+    span s = get_help_text(topic);
+    
+    if (s.buf == 0) {
+        fprintf(stderr, "Unknown help topic: %s\n\n", topic ? topic : "");
+        s = get_help_text("topics");
+        if (s.buf) {
+            fwrite(s.buf, 1, s.end - s.buf, stdout);
+        }
+        flush_exit(1);
+    }
+    
+    fwrite(s.buf, 1, s.end - s.buf, stdout);
+    flush_exit(0);
 }
-
 /* #handle_prompt @nl2pl_rewrite
 
 void handle_prompt(int block_idx);

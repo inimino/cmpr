@@ -219,3 +219,4 @@ void pl2nl_rewrite_cb(span message);
 void nl2algo();
 void agreement_to_pl_diff();
 void summarize_block();
+span get_help_text(char *topic);

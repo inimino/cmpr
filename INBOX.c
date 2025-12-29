@@ -23,6 +23,264 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 
 */
 
+/* #claude_experience_report_help_topics_fix_20251229
+
+Session Goal:
+Fix the --help topics implementation based on programmer feedback about the correct pattern.
+
+What Was Wrong:
+The previous experience report suggested adding a forward declaration to the PL of #handle_help_topic, like this:
+  span get_help_text(char *topic);  // In PL code
+  void handle_help_topic(...) { ... }
+
+This is WRONG. The programmer's commentary pointed to #example_block for the correct pattern.
+
+The Correct Pattern (from #example_block):
+1. Function declaration goes in the NL (as a signature line)
+2. Generator script outputs the NL comment at the start of the generated file
+3. extract_decls.py extracts declarations from /* */ comments
+4. No manual forward declarations needed in source code
+
+The Fix:
+Modified #generate_help_topics to output its own NL comment at the start of help_topics.c:
+
+```bash
+# Output the NL comment with the declaration
+cmpr --print-comment '#generate_help_topics'
+echo ""
+```
+
+This causes help_topics.c to start with:
+```c
+/* #generate_help_topics
+
+Generate help_topics.c from help text blocks in INBOX.c.
+
+...
+
+span get_help_text(char *topic);
+
+*/
+```
+
+Then extract_decls.py extracts `span get_help_text(char *topic);` from the comment and adds it to fdecls.h.
+
+Result:
+- Build succeeds (no errors, only pre-existing warnings about other functions)
+- `cmpr --help` works
+- `cmpr --help events` works
+- All help topics display correctly
+- Installed and verified
+
+Key Learning:
+Forward declarations in actual code are a mistake. The NL-in-comment → extract_decls.py → fdecls.h pattern is the correct approach. Generator scripts should output their own NL comment so extract_decls.py can find the declaration.
+
+Files Modified:
+- INBOX.c: Updated #generate_help_topics PL to output NL comment
+- help_topics.c: Now regenerated with NL comment at top
+- fdecls.h: Now includes span get_help_text(char *topic);
+
+Status:
+COMPLETE. Feature working and installed.
+*/
+/* #claude_experience_report_help_topics_resolution_20251229_commentary
+
+Current Status:
+ALMOST DONE but build still fails. The issue is that handle_help_topic calls get_help_text() but the declaration isn't in cmpr.c.
+
+Root Cause:
+The #print_bootstrap pattern shows the correct approach:
+- Function declaration goes IN THE PL of the block that USES the function (in cmpr.c)
+- Function definition goes in the generated file (help_topics.c)
+- extract_decls.py extracts the declaration from cmpr.c into fdecls.h
+
+Programmer commentary:
+
+No. Everything about that is wrong.
+
+The correct approach is:
+
+1. You put the decl in the NL. Read #example_block because it is LITERALLY that pattern.
+
+2. There is no step 2: as long as the fdecls.h gets updated from those files, the fdecl will be in the header and the build will work.
+
+If you have an actual forward declaration in code anywhere in the project, you're doing it wrong (yes, #print_bootstrap also did it wrong; you also wrote that code).
+
+Everything after that point in the exp rep was wrong.
+*/
+
+/* #claude_experience_report_help_topics_resolution_20251229
+
+Session Goal:
+Resolve the core design issue with --help topics implementation and complete the feature.
+
+What Was Accomplished:
+1. Identified the fundamental mistake: original implementation tried to lookup help text from blocks at runtime, but --help must work without loading the codebase
+
+2. Implemented the correct pattern following #generate_bootstrap model:
+   - Created #generate_help_topics script that extracts help text from blocks and generates help_topics.c
+   - Added Makefile rules for help_topics.c generation
+   - Updated Makefile to include help_topics.c in build concatenation
+   - Updated fdecls.h rule to extract declarations from bootstrap_content.c and help_topics.c
+
+3. Rewrote #handle_help_topic to use compiled-in strings via get_help_text()
+
+4. Fixed Makefile dependency chain so generated files participate in declaration extraction
+
+Current Status:
+ALMOST DONE but build still fails. The issue is that handle_help_topic calls get_help_text() but the declaration isn't in cmpr.c.
+
+Root Cause:
+The #print_bootstrap pattern shows the correct approach:
+- Function declaration goes IN THE PL of the block that USES the function (in cmpr.c)
+- Function definition goes in the generated file (help_topics.c)
+- extract_decls.py extracts the declaration from cmpr.c into fdecls.h
+
+What Remains:
+Need to add this line to #handle_help_topic PL section (before the function definition):
+
+span get_help_text(char *topic);
+
+This matches exactly how #print_bootstrap has:
+
+span get_bootstrap_content_span();
+
+Once that's added, the build will succeed and --help topics will work.
+
+Key Learning:
+The fdecls.h system works by extracting function declarations (lines ending with ;) from cmpr.c. Generated files get concatenated AFTER cmpr.c, so their declarations must be in cmpr.c (in the block that uses them) to be available when fdecls.h is generated.
+
+Pattern for generated helper functions:
+1. Declaration in cmpr.c block's PL (gets extracted to fdecls.h)
+2. Definition in generated .c file (gets concatenated into build)
+3. Call from anywhere in cmpr.c works because fdecls.h provides the declaration
+
+Files Modified:
+- Makefile: Added help_topics.c to build, updated fdecls.h extraction
+- INBOX.c: Created #generate_help_topics and updated #handle_help_topic
+- #generate_help_topics: Added declaration to NL (for documentation, not for extraction)
+
+Next Session Start:
+Run this to complete the implementation:
+
+cat > /tmp/fix.txt << 'BLOCKEOF'
+/\* #handle_help_topic
+
+[keep existing NL]
+
+Manually maintained.
+*\/
+
+span get_help_text(char *topic);
+
+void handle_help_topic(char *topic) {
+    [keep existing code]
+}
+BLOCKEOF
+cat /tmp/fix.txt | cmpr --replace '#handle_help_topic'
+
+Then:
+make
+dist/cmpr --help
+dist/cmpr --help events
+sudo make install
+
+*/
+/* #generate_help_topics
+
+Generate help_topics.c from help text blocks in INBOX.c.
+
+This script extracts help text from blocks like #help_text_basic, #help_text_events, etc.
+and generates a C source file with:
+- Function declaration in NL comment: span get_help_text(char *topic);
+- u8 arrays for each topic containing the help text
+- Helper function get_help_text(topic) definition
+
+The function declaration in the NL comment gets extracted by fdecls.h.
+
+span get_help_text(char *topic);
+
+*/
+#!/bin/bash
+# Generate help_topics.c from help text blocks
+
+# Output the NL comment with the declaration
+cmpr --print-comment '#generate_help_topics'
+echo ""
+
+echo "// Help text data arrays"
+echo ""
+
+# Function to extract and convert a single help block
+generate_help_array() {
+    local blockid="$1"
+    local varname="$2"
+    
+    # Extract content (skip header, remove closing */)
+    cmpr --print-comment "$blockid" | tail -n +3 | head -n -2 > /tmp/help_tmp.txt
+    
+    echo "u8 help_${varname}_data[] ="
+    sed 's/\\/\\\\/g; s/"/\\"/g; s/^/  "/; s/$/\\n"/' /tmp/help_tmp.txt
+    echo "  ;"
+    echo ""
+}
+
+# Generate arrays for each topic
+generate_help_array '#help_topics_index' 'topics'
+generate_help_array '#help_text_basic' 'basic'
+generate_help_array '#help_text_blocks' 'blocks'
+generate_help_array '#help_text_editing' 'editing'
+generate_help_array '#help_text_search' 'search'
+generate_help_array '#help_text_nl2pl' 'nl2pl'
+generate_help_array '#help_text_events' 'events'
+generate_help_array '#help_text_agents' 'agents'
+generate_help_array '#help_text_reports' 'reports'
+generate_help_array '#help_text_wants' 'wants'
+
+# Generate the lookup function
+cat << 'EOF'
+span get_help_text(char *topic) {
+    span s;
+    s.buf = 0;
+    s.end = 0;
+    
+    if (!topic || strcmp(topic, "topics") == 0) {
+        s.buf = help_topics_data;
+        s.end = s.buf + sizeof(help_topics_data) - 1;
+    } else if (strcmp(topic, "basic") == 0) {
+        s.buf = help_basic_data;
+        s.end = s.buf + sizeof(help_basic_data) - 1;
+    } else if (strcmp(topic, "blocks") == 0) {
+        s.buf = help_blocks_data;
+        s.end = s.buf + sizeof(help_blocks_data) - 1;
+    } else if (strcmp(topic, "editing") == 0) {
+        s.buf = help_editing_data;
+        s.end = s.buf + sizeof(help_editing_data) - 1;
+    } else if (strcmp(topic, "search") == 0) {
+        s.buf = help_search_data;
+        s.end = s.buf + sizeof(help_search_data) - 1;
+    } else if (strcmp(topic, "nl2pl") == 0) {
+        s.buf = help_nl2pl_data;
+        s.end = s.buf + sizeof(help_nl2pl_data) - 1;
+    } else if (strcmp(topic, "events") == 0) {
+        s.buf = help_events_data;
+        s.end = s.buf + sizeof(help_events_data) - 1;
+    } else if (strcmp(topic, "agents") == 0) {
+        s.buf = help_agents_data;
+        s.end = s.buf + sizeof(help_agents_data) - 1;
+    } else if (strcmp(topic, "reports") == 0) {
+        s.buf = help_reports_data;
+        s.end = s.buf + sizeof(help_reports_data) - 1;
+    } else if (strcmp(topic, "wants") == 0) {
+        s.buf = help_wants_data;
+        s.end = s.buf + sizeof(help_wants_data) - 1;
+    }
+    
+    return s;
+}
+EOF
+
+rm -f /tmp/help_tmp.txt
 /* #claude_experience_report_help_topics_20251229
 
 Session Goal:
@@ -79,6 +337,12 @@ Files Modified:
 
 Build Status:
 BROKEN - handle_help_topic implementation is wrong, uses incorrect data structures
+
+Programmer commentary:
+
+Fix the core issue: where does --help topics gets its data from? Look for prior art in the codebase; there's a CLAUDE.md thing called --bootstrap or something.
+The implementation there was also a bit messed up but it's on the right track.
+
 */
 /* #help_topics_index
 

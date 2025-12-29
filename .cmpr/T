@@ -1,6 +1,3 @@
-"The experience report is: #claude_experience_report_agent_infrastructure_unification_20251229" 255.
-"Session: Agent infrastructure unification" 255.
-"Implemented: #agent_infrastructure unified specification" 255.
-"Implemented: #agent_justify case study" 255.
-"Enhanced: cmpr --agents command with status table" 255.
-"The experience report is: #claude_experience_report_help_topics_20251229" 255.
+"The experience report is: #claude_experience_report_help_topics_fix_20251229" 255.
+"Fixed --help topics implementation" 255.
+"Learned correct NL-in-comment pattern" 255.
