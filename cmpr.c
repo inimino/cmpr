@@ -2324,58 +2324,265 @@ Strategy:
 */
 /* #agent_infrastructure
 
-Agents are Unix processes that monitor and maintain project health.
-This block describes common patterns and infrastructure shared across agent implementations.
+Agents are Unix processes that monitor and maintain project health by checking and fixing wants.
 
-Agent Interface Contract:
+Core Principle:
 
-All agents should follow these conventions:
+"Every cmpr agent is defined by one or two blocks (CHECK predicate and FIX step function)." 255.
 
-1. Exit codes:
-   - 0: Success, no issues detected
-   - 1: Issues found (the primary use case for health monitoring)
-   - 2: Agent error (missing dependencies, configuration problems, etc.)
+An agent with only a CHECK block is still a complete agent.
 
-2. Output format:
-   - Write actionable items to stdout (one per line when possible)
-   - Write diagnostic/error messages to stderr
-   - Keep output machine-readable for dashboard consumption
+## Block Naming Convention
 
-3. Invocation modes:
-   - No arguments: Run in "check" mode, report all issues
-   - With arguments: Run in "fix" mode or operate on specific items
-   - Support `-` as argument to read items from stdin (for piping)
+Agent blocks MUST use the #agent_* prefix (not #*_agent suffix):
+- #agent_justify - The justify agent
+- #agent_nl2pl - The nl2pl agent
+- #agent_build - The build agent
 
-Agent State Storage:
+This enables tab completion and consistent discovery.
 
-Agents should store persistent state under .cmpr/agents/<agent-name>/:
-   - last-run: timestamp of last execution
-   - last-status: exit code from last run
-   - report.txt: full output from last run
-   - metrics.json: structured data for dashboard consumption
+## Directory Structure
 
-Example metrics.json structure:
+Agents use the following directories:
+
+```
+agents/           - Executable agent files (continuous monitoring processes)
+scripts/          - Executable check scripts (one-shot operations)
+.cmpr/agents/<name>/  - State storage per agent
+```
+
+Each agent has:
+- `agents/<name>` - The agent wrapper (watches for changes, runs check script)
+- `scripts/<name>-check` - The check script (does actual work)
+- Block definitions:
+  - `#agent_<name>` - Agent wrapper block (infinite loop with entr)
+  - `#<name>_check` - Check script block (one-shot operation)
+
+Note: For historical reasons some check blocks use the `#cmpr_<name>_check` pattern.
+New check blocks should use `#<name>_check` for simplicity.
+
+## Agent Interface Contract
+
+All check scripts MUST follow these conventions:
+
+**Exit codes:**
+- 0: Success, no issues detected
+- 1: Issues found (the primary use case)
+- 2: Agent error (missing dependencies, configuration problems, etc.)
+
+**Output format:**
+- stdout: Actionable items (one per line when possible)
+- stderr: Diagnostic/error messages
+- Keep output machine-readable for dashboard consumption
+
+**Invocation modes:**
+- No arguments: Run in "check" mode, report all issues
+- With arguments: Run in "fix" mode or operate on specific items
+- Support `-` as argument to read items from stdin (for piping)
+
+## State Storage
+
+Check scripts MUST store state under `.cmpr/agents/<agent-name>/`:
+
+**Required files:**
+- `last-run` - ISO 8601 timestamp of last execution
+- `last-status` - Exit code from last run (0, 1, or 2)
+- `report.txt` - Full output from last run (one item per line)
+- `metrics.json` - Structured data for dashboard consumption
+
+**metrics.json structure:**
+```json
 {
   "agent": "justify",
-  "timestamp": "2025-12-19T07:30:00Z",
+  "timestamp": "2025-12-29T07:30:00Z",
   "status": "issues_found",
   "count": 850,
   "summary": "850 unjustified blocks"
 }
+```
 
-Dashboard Integration:
+Status field values: "ok", "issues_found", "error"
 
-A future health dashboard (CLI or web) can:
-- Read metrics.json from all agents
-- Display summary: "justify: 850 issues, build: OK, nl2pl: 42 stale"
-- Show trends over time
-- Trigger agent runs and display live output
+## PID File Management
 
-Implementation Notes:
+Running agents MUST create PID files to enable status tracking:
 
-Agents can be simple shell scripts or Python programs.
-They should be stateless - all state goes in .cmpr/agents/<name>/.
-This makes it easy to run agents manually, via cron, or via the TUI.
+**PID file location:** `.cmpr/agents/<agent-name>/pid`
+
+**Agent wrapper responsibilities:**
+1. Write PID to `.cmpr/agents/<name>/pid` on startup
+2. Remove PID file on clean shutdown
+3. Example:
+   ```bash
+   echo $$ > .cmpr/agents/justify/pid
+   trap "rm -f .cmpr/agents/justify/pid" EXIT
+   ```
+
+**Checking if agent is running:**
+```bash
+if [ -f .cmpr/agents/justify/pid ]; then
+  pid=$(cat .cmpr/agents/justify/pid)
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "Agent justify is running (PID $pid)"
+  else
+    echo "Stale PID file (process $pid not found)"
+    rm -f .cmpr/agents/justify/pid
+  fi
+else
+  echo "Agent justify is not running"
+fi
+```
+
+## Agent Wrapper Pattern
+
+Agent wrappers watch for file changes and trigger check scripts:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+AGENT_NAME="justify"
+AGENT_DIR=".cmpr/agents/${AGENT_NAME}"
+mkdir -p "$AGENT_DIR"
+
+# Write PID file
+echo $$ > "${AGENT_DIR}/pid"
+trap "rm -f ${AGENT_DIR}/pid" EXIT
+
+# Monitor for changes and run check script
+while sleep 0.1; do
+  if [ -f .cmpr/block-map ]; then
+    echo .cmpr/block-map | entr -n -d scripts/${AGENT_NAME}-check
+  else
+    sleep 1
+  fi
+done
+```
+
+The `-n` flag to entr runs it in non-interactive mode (required for background agents).
+The `-d` flag tells entr to exit when directories are added/removed.
+The outer `while` loop restarts entr if it exits.
+
+## Installation Pattern
+
+Agents are installed by extracting block contents to executable files:
+
+```bash
+# Install check script
+cmpr --print-code '#justify_check' > scripts/justify-check
+chmod +x scripts/justify-check
+
+# Install agent wrapper
+cmpr --print-code '#agent_justify' > agents/justify
+chmod +x agents/justify
+```
+
+## Running Agents
+
+**Start an agent (background):**
+```bash
+./agents/justify &
+```
+
+**Run check script manually (one-shot):**
+```bash
+./scripts/justify-check
+```
+
+**Check agent status:**
+```bash
+cmpr --agents  # List all agents with status
+```
+
+**Stop an agent:**
+```bash
+# Find PID
+pid=$(cat .cmpr/agents/justify/pid)
+kill $pid
+
+# Or use pkill
+pkill -f 'agents/justify'
+```
+
+## Dashboard Integration
+
+The `cmpr --agents` command provides unified agent status:
+
+```
+AGENT       STATUS          LAST RUN             ISSUES  RUNNING
+justify     issues_found    2025-12-29 07:30     850     yes (PID 12345)
+nl2pl       ok              2025-12-29 07:25     0       yes (PID 12346)
+build       error           2025-12-29 07:20     -       no
+```
+
+Implementation reads:
+- `.cmpr/agents/<name>/metrics.json` for status, count, timestamp
+- `.cmpr/agents/<name>/pid` for running state
+- Block list from #cmpr_agents
+
+## Implementation Language
+
+Check scripts can be implemented in any language:
+- Shell scripts for simple checks
+- Python for complex logic (BFS, parsing, etc.)
+- C for performance-critical checks
+
+The only requirement is that they follow the interface contract (exit codes, output format, state storage).
+
+## Agent Recipe
+
+To add a new agent:
+
+1. Create blocks:
+   - `#agent_<name>` - Agent wrapper (file watching loop)
+   - `#<name>_check` - Check script (actual work)
+
+2. Write NL specifications:
+   - Describe what the agent checks
+   - Define the want being maintained
+   - Specify the algorithm (e.g., "BFS from #root")
+   - Include example output
+
+3. Generate PL:
+   - Use `cmpr --rewritepl` or write manually if needed
+   - Mark as "Manually maintained." if manual PL
+
+4. Install:
+   ```bash
+   mkdir -p agents scripts .cmpr/agents/<name>
+   cmpr --print-code '#<name>_check' > scripts/<name>-check
+   chmod +x scripts/<name>-check
+   cmpr --print-code '#agent_<name>' > agents/<name>
+   chmod +x agents/<name>
+   ```
+
+5. Test check script:
+   ```bash
+   ./scripts/<name>-check
+   echo $?  # Should be 0, 1, or 2
+   cat .cmpr/agents/<name>/metrics.json  # Verify state storage
+   ```
+
+6. Test agent wrapper:
+   ```bash
+   ./agents/<name> &
+   cat .cmpr/agents/<name>/pid  # Verify PID file
+   # Make a change that triggers the check
+   kill $(cat .cmpr/agents/<name>/pid)  # Stop agent
+   ```
+
+7. Update #cmpr_agents block to list the new agent
+
+## Want Relationship
+
+Every agent maintains a want. The relationship should be documented:
+
+- Agent block references the want specification
+- Want specification includes event space definition
+- Example: #agent_justify maintains the want defined in #root
+  (all blocks reachable in ≤2 hops)
+
+This bidirectional reference makes the system navigable and auditable.
 
 */
 /* #cmpr_agents
@@ -11676,50 +11883,211 @@ void handle_agent_run(char* agent_name, char* mode) {
 
 void handle_agents();
 
-Handle the --agents command: list all registered agents in the project.
+Handle the --agents command: display comprehensive status of all registered agents.
 
-An agent is any block with ID ending with "_agent" (but not "_agent_*").
-For each agent found:
-- Print the block ID
-- Extract and print the first line of the NL comment as description
+Agent Discovery:
 
-Implementation:
-- Iterate through state->block_idx
-- Check if ID ends with exactly "_agent"
-- Print block ID and first description line
-- Print total count of agents found
+An agent is any block with ID matching the pattern #agent_*.
+For each agent, extract the agent name by removing the "#agent_" prefix.
+Example: #agent_justify → agent name is "justify"
+
+Status Information:
+
+For each discovered agent, display:
+1. Agent name
+2. Installation status (check if agents/<name> exists)
+3. Running status (check .cmpr/agents/<name>/pid and verify process)
+4. Last check status (read from .cmpr/agents/<name>/metrics.json)
+5. Issue count (from metrics.json)
+6. Last run timestamp (from metrics.json)
+
+Output Format:
+
+Display a table with columns:
+AGENT       INSTALLED   RUNNING     STATUS          ISSUES  LAST RUN
+justify     yes         yes (1234)  issues_found    116     2025-12-29 02:10
+nl2pl       yes         no          ok              0       2025-12-28 15:30
+build       no          -           -               -       -
+
+Column specifications:
+- AGENT: Agent name (without #agent_ prefix)
+- INSTALLED: "yes" if agents/<name> exists, "no" otherwise
+- RUNNING: "yes (PID)" if running, "no" if not, "-" if not installed
+- STATUS: From metrics.json status field ("ok", "issues_found", "error", or "-")
+- ISSUES: From metrics.json count field, or "-"
+- LAST RUN: From metrics.json timestamp field (formatted), or "-"
+
+PID Verification:
+
+When checking if agent is running:
+1. Read .cmpr/agents/<name>/pid file
+2. Verify process exists with kill -0 <pid> 2>/dev/null
+3. If process doesn't exist, remove stale PID file
+4. Display "yes (PID)" only if process is actually running
+
+Implementation Notes:
+
+- Use system() calls to check file existence and process status
+- Parse JSON from metrics.json files (simple field extraction, no full parser needed)
+- Handle missing files gracefully (display "-" for unavailable data)
+- Sort agents alphabetically by name
+- Show total count at bottom
+
+Error Handling:
+
+- If .cmpr/agents/ doesn't exist, create it
+- If metrics.json is malformed, show "-" for that agent's data
+- If PID file contains non-numeric data, treat as stale and remove
+- Continue processing other agents even if one agent's data is corrupt
+
+Manually maintained.
+
 */
 
 void handle_agents() {
+    // Ensure .cmpr/agents/ directory exists
+    system("mkdir -p .cmpr/agents");
+    
+    // Print table header
+    prt("%-12s %-12s %-16s %-16s %-8s %s\n", 
+        "AGENT", "INSTALLED", "RUNNING", "STATUS", "ISSUES", "LAST RUN");
+    prt("%.12s %.12s %.16s %.16s %.8s %.20s\n",
+        "------------", "------------", "----------------", 
+        "----------------", "--------", "--------------------");
+    
     int agent_count = 0;
+    
+    // Iterate through all blocks to find #agent_* patterns
     for (int i = 0; i < state->block_idx.n; i++) {
         span id = state->block_idx.a[i];
-        if (len(id) > 7) {
-            span suffix = {id.end - 6, id.end};
-            if (span_eq(suffix, S("_agent"))) {
-                wrs(id);
-                int block_index = block_for_span(id);
-                if (block_index >= 0 && block_index < state->blocks.n) {
-                    span block = state->blocks.a[block_index];
-                    span comment = block_comment_part(block);
-                    if (!empty(comment)) {
-                        span rest = comment;
-                        while (rest.buf < rest.end && *rest.buf != '\n') rest.buf++;
-                        if (rest.buf < rest.end) rest.buf++;
-                        while (rest.buf < rest.end && *rest.buf == '\n') rest.buf++;
-                        if (rest.buf < rest.end) {
-                            u8 *line_end = rest.buf;
-                            while (line_end < rest.end && *line_end != '\n') line_end++;
-                            prt(" - ");
-                            wrs(first_n(rest, line_end - rest.buf));
+        
+        // Check if ID starts with "#agent_"
+        if (len(id) >= 8 && id.buf[0] == '#' && 
+            id.buf[1] == 'a' && id.buf[2] == 'g' && 
+            id.buf[3] == 'e' && id.buf[4] == 'n' && 
+            id.buf[5] == 't' && id.buf[6] == '_') {
+            
+            // Extract agent name (everything after "#agent_")
+            span name_span = {id.buf + 7, id.end};
+            char agent_name[256];
+            int name_len = len(name_span);
+            if (name_len >= sizeof(agent_name)) name_len = sizeof(agent_name) - 1;
+            memcpy(agent_name, name_span.buf, name_len);
+            agent_name[name_len] = '\0';
+            
+            // Check installation status
+            char agent_path[512];
+            snprintf(agent_path, sizeof(agent_path), "agents/%s", agent_name);
+            int installed = (access(agent_path, X_OK) == 0);
+            
+            // Check running status
+            char pid_path[512];
+            char pid_str[32] = "-";
+            int running = 0;
+            int pid = 0;
+            
+            snprintf(pid_path, sizeof(pid_path), ".cmpr/agents/%s/pid", agent_name);
+            FILE *pid_file = fopen(pid_path, "r");
+            if (pid_file) {
+                if (fscanf(pid_file, "%d", &pid) == 1) {
+                    // Verify process is actually running
+                    char kill_cmd[256];
+                    snprintf(kill_cmd, sizeof(kill_cmd), "kill -0 %d 2>/dev/null", pid);
+                    if (system(kill_cmd) == 0) {
+                        running = 1;
+                        snprintf(pid_str, sizeof(pid_str), "yes (%d)", pid);
+                    } else {
+                        // Stale PID file, remove it
+                        unlink(pid_path);
+                        snprintf(pid_str, sizeof(pid_str), "no");
+                    }
+                } else {
+                    snprintf(pid_str, sizeof(pid_str), "no");
+                }
+                fclose(pid_file);
+            } else if (installed) {
+                snprintf(pid_str, sizeof(pid_str), "no");
+            } else {
+                snprintf(pid_str, sizeof(pid_str), "-");
+            }
+            
+            // Read metrics.json
+            char metrics_path[512];
+            char status_str[64] = "-";
+            char issues_str[16] = "-";
+            char timestamp_str[32] = "-";
+            
+            snprintf(metrics_path, sizeof(metrics_path), 
+                    ".cmpr/agents/%s/metrics.json", agent_name);
+            FILE *metrics_file = fopen(metrics_path, "r");
+            if (metrics_file) {
+                char line[1024];
+                int count = -1;
+                
+                while (fgets(line, sizeof(line), metrics_file)) {
+                    // Simple JSON parsing - look for key patterns
+                    char *status_key = strstr(line, "\"status\"");
+                    if (status_key) {
+                        char *colon = strchr(status_key, ':');
+                        if (colon) {
+                            char *quote1 = strchr(colon, '"');
+                            if (quote1) {
+                                quote1++;
+                                char *quote2 = strchr(quote1, '"');
+                                if (quote2) {
+                                    int slen = quote2 - quote1;
+                                    if (slen >= sizeof(status_str)) slen = sizeof(status_str) - 1;
+                                    memcpy(status_str, quote1, slen);
+                                    status_str[slen] = '\0';
+                                }
+                            }
+                        }
+                    }
+                    
+                    char *count_key = strstr(line, "\"count\"");
+                    if (count_key) {
+                        char *colon = strchr(count_key, ':');
+                        if (colon && sscanf(colon + 1, "%d", &count) == 1) {
+                            snprintf(issues_str, sizeof(issues_str), "%d", count);
+                        }
+                    }
+                    
+                    char *ts_key = strstr(line, "\"timestamp\"");
+                    if (ts_key) {
+                        char *colon = strchr(ts_key, ':');
+                        if (colon) {
+                            char *quote1 = strchr(colon, '"');
+                            if (quote1) {
+                                quote1++;
+                                char *quote2 = strchr(quote1, '"');
+                                if (quote2) {
+                                    // Extract just date and time, skip seconds
+                                    // Format: "2025-12-29T02:10:48Z" -> "2025-12-29 02:10"
+                                    if (quote2 - quote1 >= 16) {
+                                        snprintf(timestamp_str, sizeof(timestamp_str), 
+                                                "%.10s %.5s", quote1, quote1 + 11);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-                prt("\n");
-                agent_count++;
+                fclose(metrics_file);
             }
+            
+            // Print agent row
+            prt("%-12s %-12s %-16s %-16s %-8s %s\n",
+                agent_name,
+                installed ? "yes" : "no",
+                pid_str,
+                status_str,
+                issues_str,
+                timestamp_str);
+            
+            agent_count++;
         }
     }
+    
     prt("\nTotal agents: %d\n", agent_count);
     flush_exit(0);
 }

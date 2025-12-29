@@ -1,5 +1,5 @@
-"The experience report is: #claude_experience_report_wants_status_20251228" 255.
-"Created event system query documentation" 255.
-"Created wants-status shell script" 255.
-"Known issue: block discovery in .sh files" 255.
-"The experience report is: #claude_experience_report_cmpr2_agent_exploration_20251229" 255.
+"The experience report is: #claude_experience_report_agent_infrastructure_unification_20251229" 255.
+"Session: Agent infrastructure unification" 255.
+"Implemented: #agent_infrastructure unified specification" 255.
+"Implemented: #agent_justify case study" 255.
+"Enhanced: cmpr --agents command with status table" 255.

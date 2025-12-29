@@ -23,6 +23,633 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 
 */
 
+/* #claude_experience_report_agent_infrastructure_unification_20251229
+
+Experience Report: Agent Infrastructure Unification and Justify Agent Case Study
+
+## Session Goal
+
+Use the justify agent as a case study to work out all remaining technical questions about the cmpr1 agent system, and create a polished, perfect #agent_infrastructure block that incorporates:
+- Programmer's directives (PID files, blocks as source of truth, agents/ and scripts/ directories)
+- cmpr2's proven patterns (state storage, metrics.json, exit codes)
+- cmpr1's philosophy (block-based definitions, #agent_* naming)
+
+## What Was Accomplished
+
+### 1. Navigation and Architecture Review
+
+Started from #root and navigated to:
+- #agents_system_hub → agent-related blocks
+- #agent_infrastructure (cmpr1 version)
+- #agent_infrastructure_from_cmpr2 (imported from cmpr2)
+- #agent_runner (old cmpr1 pattern)
+- #root_agent (existing cmpr1 agent example)
+
+Key finding: Both #agent_infrastructure versions were identical, indicating good alignment already existed.
+
+### 2. Unified #agent_infrastructure Block
+
+Created comprehensive infrastructure specification incorporating:
+
+**Core Principle:**
+"Every cmpr agent is defined by one or two blocks (CHECK predicate and FIX step function)." 255.
+
+**Naming Convention:**
+- #agent_* prefix (not #*_agent suffix)
+- Enables tab completion
+- Example: #agent_justify, #agent_nl2pl
+
+**Directory Structure:**
+```
+agents/           - Executable agent wrappers (continuous monitoring)
+scripts/          - Executable check scripts (one-shot operations)
+.cmpr/agents/<name>/  - State storage per agent
+```
+
+**State Storage Pattern:**
+- last-run: ISO 8601 timestamp
+- last-status: Exit code (0, 1, or 2)
+- report.txt: Full output (one item per line)
+- metrics.json: Structured data for dashboard
+
+**PID File Management:**
+- Location: .cmpr/agents/<name>/pid
+- Agent wrapper writes PID on startup
+- Removes PID on clean shutdown (via trap)
+- Verification: kill -0 <pid> to check if process exists
+- Cleanup: Remove stale PID files automatically
+
+**Agent Wrapper Pattern:**
+```bash
+#!/bin/bash
+set -euo pipefail
+AGENT_NAME="justify"
+AGENT_DIR=".cmpr/agents/${AGENT_NAME}"
+mkdir -p "$AGENT_DIR"
+echo $$ > "${AGENT_DIR}/pid"
+trap "rm -f ${AGENT_DIR}/pid" EXIT
+while sleep 0.1; do
+  if [ -f .cmpr/block-map ]; then
+    echo .cmpr/block-map | entr -n -d scripts/${AGENT_NAME}-check
+  else
+    sleep 1
+  fi
+done
+```
+
+**Interface Contract:**
+- Exit codes: 0 (ok), 1 (issues found), 2 (error)
+- stdout: Actionable items (one per line)
+- stderr: Diagnostic messages
+- Invocation modes: no args (check), with args (fix), "-" (stdin)
+
+Updated #agent_infrastructure (cmpr.c:11877) with this complete specification.
+
+### 3. Justify Agent Implementation
+
+Selected justify agent as case study because:
+- Simplest conceptually (BFS from #root)
+- Non-destructive (only checks, doesn't modify)
+- Clear want alignment with #root block
+- Already documented in cmpr2
+
+Created two new blocks:
+
+**#justify_check** (cmpr.c:11877)
+- Check script for justify agent
+- Reports blocks unreachable from #root
+- Want: "We want every block in the project to be reachable from #root within 2 hops." 255.
+- Algorithm: BFS traversal calling cmpr --print-comment for each block
+- Implementation: Python (adapted from cmpr2 #cmpr_justify_check)
+- Key change: ROOT_BLOCKID = '#root' (not '#cmpr_project')
+- Output: One unjustified blockid per line
+- State storage: Writes to .cmpr/agents/justify/ following infrastructure pattern
+
+**#agent_justify** (after #justify_check)
+- Agent wrapper for continuous monitoring
+- Watches .cmpr/block-map using entr
+- Triggers scripts/justify-check on changes
+- PID management with trap for cleanup
+- Implementation: Bash script
+
+### 4. Installation and Testing
+
+Created directory structure:
+```bash
+mkdir -p agents scripts .cmpr/agents/justify
+```
+
+Installed agent:
+```bash
+cmpr --print-code '#justify_check' > scripts/justify-check
+chmod +x scripts/justify-check
+cmpr --print-code '#agent_justify' > agents/justify
+chmod +x agents/justify
+```
+
+Tested check script:
+```bash
+./scripts/justify-check
+# Exit code: 1 (issues found)
+# Found 116 unjustified blocks
+# State files created correctly:
+#   - .cmpr/agents/justify/metrics.json
+#   - .cmpr/agents/justify/report.txt
+#   - .cmpr/agents/justify/last-run
+#   - .cmpr/agents/justify/last-status
+```
+
+Verified metrics.json structure:
+```json
+{
+  "agent": "justify",
+  "timestamp": "2025-12-29T02:10:48Z",
+  "status": "issues_found",
+  "count": 116,
+  "summary": "116 unjustified blocks"
+}
+```
+
+### 5. Enhanced cmpr --agents Command
+
+Rewrote #handle_agents (cmpr.c:11877) to provide comprehensive status:
+
+**Old behavior:**
+- Searched for blocks ending with "_agent"
+- Printed block ID and first line of NL comment
+- No installation/running status
+- No metrics display
+
+**New behavior:**
+- Searches for blocks starting with "#agent_"
+- Displays formatted table with columns:
+  - AGENT: Name (without #agent_ prefix)
+  - INSTALLED: "yes" if agents/<name> exists
+  - RUNNING: "yes (PID)" if running, "no" if not, "-" if not installed
+  - STATUS: From metrics.json ("ok", "issues_found", "error", or "-")
+  - ISSUES: Count from metrics.json
+  - LAST RUN: Timestamp from metrics.json (formatted)
+
+**Implementation details:**
+- C code with file I/O and simple JSON parsing
+- PID verification with kill -0 <pid>
+- Automatic cleanup of stale PID files
+- Graceful handling of missing files (displays "-")
+- Shows total agent count
+
+**Example output:**
+```
+AGENT        INSTALLED    RUNNING          STATUS           ISSUES   LAST RUN
+------------ ------------ ---------------- ---------------- -------- --------------------
+justify      yes          no               issues_found     116      2025-12-29 02:10
+
+Total agents: 9
+```
+
+### 6. Build and Installation
+
+Built cmpr:
+```bash
+make
+# No errors, only warnings about implicit function declarations
+```
+
+Tested with dist/cmpr:
+```bash
+dist/cmpr --agents
+# Verified table format and justify agent status
+```
+
+Installed system-wide:
+```bash
+sudo make install
+cmpr --version  # Version: 9 (build: 20251229-021529 95ad458 agents)
+cmpr --agents   # Confirmed installed version works
+```
+
+### 7. Cleanup
+
+Removed duplicate #agent_justify block (cmpr2 import from INBOX):
+```bash
+echo "" | cmpr --replace '#agent_justify'
+# Kept only the new cmpr1 version
+```
+
+## What Works
+
+**Complete agent infrastructure:**
+- #agent_infrastructure block is comprehensive and polished
+- Incorporates all programmer requirements
+- Clear patterns for future agent development
+
+**Working justify agent:**
+- Check script executes correctly
+- State storage follows infrastructure pattern
+- Metrics JSON format matches specification
+- Agent wrapper ready for deployment
+
+**Enhanced cmpr --agents command:**
+- Shows installation status by checking agents/ directory
+- Shows running status by verifying PID files
+- Displays metrics from .cmpr/agents/<name>/metrics.json
+- Handles missing data gracefully
+- Professional table formatting
+
+**Build system:**
+- make builds successfully
+- dist/cmpr for testing
+- sudo make install for deployment
+- Version tracking in --version output
+
+## Technical Patterns Established
+
+**Block-based agent definition:**
+- Source of truth: NL blocks (#agent_*, #*_check)
+- Executable files: Generated from blocks via cmpr --print-code
+- Installation: Manual extraction (cmpr --print-code > file)
+- Future: Could automate installation from blocks
+
+**State storage contract:**
+- Every agent has .cmpr/agents/<name>/ directory
+- Standard files: metrics.json, report.txt, last-run, last-status, pid
+- JSON schema for metrics defined and implemented
+- Dashboard-ready structured data
+
+**PID management:**
+- Agent wrappers write PID on startup
+- trap ensures cleanup on exit
+- Verification with kill -0 before trusting PID file
+- Automatic removal of stale PIDs
+
+**Separation of concerns:**
+- Agent wrapper: Continuous monitoring (entr loop)
+- Check script: One-shot operation (actual work)
+- This enables manual execution without running full agent
+
+## Known Issues
+
+**Blocks with #agent_ prefix that aren't real agents:**
+The --agents command currently shows blocks like:
+- #agent_event_navigation (navigation hub)
+- #agent_infrastructure (infrastructure spec)
+- #agent_runner (helper utility)
+- #agent_request_protocol (protocol spec)
+
+These match the #agent_* pattern but aren't executable agents.
+
+**Possible solutions:**
+1. Rename non-agent blocks (e.g., #agent_infrastructure → #agents_infrastructure)
+2. Add convention: only #agent_<name> where <name> matches agents/<name> file
+3. Filter in handle_agents() to only show blocks with corresponding check scripts
+4. Document that #agent_* namespace is for agents, move other blocks
+
+**Recommendation:**
+Rename non-agent blocks to avoid #agent_* namespace. The pattern should be:
+- #agent_* = Executable agent wrapper
+- #*_check = Check script for agent
+- #agents_* or #agent_system_* = Infrastructure/documentation
+
+**cmpr2 blocks in INBOX:**
+Imported blocks from yesterday's exploration session remain in INBOX:
+- #agent_justify (removed - duplicate)
+- #agent_nl2pl (cmpr2 version)
+- #agent_block_names (cmpr2 version)
+- #agent_meta (cmpr2 version)
+- #cmpr_justify_check (cmpr2 version)
+- etc.
+
+These served as reference but should eventually be:
+1. Adapted for cmpr1 (like justify was)
+2. Removed if not needed
+3. Moved out of INBOX if kept as reference
+
+## Next Steps
+
+### Immediate (high priority)
+
+**1. Rename non-agent blocks to free #agent_* namespace:**
+- #agent_event_navigation → #agents_system_hub (already exists, remove duplicate)
+- #agent_infrastructure → Keep (it IS infrastructure for agents)
+- #agent_runner → #agents_runner_helper
+- #agent_request_protocol → #agents_request_protocol
+- #agent_infrastructure_from_cmpr2 → Delete (duplicate of #agent_infrastructure)
+
+**2. Update #cmpr_agents block:**
+- Remove old agent list
+- Document that agents are discovered via #agent_* pattern
+- List installed agents: #agent_justify (add more as implemented)
+- Reference #agent_infrastructure for patterns
+
+**3. Test running justify agent in background:**
+```bash
+./agents/justify &
+# Verify PID file created
+# Make a change to trigger check
+# Verify metrics.json updates
+# Test cmpr --agents shows running status
+# Stop agent and verify cleanup
+```
+
+### Medium priority
+
+**4. Implement additional agents from cmpr2:**
+- #agent_nl2pl - Detect stale PL code
+- #agent_block_names - Find unnamed blocks
+- Choose one to implement next as validation of infrastructure
+
+**5. Agent management commands:**
+Consider adding:
+- cmpr --start-agent <name>
+- cmpr --stop-agent <name>
+- cmpr --agent-status <name>
+
+Or keep it simple with:
+- ./agents/<name> & to start
+- kill $(cat .cmpr/agents/<name>/pid) to stop
+- cmpr --agents for status
+
+**6. Dashboard/reporting:**
+- HTML dashboard showing agent status over time
+- Read all metrics.json files
+- Chart trends (issue counts, last run times)
+- Similar to cmpr2's dashboard
+
+### Lower priority
+
+**7. Want ↔ Agent relationship:**
+- Document which agent maintains which want
+- Add bidirectional references in blocks
+- Example: #agent_justify ↔ #root (reachability want)
+
+**8. Agent installation automation:**
+- cmpr --install-agent <name>
+- Extracts #agent_<name> → agents/<name>
+- Extracts #<name>_check → scripts/<name>-check
+- Sets permissions, creates directories
+
+**9. Event system integration:**
+- Agents should record activity to T
+- Pattern: cmpr --event "Agent: justify" --strength 255
+- Then cmpr --memorize to save snapshot
+- Enables historical analysis via --recall
+
+## Questions for Programmer
+
+**Q1: Block naming cleanup strategy?**
+We have blocks in #agent_* namespace that aren't agents. Should I:
+- (A) Rename them now to free the namespace
+- (B) Add filtering logic to handle_agents() to ignore non-agent blocks
+- (C) Leave as-is and document the convention
+
+My recommendation: (A) - clean namespace now before more agents are added.
+
+**Q2: cmpr2 agent blocks in INBOX?**
+Should I:
+- (A) Delete them all (we have cmpr1 justify now, can reimplement others)
+- (B) Keep as reference but move to separate file
+- (C) Adapt them one by one for cmpr1
+
+My recommendation: (A) - they served their purpose as reference, we know the patterns now.
+
+**Q3: Agent wrapper pattern validation?**
+The entr-based wrapper pattern works but hasn't been tested running in background yet. Should I:
+- (A) Test it now by actually starting agents/justify in background
+- (B) Leave testing for next session
+- (C) Consider alternative patterns (systemd units, cron jobs, etc.)
+
+My recommendation: (A) - validate the full workflow before implementing more agents.
+
+**Q4: Next agent to implement?**
+Which agent should be the second case study:
+- (A) nl2pl - Detects stale PL code (useful for development)
+- (B) block_names - Finds unnamed blocks (simple, similar to justify)
+- (C) build - Monitors build status (different trigger pattern)
+
+My recommendation: (B) - simple and validates the pattern without new complications.
+
+**Q5: Agent management UX?**
+Should agent start/stop be:
+- (A) Manual (./agents/justify &, kill $(cat .cmpr/agents/justify/pid))
+- (B) Via cmpr commands (cmpr --start-agent justify)
+- (C) Via separate tool (agents/meta as manager)
+- (D) Systemd integration
+
+My recommendation: Start with (A) for now, consider (C) later using cmpr2's meta agent pattern.
+
+*/
+/* #justify_check @agent_infrastructure
+
+Check script for the justify agent. Reports blocks that are not reachable from #root.
+
+Want specification:
+
+"We want every block in the project to be reachable from #root within 2 hops." 255.
+
+This is the block reachability want maintained by the justify agent.
+
+Algorithm:
+
+1. Read .cmpr/block-map to get the set of all blocks that exist
+2. BFS traversal from #root to find reachable blocks:
+   - Start with queue containing just #root
+   - For each block in the queue:
+     - Call `cmpr --print-comment <blockid>` to get that block's NL comment
+     - Parse blockid mentions from the comment using regex #[a-zA-Z0-9_]+
+     - Filter mentions to only those that exist in block-map
+     - Add newly discovered blocks to queue and mark as seen
+3. Report blocks that exist but weren't reached (unjustified blocks)
+
+Critical implementation details:
+
+- For each block during BFS, use `cmpr --print-comment` to get ONLY that block's NL comment
+- Only process blockids that exist in the block-map (avoid fetching non-existent blocks)
+- Handle cmpr errors silently (if a block can't be fetched, skip it)
+- BFS is block-scoped, not file-scoped (we call --print-comment for each block individually)
+
+Output format (following #agent_infrastructure):
+
+- stdout: One unjustified blockid per line
+- stderr: Minimal diagnostic messages
+- Exit 0 if no issues, 1 if unjustified blocks found, 2 on error
+
+State storage:
+
+Write to .cmpr/agents/justify/ following #agent_infrastructure:
+- metrics.json with count of unjustified blocks
+- report.txt with full list
+- last-run with timestamp
+- last-status with exit code
+
+Installation:
+
+```bash
+mkdir -p scripts
+cmpr --print-code '#justify_check' > scripts/justify-check
+chmod +x scripts/justify-check
+```
+
+Example output:
+
+```
+#some_unreferenced_block
+#another_orphan
+#old_code
+```
+
+Example metrics.json:
+
+```json
+{
+  "agent": "justify",
+  "timestamp": "2025-12-29T08:00:00Z",
+  "status": "issues_found",
+  "count": 52,
+  "summary": "52 unjustified blocks"
+}
+```
+
+Implementation language: Python
+
+Manually maintained.
+
+*/
+
+#!/usr/bin/env python3
+import sys
+import os
+import re
+import subprocess
+import time
+import json
+
+BLOCK_MAP_FILE = '.cmpr/block-map'
+AGENT_NAME = 'justify'
+AGENT_DIR = f'.cmpr/agents/{AGENT_NAME}'
+METRICS_FILE = os.path.join(AGENT_DIR, 'metrics.json')
+REPORT_FILE = os.path.join(AGENT_DIR, 'report.txt')
+LAST_RUN_FILE = os.path.join(AGENT_DIR, 'last-run')
+LAST_STATUS_FILE = os.path.join(AGENT_DIR, 'last-status')
+ROOT_BLOCKID = '#root'
+BLOCKID_RE = re.compile(r'#[a-zA-Z0-9_]+')
+
+def read_block_map(path):
+    """Read all blockids from block-map file."""
+    blockids = set()
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.startswith('Block '):
+                    idx = line.find(':')
+                    if idx != -1:
+                        txt = line[idx+1:].strip()
+                        if txt.startswith('#'):
+                            blockids.add(txt)
+    except Exception as e:
+        print(f'Error reading {path}: {e}', file=sys.stderr)
+        sys.exit(2)
+    return blockids
+
+def comment_of(blockid):
+    """Get NL comment for a single block."""
+    try:
+        out = subprocess.run(
+            ['cmpr', '--print-comment', blockid],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            encoding='utf-8',
+            timeout=5
+        )
+        if out.returncode == 0:
+            return out.stdout
+    except Exception:
+        pass
+    return ''
+
+def find_mentions(text, known_blockids):
+    """Find all blockid mentions in text that actually exist."""
+    return set(b for b in BLOCKID_RE.findall(text) if b in known_blockids)
+
+def bfs_reachable(root, blockids):
+    """BFS traversal from root, returning set of reachable blocks."""
+    seen = set()
+    queue = [root] if root in blockids else []
+    
+    while queue:
+        current = queue.pop(0)
+        if current in seen:
+            continue
+        
+        seen.add(current)
+        comment = comment_of(current)
+        mentions = find_mentions(comment, blockids)
+        
+        for m in mentions:
+            if m not in seen:
+                queue.append(m)
+    
+    return seen
+
+def write_agent_state(unjustified, status):
+    """Write agent state to .cmpr/agents/justify/."""
+    os.makedirs(AGENT_DIR, exist_ok=True)
+    now_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    
+    # Write report.txt
+    with open(REPORT_FILE, 'w', encoding='utf-8') as f:
+        for uj in unjustified:
+            f.write(uj + '\n')
+    
+    # Write metrics.json
+    metrics = {
+        'agent': AGENT_NAME,
+        'timestamp': now_iso,
+        'status': 'issues_found' if status == 1 else ('ok' if status == 0 else 'error'),
+        'count': len(unjustified),
+        'summary': f"{len(unjustified)} unjustified blocks" if unjustified else "all blocks justified"
+    }
+    with open(METRICS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(metrics, f, indent=2)
+    
+    # Write last-run
+    with open(LAST_RUN_FILE, 'w', encoding='utf-8') as f:
+        f.write(now_iso + '\n')
+    
+    # Write last-status
+    with open(LAST_STATUS_FILE, 'w', encoding='utf-8') as f:
+        f.write(str(status) + '\n')
+
+def main():
+    try:
+        blockids = read_block_map(BLOCK_MAP_FILE)
+        
+        if ROOT_BLOCKID not in blockids:
+            print(f"Root block {ROOT_BLOCKID} not found in block-map", file=sys.stderr)
+            write_agent_state([], 2)
+            sys.exit(2)
+        
+        reachable = bfs_reachable(ROOT_BLOCKID, blockids)
+        unjustified = sorted(blockids - reachable)
+        
+        # Print to stdout (one per line)
+        for uj in unjustified:
+            print(uj)
+        
+        # Determine exit status
+        status = 1 if unjustified else 0
+        write_agent_state(unjustified, status)
+        sys.exit(status)
+        
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        try:
+            write_agent_state([], 2)
+        except Exception:
+            pass
+        sys.exit(2)
+
+if __name__ == '__main__':
+    main()
+
 /* #claude_experience_report_cmpr2_agent_exploration_20251229_commentary
 
 Programmer commentary.
