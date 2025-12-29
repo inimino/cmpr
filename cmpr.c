@@ -5954,6 +5954,53 @@ Manually maintained.
 
 	// No action arg - return to enter interactive mode
 }
+/* #help_text_nl2pl
+
+Natural Language to Code Generation
+===================================
+
+--rewritepl <id>
+  Regenerate PL (code) from NL (comment) using LLM.
+  Sends NL part to configured LLM API.
+  Replaces PL part with generated code.
+  This is the preferred way to update code after changing NL.
+  
+  Example Workflow:
+  1. Edit NL: cat new_nl.txt | cmpr --replace-comment '#blockid'
+  2. Generate code: cmpr --rewritepl '#blockid'
+  3. Verify: cmpr --print-code '#blockid'
+  4. build or test or whatever.
+  
+  Example: cmpr --rewritepl '#handle_help_topic'
+
+--prompt <id>
+  Print the prompt that would be sent to the LLM for nl2pl conversion.
+  Does NOT call the LLM - just shows what prompt would be used.
+  Useful for debugging and understanding LLM context.
+  Example: cmpr --prompt '#blockid'
+  See also --expand.
+
+Configuration:
+  LLM settings are in .cmpr/conf:
+  - llm_command: Command to call LLM API
+  - llm_model: Model name to use
+
+NL Precision Principle:
+  The nl2pl system generates correct code only when NL is unambiguous.
+  Be explicit about:
+  - Exact algorithms
+  - Data structures  
+  - Edge cases
+  - What NOT to do
+  
+  If generated PL is wrong, fix the NL, not the PL.
+
+Manually Maintained Blocks:
+  Add "Manually maintained." as last line of NL comment.
+  Only use when you MUST write PL directly.
+  Avoid when possible - prefer letting the system generate code.
+*/
+
 /* #print_files_blocks @gcb @ids_for_block
 
 void print_files_blocks();
