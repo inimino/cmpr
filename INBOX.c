@@ -23,6 +23,38 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 
 */
 
+/* #claude_experience_report_help_fix_20251229
+
+Session goal: Fix `cmpr --help` and `cmpr --help topics` output.
+
+Problem: Both commands showed the same output (the help_topics_index block content with metadata). The original intent was:
+- `cmpr --help` → usage summary (one-line)
+- `cmpr --help topics` → topic names only, one per line (for `| xargs cmpr --help`)
+
+Root cause: `#generate_help_topics` script was using `#help_topics_index` which contained documentation about the help system, not the actual output.
+
+Fix:
+1. Created `#help_text_summary` block with usage line from #argtable
+2. Updated `#help_text_topics` to contain only topic names (one per line)
+3. Modified `#generate_help_topics` script to:
+   - Generate help_summary_data array from #help_text_summary
+   - Generate help_topics_data from #help_text_topics
+   - Updated get_help_text() to return summary when topic==NULL, topics when topic=="topics"
+4. Regenerated help_topics.c, rebuilt, installed
+
+Result:
+- `cmpr --help` → Shows usage summary
+- `cmpr --help topics` → Lists topic names for xargs
+- `cmpr --help <topic>` → Shows detailed help
+- `cmpr --help topics | xargs -n 1 cmpr --help` works correctly
+
+Files modified:
+- INBOX.c: #help_text_summary (created), #help_text_topics (simplified), #generate_help_topics (updated)
+- help_topics.c: Regenerated
+- Rebuilt and installed
+
+Status: COMPLETE
+*/
 /* #claude_experience_report_help_topics_fix_20251229
 
 Session Goal:
@@ -226,7 +258,8 @@ generate_help_array() {
 }
 
 # Generate arrays for each topic
-generate_help_array '#help_topics_index' 'topics'
+generate_help_array '#help_text_summary' 'summary'
+generate_help_array '#help_text_topics' 'topics'
 generate_help_array '#help_text_basic' 'basic'
 generate_help_array '#help_text_blocks' 'blocks'
 generate_help_array '#help_text_editing' 'editing'
@@ -244,7 +277,10 @@ span get_help_text(char *topic) {
     s.buf = 0;
     s.end = 0;
     
-    if (!topic || strcmp(topic, "topics") == 0) {
+    if (!topic) {
+        s.buf = help_summary_data;
+        s.end = s.buf + sizeof(help_summary_data) - 1;
+    } else if (strcmp(topic, "topics") == 0) {
         s.buf = help_topics_data;
         s.end = s.buf + sizeof(help_topics_data) - 1;
     } else if (strcmp(topic, "basic") == 0) {
@@ -371,29 +407,22 @@ When --help <topic> is called, look up #help_text_<topic> and print its NL comme
 */
 /* #help_text_topics
 
-Usage: cmpr --help topics
-       cmpr --help
+topics
+basic
+blocks
+editing
+search
+nl2pl
+events
+agents
+reports
+wants
+*/
+/* #help_text_summary
 
-List all available help topics.
+Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs]
 
-Available topics:
-  topics   - List all available help topics (this message)
-  basic    - Basic commands (help, version, init, conf)
-  blocks   - Block viewing commands
-  editing  - Block editing commands
-  search   - Search and navigation
-  nl2pl    - Natural language to code generation
-  events   - Event system (temporal reasoning)
-  agents   - Agent system (automated maintenance)
-  reports  - HTML reports and dashboards
-  wants    - Want tracking and decision states
-
-For help on a specific topic:
-  cmpr --help <topic>
-
-Example:
-  cmpr --help blocks
-  cmpr --help events
+For help on available topics: cmpr --help topics
 */
 /* #help_text_basic
 
