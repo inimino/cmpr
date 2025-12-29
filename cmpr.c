@@ -21,18 +21,6 @@ If you start from #root, which is the next block, you can reach any block that h
 We can call this an example of a want line; it states something that we want to be the case, and it is the dual of an agent, which exists to maintain a want, including by verifying that the thing is already the way we want it to be.
 See #root_agent for more.
 
-Event space: BR (Block Reachability)
-
-The want above defines an event space with outcomes for each block:
-  "The block id is: {blockid}"
-  "The block is reachable from root"
-or
-  "The block id is: {blockid}"
-  "The block is unreachable from root"
-
-The root_agent maintains this want by checking reachability and creating hub blocks to fix violations.
-See #ES_BR for the complete event space specification.
-
 ## Documentation
 
 #glossary - Terminology and definitions
@@ -1583,6 +1571,9 @@ Contains: #source_intro #claude_exploration_report #root_agent #want_definition 
 /* #root_agent
 
 As seen in #root, we want to have a known list of blocks that we can use as hubs to reach all the other blocks in the codebase.
+
+The root_agent maintains this want by checking reachability and creating hub blocks to fix violations.
+See #ES_BR for the complete event space specification.
 
 For any want, there are three questions we can ask:
 

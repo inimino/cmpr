@@ -15,611 +15,1211 @@ Workflow:
 
 This pattern helps maintain the navigational structure while allowing rapid iteration during development.
 
+"We want a --move flag that will make moving blocks easy, probably like --move <id> --after <otherid>." 255.
+
+*/
+
+/* #agreement_SAV_from_cmpr2 @gcb @out2file @filename_template @id_for_block @blocks @output_design
+
+void agreement_SAV(span);
+
+We are given a message from an LLM (just the last message, not a full chat session).
+
+We write the output file as described by #output_design, above.
+The output_of header should be "agreement".
+
+@- This probably shouldn't go here, but just to get things going...
+@- After everything is done we call get_outputs() to let the rest of the system know about the new output (so it can appear in the UI).
+*/
+
+void agreement_SAV(span message) {
+    span ret;
+    ret.buf = cmp.end;
+    out_sav sav = out2cmp();
+
+    span block_id = id_for_block(state->blocks.a[state->curr_block_idx]);
+    checksum cksum = selected_checksum(state->blocks.a[state->curr_block_idx]);
+
+    prt("block_id: %.*s\n", len(block_id), block_id.buf);
+    prt("checksum: "); pr_checksum(cksum);
+    prt("output_of: agreement\n\n");
+    wrs(message);
+    if(empty(message) || message.end[-1] != '\n') terpri();
+
+    ret.end = cmp.end;
+    out_rst(sav);
+
+    span cmprdir = S("{cmprdir}/outputs/");
+    span timestamp = S("{timestamp}");
+    span filepath_template = concat(cmprdir, timestamp);
+    span filepath = filename_template(filepath_template);
+
+    write_to_file_span(ret, filepath, 1);
+    cmp.end = ret.buf;
+    //get_outputs();
+}
+
+
+/* #agreement_from_cmpr2
+
+void agreement();
+
+The agreement palette entry is designed to ask the LLM whether the NL and PL code agree.
+Specifically it asks whether the NL code correctly implements what the PL code asks for.
+
+The answer is either "yes" or "no" along with an explanation of what is wrong.
+
+We call a function to get the prompt template named agreement.
+
+We call another function to get the template variables related to the current block.
+
+We expand the template with the variables.
+
+We then call send_to_llm, with agreement_SAV as the callback function.
+*/
+
+ /*output:
+...text from the LLM...
+*/
+
+void agreement() {
+    span template = get_prompt_template(S("agreement"));
+    spans vars = current_block_template_vars();
+    span expanded_template = expand_template(template, vars);
+    wrs(expanded_template);
+    flush();
+    getch();
+    //send_to_llm(expanded_template, &agreement_SAV);
+    llm_message_handler cb = make_output_saver(S("agreement"));
+    send_to_llm(expanded_template, cb);
+}
+
+
+/* #product_pattern_decisions @product_pattern_comments
+
+Summary of proposed product pattern implementation, in JavaScript.
+
+We want to implement a product pattern agent for cmpr that can record bidirectional relations between two sets (A, B) by tracking observed joint events (a, b).
+The agent will allow us to rapidly look up all b associated with any a, and all a associated with any b.
+Each call to record a joint event (a, b) will update both directions of the mapping.
+
+We implement this as a function (not a class), which when called, returns an object containing only function properties.
+Each property is a closure and provides access to the core operations:
+
+- record(a, b): record an observed joint event between a (from A) and b (from B).
+- lookupFromA(a): return the set of b values corresponding to this a.
+- lookupFromB(b): return the set of a values corresponding to this b.
+- optionally, other utilities such as counts, serialization, clear, etc.
+
+All internal state (opaque dicts/maps/objects for both directions) is inside the closure.
+
+No prototype or class is used.
+The interface is plain JS: initialization via function call, usage via returned function-properties on the result object.
+
+The design is minimal, suitable for rapid in-memory prototyping, and can easily be adapted for persistence or optimization later if needed.
 */
 
 
+/* #Model
 
+The Model interface may be implemented in various languages, but we describe it generically here.
 
+m = Model()
+m.input(ES, event, support)
+m.f() // thought update function, applies the total pattern
+m.addPP(ES1, ES2) // adds a learned product pattern between ES1 and ES2
+m.learn() // update P from T
+m.zeroT() // zeros the total thought T
+m.queryES(ES) -> returns the set of supported events in the given event space
+m.serialize() -> string
+m.deserialize(s)
 
-# CLAUDE.md
+Example:
 
-Guidance to Claude Code.
+m.addPP("The block content", "The block summary")
 
+m.zeroT()
+m.input("The block content", content, 255)
+m.f()
+summary_space = m.queryES("The block summary")
+m.deserialize(m.serialize()) // expensive no-op
 
-## Overview
+*/
 
-cmpr provides code block database features.
 
-**cmpr1 vs cmpr2**: This is the cmpr1 codebase (C implementation). The parent directory contains cmpr2 (Python implementation), which is more feature-complete. cmpr1 now includes core agent framework documentation (#agent_infrastructure, #cmpr_agents) migrated from cmpr2. See #cmpr2_via_cmpr1 for accessing additional cmpr2 blocks. The cmpr2 root block is #cmpr_project (access via: `cd ../cmpr; cmpr --print-comment '#cmpr_project'`).
+/* #ES_names_from_cmpr2
 
-## Building and Testing
+Event space names used, and patterns matched by their events:
 
-```bash
-# Production build
-make
-
-# Install
-sudo make install
-
-# Run the installed binary
-cmpr
-
-# Run the build that `make` generates without installing it
-dist/cmpr
-```
-
-See #help for the cmpr --help output.
-
-See #makefile for further details.
-
-## CRITICAL ISSUE: --rewritepl is BROKEN
-
-**DO NOT USE `cmpr --rewritepl` - IT IS CURRENTLY BROKEN**
-
-As of 2025-12-27, the `--rewritepl` command generates "Hello! How can I help you today?" instead of actual code.
-
-**Root cause**: The nl2pl prompt template system is broken. Error message: "Unknown prompt template: nl2pl_rewrite"
-
-**What to do**:
-- Mark ALL blocks that need code generation as "Manually maintained."
-- Write PL code directly instead of relying on --rewritepl
-- DO NOT attempt to fix blocks by running --rewritepl - it will replace valid code with garbage
-- Check revision history in `.cmpr/revs/` to restore any blocks that got corrupted
-
-## Code Updates
-
-**MANDATORY FIRST STEP FOR EVERY TASK**:
-
-When the user asks you to work on ANY task related to this codebase, you MUST:
-
-1. **START by reading the root block**: `cmpr --print-comment '#root'`
-2. **NAVIGATE using block references**: Follow block IDs mentioned in the output (2-3 hops to reach any part of codebase)
-3. **NEVER use the Task tool with Explore subagent** - it uses traditional tools and defeats the entire cmpr workflow
-4. **NEVER start with grep/find/Read/Glob** - these are fallbacks for when cmpr navigation fails
-
-**Example of CORRECT workflow**:
-```
-User: "I want to work on the agent system"
-Assistant: [Immediately runs] cmpr --print-comment '#root'  # Read the root block
-Assistant: [Sees reference to agent blocks, follows them] cmpr --print-comment '#root_agent'
-Assistant: [Now understands the structure and can navigate to specific agent blocks]
-```
-
-**Example of WRONG workflow**:
-```
-User: "I want to work on the agent system"
-Assistant: [Uses Task tool with Explore subagent] ❌ WRONG
-Assistant: [Uses grep to search for "agent"] ❌ WRONG
-Assistant: [Uses Glob to find agent files] ❌ WRONG
-```
-
-**Always prefer cmpr commands over traditional text tools** (grep, sed, cat, etc.) when working with the cmpr codebase.
-
-**Why use cmpr commands**:
-- They understand the block structure
-- They are way more efficient, because you can get directly from the root block to any other block in the codebase in ~ log n steps
-
-**Navigation Commands**:
-- `cmpr --print-block '#id'` - Show entire block (NL + PL)
-- `cmpr --print-comment '#id'` - Show only NL comment
-- `cmpr --print-code '#id'` - Show only PL code
-- `cmpr --grep 'pattern'` - Search for pattern across blocks (PREFER THIS for searching)
-- `cmpr --find-block 'search_term'` - Find blocks containing text (deprecated, use --grep instead)
-- `cmpr --files-blocks` - Overview of all blocks in the project
-
-**List blocks in a specific file**:
-```bash
-cmpr --files-blocks | grep -A 1000 'file: rvs_lib.py' | grep -B 1000 -m 1 '^file:' | head -n -1
-```
-
-This grep pipeline extracts just the blocks for a specific file from the `--files-blocks` output.
-
-**Editing Commands**:
-- `cmpr --replace '#id'` - Replace entire block (NL + PL) from stdin; for blocks with no PL part, this effectively replaces just the NL
-- `cmpr --replace-comment '#id'` - Replace only NL part
-- `cmpr --replace-code '#id'` - Replace only PL part (currently required due to --rewritepl being broken)
-- `cmpr --after '#id'` - Add a new block after the given block ID, reading contents from stdin
-
-There should be --before but there isn't.
-This is annoying when you want to make a new block be the first one in a file.
-The workaround is: cat the new block then the current first block of the file separated by a newline, into --replace <id of first block>.
-
-**INBOX Pattern for Staging New Blocks**:
-
-The #INBOX block serves as a staging area for new blocks during development:
-
-```bash
-# Add a new block after INBOX
-<something> | cmpr --after '#INBOX'
-# Check the INBOX
-cmpr --files-blocks | grep -A 1000 'file: INBOX.c' | grep -B 1000 -m 1 '^file:' | head -n -1
-```
-
-This pattern:
-- Provides a known location for rapid iteration without deciding final placement
-- Keeps new work (experience reports, experiments) organized
-- Blocks in INBOX should be moved to appropriate locations during review sessions
-- Use the block moving pattern (save, delete, insert) to relocate staged blocks
-
-When to use INBOX:
-- Experience reports documenting work sessions
-- Experimental or exploratory blocks
-- New documentation blocks whose final home is unclear
-- Any block where you want to defer the navigation structure decision
-
-## Reordering/Moving Blocks
-
-**Adding a block at the START of a file** (no --before exists yet):
-```bash
-# Create new content with overview block, then concat existing first block, then replace
-cat new_block.txt <(cmpr --print-block '#first_block_id') | cmpr --replace '#first_block_id'
-```
-
-To move a block to a different position in a file:
-
-1. Save the block to a temp file: `cmpr --print-block '#block_id' > /tmp/block.txt`
-2. Delete the block from its current position: `echo "" | cmpr --replace '#block_id'`
-3. Insert it at the new position: `cat /tmp/block.txt | cmpr --after '#target_block_id'`
-
-**IMPORTANT**: Never create temporary duplicates of blocks (adding before deleting) because having duplicate block IDs results in undefined behavior. Always delete first, then add at the new location.
-
-**Example - Moving #events_types before #ui_state**:
-```bash
-# Step 1: Save block
-cmpr --print-block '#events_types' > /tmp/events_types.txt
-
-# Step 2: Delete from current location
-echo "" | cmpr --replace '#events_types'
-
-# Step 3: Insert at new location (after the block that should precede it)
-cat /tmp/events_types.txt | cmpr --after '#rev_info'
-```
-
-**Navigating the Codebase**:
-
-All navigation MUST start from the root block and follow block references:
-
-1. **Start at the root block**: Read it with `cmpr --print-comment '#root'` to see the main navigation hubs
-2. **Use 2-3 hops**: You should be able to reach any area of the codebase in 2-3 `--print-comment` calls by following block references
-
-**Navigation Structure** (as of 2025-12-27):
-
-The root block (#root) provides access to these main hubs:
-
-- **#cmpr_c_overview** - High-level architecture of cmpr.c
-  - Entry points (#main, #init, #read_, #main_loop)
-  - CLI system (#argtable)
-  - TUI system (#keybinds, #handle_keystroke)
-  - Core operations overview blocks
-
-- **#cmpr_implementation** - Implementation details
-  - #ui_display_overview - TUI display and state
-  - #block_editing_overview - Block editing and language detection
-  - #llm_integration_overview - LLM API integration
-  - #prompt_system_overview - Prompt templates and processing
-  - #block_ops_overview - Block operations
-  - #command_handlers_overview - CLI command implementations
-
-- **#libraryintro** - The spanio I/O library
-  - Core span operations and utilities
-  - Dynamic arrays and data structures
-  - JSON parsing and file I/O
-
-- **#root_agent** - Agent framework for maintaining project wants
-  - Agent infrastructure patterns (#agent_infrastructure)
-  - Executable agents (#root_agent_check, #root_agent_fix)
-  - Agent ecosystem (#cmpr_agents)
-
-- **#cmpr_events** - Event system (T/E/S) for temporal reasoning
-  - Event types and workflow
-  - Memorize/recall functionality
-  - User guide: #event_system_guide
-
-- **#makefile** - Build system
-  - Build targets and process
-  - Dependencies and configuration
-
-**Example Navigation Paths**:
-
-To add a CLI feature:
-- `#root` → `#cmpr_c_overview` → `#argtable` (CLI definitions)
-- Look at similar commands for implementation patterns
-
-To work on block operations:
-- `#root` → `#cmpr_implementation` → `#block_ops_overview`
-- Or: `#root` → `#cmpr_implementation` → `#command_handlers_overview`
-
-To understand the agent system:
-- `#root` → `#root_agent` → `#agent_infrastructure` (patterns)
-- `#root` → `#root_agent` → `#root_agent_check` (CHECK mode implementation)
-
-To work on the event system:
-- `#root` → `#cmpr_events` → referenced implementation blocks
-- `#root` → `#cmpr_events` → `#event_system_guide` (user guide)
-
-To work with spanio library:
-- `#root` → `#libraryintro` → specific span operations
-
-To understand the build system:
-- `#root` → `#makefile`
-
-**Rule**: If you cannot reach the blocks you need from the root block by following direct references, that is a PROBLEM. DO NOT work around it by using search commands. Instead:
-1. STOP and inform the user that navigation is broken
-2. Help fix the navigation structure by adding appropriate overview blocks or references
-3. Only proceed with the original task after navigation is fixed
-4. If the only thing you do is fix the navigation, so that you can find what you need to in 2-3 hops from root, and then you end the session and the programmer commits your change, that was a good session.
-
-### NL/PL Synchronization
-
-**Standard Workflow** (BLOCKED: see --rewritepl issue above):
-1. Edit ONLY the NL using `cmpr --replace-comment '#blockid'` which takes new contents on stdin.
-   - you should always have the previous NL in scope, otherwise do a --print-comment first, then make your changes
-2. Run `cmpr --rewritepl '#block_id'` to regenerate PL from NL
-3. Run `cmpr --print-code '#block_id'` to verify the generated PL looks correct
-4. Test the changes with `dist/cmpr`
-
-**When to Manually Maintain PL**:
-- Only mark a block as "Manually maintained" if you MUST write PL directly
-- Add "Manually maintained." as the last line of the NL comment
-- This is rare and should be avoided when possible - prefer letting the system generate code
-
-**CRITICAL: NL Precision for nl2pl**:
-- The nl2pl system can generate correct code, but ONLY when the NL is unambiguous
-- Vague specifications lead to incorrect implementations
-- When performance or correctness matter, be VERY explicit about:
-  - Exact algorithms (e.g., "BFS traversal calling cmpr --print-comment for each block")
-  - Data structures (e.g., "block-scoped graph, not file-scoped")
-  - What NOT to do (e.g., "don't scan entire files, only individual NL comments")
-- If the generated PL is wrong, the NL was probably ambiguous - fix the NL, not the PL
-
-**Important Notes**:
-- The `cmpr` command in PATH reads the current source files (for inspecting)
-- The `dist/cmpr` binary is the built executable (for testing)
-- The interactive `r` command in the TUI does the same as `--rewritepl`
-
-### Testing Changes
-
-**Build System**:
-- Run `make` to build `dist/cmpr`
-- Check build timestamp: `dist/cmpr --version`
-- The Makefile will compile changed source files and link the binary
-
-**Testing Binary**:
-- Always test with `dist/cmpr`, not the system `cmpr` command
-- The system `cmpr` at `/usr/local/bin/cmpr` will be older
-- After code changes, run `make` to rebuild before testing
-
-### Code Conventions
-
-It should be possible to reach any block by following "Justifies: " lines, or explicit blockid mentions, starting from the root block.
-
-**Duplicate Block References**: It is perfectly fine for a block ID to be mentioned multiple times in a parent block (e.g., #root_agent appearing twice in #root). Duplicate references do not cause any problems and are sometimes useful for documentation clarity.
-
-**Important Note**:
-We are still building up the graph from the root block to all the other blocks.
-If you cannot reach the blocks that you need from the root block by following direct references, that's a problem.
-DO NOT work around it but always stop and make some edits.
-
-The basic idea is this:
-The root block should give a high-level overview of the parts of the project.
-If you know what you're trying to do (e.g. add feature X) then you should be able to determine where the relevant code is by just following blockids and using --print-comment 2-3 times, which makes things very efficient.
-When that's not the case, you should probably ask the programmer about what needs to be improved in the structure, because we're still building this system out.
-
-Similarly, if a cmpr command doesn't work or doesn't do what you expect, don't fall back to using other tools, but always let the programmer know and we'll fix it together.
-We're using cmpr to build cmpr itself here, so if cmpr doesn't work right, then we always fix that before continuing with whatever we were doing before.
-
-### Project Configuration
-- Configuration is stored in `.cmpr/conf`
-- Bootstrap scripts provide AI context: `./bootstrap.sh` -- this is obsolete
-- Default model and build commands are configurable per project
-
-## Core Architecture
-
-### Single-Tier C System
-This is a pure C application with no web frontend or HTTP server:
-- **`cmpr.c`** - Main application: block database, CLI commands, and terminal UI (TUI). Includes hardcoded prompt templates for nl2pl code generation.
-- **`spanio.c`** - Custom I/O library using span-based string handling
-- **`Makefile`** - Build system (see #makefile for details)
-
-### Block-Based Code Organization
-- Code is organized into discrete "blocks" with IDs like `#block_name`
-- Each block contains:
-  - **NL Part**: Natural language comment (source of truth)
-  - **PL Part**: Programming language code (generated from NL)
-- Block references (`@other_block`) provide context dependencies
-- Transitive references create dependency graphs
-
-### Revision System
-- Every code change is automatically versioned in `.cmpr/revs/`
-- Uses SipHash checksums for content integrity
-- Complete history tracking with timestamps
-- There is an 'rvs' command which lets us interact with the revisions; we'll expand this section later; it's not very useful yet.
-
-## Key Components
-
-### cmpr.c (Main Application)
-- **CLI Mode**: Command-line interface with flags like `--grep`, `--print-block`, `--replace`, etc.
-- **Terminal UI (TUI)**: Interactive mode with single-keystroke commands (`j/k/g/G` for navigation, `r` for rewrite, `B` for build)
-- **Block Database**: Parses and manages blocks across all source files
-- **Operations**: Block navigation, code generation (nl2pl), building, search, history
-- **LLM Integration**: Calls external LLM APIs for nl2pl code generation
-
-### spanio.c (I/O Library)
-- Custom I/O library using span-based string handling with `.buf` and `.end` pointers
-- Arena allocation avoiding malloc overhead
-- Efficient string operations without null-terminator dependencies
-
-### Prompt System
-- LLM prompt templates for nl2pl (natural language to programming language) conversion are hardcoded in cmpr.c
-- Prompt functions (pt_nl2pl_rewrite, pt_agreement, etc.) return template strings
-- Simplified from previous generation-based system to avoid circular build dependencies
-
-## Development Patterns
-
-### Natural Language Programming Workflow
-1. Write English descriptions in block comments
-2. AI converts to working code in target language
-3. System maintains consistency between documentation and code
-4. Focus on higher-level architectural decisions
-
-### Agent System and Decision Tracking
-
-**Running Agents**:
-
-To execute an agent:
-```bash
-cmpr --print-code '#agent_block_id' | bash
-```
-
-To list all available agents:
-```bash
-dist/cmpr --agents
-```
-
-Example - run the migration agent:
-```bash
-cmpr --print-code '#migration_agent' | bash
-```
-
-Navigation to agents:
-1. Start at `#root` → follow to `#root_agent`
-2. `#root_agent` lists all agent blocks and explains how to run them
-3. See `#migration_agent` for cmpr2→cmpr1 block migration
-
-**Agent Architecture** (see #agent_framework for details):
-- An agent = **Predicate (Want)** + **Step Function (CHECK/FIX)**
-- Wants establish event spaces: {desired state, complement}
-- Agents verify and maintain wants through CHECK and FIX modes
-
-**Four Decision States** (tracked → checked → assisted → owned):
-1. **Tracked**: We record the want but don't verify it
-2. **Checked**: We can determine if criteria is met
-3. **Assisted**: We can offer help with fixing it
-4. **Owned**: We automatically maintain the want
-
-**Implementing Agents** (see #agent_implementation_pattern in cmpr2; #root_agent_check and #root_agent_fix for cmpr1 examples):
-- Create two blocks: predicate block + step function block
-- Both executable via `cmpr --print-code '#blockid' | sh` or `bash`
-- Step functions report state using SN notation
-- Example in cmpr1: `#root` (predicate) + `#root_agent_check` (CHECK mode) + `#root_agent_fix` (FIX mode)
-- Agents integrate with the event system (T) to record activity - see #claude_experience_report_root_agent_t_integration_20251227
-
-**SN Notation** for confidence levels:
-- 255 bits = definitional (statement is defined to be true)
-- 20 bits = ~1 million to 1 confidence (virtually certain)
-- 0 bits = describes possible event with no support
-
-### Event System (T/E/S)
-
-The event system provides temporal reasoning capabilities through tracking events in "transient memory" (T).
-
-**Key Concepts**:
-- **T (transient memory)**: Current event state, automatically persisted to `.cmpr/T`
-- **E (events)**: Individual event strings with associated strength values
-- **S (strength)**: Binary log odds representing bits of support for a proposition
-- **SN lines**: Format is `"event_string" <strength>.` where interior quotes are NOT escaped
-
-**CLI Commands**:
-- `cmpr --T0` - Reset T to empty state
-- `cmpr --event "string" --strength 255` - Add event to T (currently only strength 255 supported)
-- `cmpr --T` - Print current T state as SN lines
-- `cmpr --memorize` - Save timestamped snapshot of T to `.cmpr/events/`
-- `cmpr --recall` - Search snapshots using current T as query, load matching snapshot with full context
-
-**Implementation Details**:
-- T persists automatically to `.cmpr/T` on every change
-- Events are loaded on startup and saved after modifications
-- Memorize creates timestamped snapshots (YYYYMMDD-HHMMSS-nanos format)
-- Recall searches snapshots (newest first) for ones containing any query event from current T, then loads all events from the matching snapshot
-- Event strings can contain any characters including quotes (per SN spec)
-- Duplicate events update strength rather than creating duplicates
-
-**SN Format Specification**:
-Per the SN notation convention:
-- SN lines begin with `"` and end with `" <digits>.`
-- Interior double quotes are NOT escaped
-- Parse by finding `" <digits>.` pattern at end of line
-- Everything between opening `"` and final `" <digits>.` is the event string
-
-**Event System Workflow and Design Intent**:
-
-NOTE: This section describes intended design patterns that are still being validated through actual use.
-
-CRITICAL UNDERSTANDING: T is "transient memory" - the name and the existence of `--T0` (clear T) reveal the design intent.
-
-T is meant to be CLEARED between work sessions. It holds CURRENT context, not ALL historical state.
-
-Typical workflow:
-```bash
-# Clear T for new work
-cmpr --T0
-
-# Set context (e.g., which block we're examining)
-cmpr --event "The block id is: #foo" --strength 255
-
-# Add facts about current context
-cmpr --event "The block author is: Alice" --strength 255
-cmpr --event "The block needs refactoring" --strength 255
-
-# Save snapshot for historical record
-cmpr --memorize
-
-# Repeat for next block/context
-```
-
-Event Pattern Usage:
-
-The **variable pattern** is the correct approach:
-```
-"The block id is: #foo" 255.
-"The block is reachable" 255.
-"The block author is: Alice" 255.
-```
-
-T holds context for ONE entity at a time. To track multiple entities, LOOP:
-```bash
-for block in $all_blocks; do
-  dist/cmpr --T0
-  dist/cmpr --event "The block id is: $block" --strength 255
-  dist/cmpr --event "The block is reachable" --strength 255
-  dist/cmpr --memorize
+"The block content"
+  "The block content is: {content}"
+"The block summary"
+  "The block summary is: {summary}"
+"The block id"
+  "The block id is: {blockid}"
+"The block idx"
+  "The block idx is: {idx}"
+"The block revtime"
+  "The block revtime is: {ts}"
+
+We have short names used as convenient abbreviations: BC, BS, BID, BIX, BTS for these five respectively.
+(We could expose block content as BNL and BPL as well at some point---it's already obvious in context what these mean.)
+
+These five could be called the total block event space, and the joint event should be fully supported in each of the five atomic event spaces.
+
+*/
+
+
+/* #decision_feature
+
+"This is an example decision in SN (our notational convention)." 255.
+"The feature is called "decisions" for now." 255.
+"Decisions are recorded in the code and form an agreement between the user and the system." 255.
+"The system will use the list of in-scope decisions to suggest or make changes and surface issues." 255.
+"A decision line is any which begins with double quote and ends with double quote, single space, integer digits, and dot." 255.
+"Interior double quotes are not escaped in any way and the sentence is formatted as if it stood alone on the line." 255.
+"The outer double quotes do not mean that single quotes should be used, or that any escaping is necessary." 255.
+"The trailing integer is a strength and is used for ranking, not as an ID." 255.
+"All decisions are scoped to the project and collectively define the project's scope." 255.
+"Only the source code is edited; decisions are extracted from it but the code remains the source of truth." 255.
+"Decisions will be indexed for the feature, but details remain TBD." 255.
+"A decision is a specific kind of event, that is, one that records an intention about the state of the project." 255.
+*/
+
+
+/* #cmpr_nl2pl_check @agent_infrastructure
+
+This is the check script for the nl2pl agent. It runs once and reports blocks with stale PL.
+
+A block has stale PL if its NL comment has been modified more recently than its PL code was generated.
+
+Implementation approach:
+
+Use the efficient `rvs stale` command (without blockid argument) to get all stale blocks in a single call:
+- `rvs stale` with no arguments returns exit code 1 if any blocks are stale, 0 if all are current
+- When there are stale blocks, outputs one blockid per line to stdout
+- This is much more efficient than calling `rvs stale #blockid` for each block individually
+
+Output format (following #agent_infrastructure):
+- stdout: one stale blockid per line
+- stderr: diagnostic messages (minimal during normal operation)
+- exit 0 if no stale blocks, 1 if stale blocks found, 2 on error
+
+State storage:
+- Write to .cmpr/agents/nl2pl/ following #agent_infrastructure pattern
+- metrics.json with count of stale blocks
+- report.txt with full list
+
+Script install:
+
+cmpr --print-code '#cmpr_nl2pl_check' > scripts/nl2pl-check && chmod +x scripts/nl2pl-check
+
+Implementation:
+
+In this block we have the contents of the check script (Python).
+
+*/
+
+#!/usr/bin/env python3
+import subprocess
+import sys
+import os
+import json
+from datetime import datetime
+
+AGENT = "nl2pl"
+AGENT_DIR = os.path.join(".cmpr", "agents", AGENT)
+os.makedirs(AGENT_DIR, exist_ok=True)
+metrics_path = os.path.join(AGENT_DIR, "metrics.json")
+report_path = os.path.join(AGENT_DIR, "report.txt")
+last_run_path = os.path.join(AGENT_DIR, "last-run")
+last_status_path = os.path.join(AGENT_DIR, "last-status")
+
+try:
+    p = subprocess.run(["rvs", "stale"], capture_output=True, text=True)
+except FileNotFoundError:
+    print("rvs command not found", file=sys.stderr)
+    status = 2
+    blockids = []
+else:
+    status = 0 if p.returncode == 0 else (1 if p.returncode == 1 else 2)
+    if status == 2:
+        print(p.stderr.strip(), file=sys.stderr)
+        blockids = []
+    else:
+        blockids = [line for line in p.stdout.splitlines() if line.strip()]
+
+try:
+    with open(report_path, "w") as f:
+        f.write("\n".join(blockids) + ("\n" if blockids else ""))
+    with open(metrics_path, "w") as f:
+        metrics = {
+            "agent": AGENT,
+            "timestamp": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            "status": (
+                "ok" if status == 0 else
+                "issues_found" if status == 1 else
+                "error"
+            ),
+            "count": len(blockids),
+            "summary": (
+                "all blocks current" if status == 0 else
+                f"{len(blockids)} stale blocks" if status == 1 else
+                "error"
+            )
+        }
+        json.dump(metrics, f, indent=2)
+    with open(last_run_path, "w") as f:
+        f.write(f"{datetime.utcnow().isoformat()}Z\n")
+    with open(last_status_path, "w") as f:
+        f.write(str(status) + "\n")
+except Exception as e:
+    print(f"state write error: {e}", file=sys.stderr)
+    sys.exit(2)
+
+# Output as per agent contract
+for bid in blockids:
+    print(bid)
+
+if status == 2:
+    sys.exit(2)
+elif status == 1:
+    sys.exit(1)
+else:
+    sys.exit(0)
+
+
+/* #cmpr_block_names_check @agent_infrastructure
+
+This is the check script for the block_names agent. It runs once and reports blocks without names.
+
+A block has a name if its entry in --files-blocks output includes a blockid (e.g., "Block 3: #some_name").
+A block is unnamed if its entry shows only "Block N" with no blockid.
+
+Implementation approach:
+
+1. Run `cmpr --files-blocks` to get all blocks in the project
+2. Parse output to find lines matching "^Block [0-9]+$" (blocks without IDs)
+3. For each unnamed block, include the file it belongs to for context
+4. Report results in standard agent format
+
+Output format (following #agent_infrastructure):
+- stdout: one unnamed block per line, with file context
+- stderr: diagnostic messages (should be minimal/silent during normal operation)
+- exit 0 if no issues, 1 if unnamed blocks found, 2 on error
+
+State storage:
+- Write to .cmpr/agents/block_names/ following #agent_infrastructure pattern
+- metrics.json with count of unnamed blocks
+- report.txt with full list
+
+Script install:
+
+cmpr --print-code '#cmpr_block_names_check' > scripts/block-names-check && chmod +x scripts/block-names-check
+
+Implementation:
+
+This is a Python script that parses --files-blocks output.
+
+#!/usr/bin/env python3
+
+import subprocess
+import json
+import os
+import sys
+from datetime import datetime
+
+def main():
+    # Create state directory
+    state_dir = ".cmpr/agents/block_names"
+    os.makedirs(state_dir, exist_ok=True)
+    
+    try:
+        # Run cmpr --files-blocks
+        result = subprocess.run(
+            ["cmpr", "--files-blocks"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        # Parse output to find unnamed blocks
+        lines = result.stdout.strip().split('\n')
+        unnamed_blocks = []
+        current_file = None
+        
+        for line in lines:
+            if line.startswith("file: "):
+                current_file = line[6:]  # Strip "file: " prefix
+            elif line.startswith("Block "):
+                # Check if this is just "Block N" without a blockid
+                if ':' not in line:
+                    # Unnamed block - extract block number
+                    block_num = line.split()[1]
+                    unnamed_blocks.append({
+                        "file": current_file,
+                        "block": block_num,
+                        "line": line.strip()
+                    })
+        
+        # Write report
+        report_path = os.path.join(state_dir, "report.txt")
+        with open(report_path, 'w') as f:
+            for item in unnamed_blocks:
+                f.write(f"{item['file']}: Block {item['block']}\n")
+                print(f"{item['file']}: Block {item['block']}")
+        
+        # Write metrics
+        metrics = {
+            "agent": "block_names",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "status": "issues_found" if unnamed_blocks else "ok",
+            "count": len(unnamed_blocks),
+            "summary": f"{len(unnamed_blocks)} unnamed blocks"
+        }
+        
+        metrics_path = os.path.join(state_dir, "metrics.json")
+        with open(metrics_path, 'w') as f:
+            json.dump(metrics, f, indent=2)
+        
+        # Write last-run and last-status
+        with open(os.path.join(state_dir, "last-run"), 'w') as f:
+            f.write(datetime.utcnow().isoformat() + "Z\n")
+        
+        exit_code = 1 if unnamed_blocks else 0
+        with open(os.path.join(state_dir, "last-status"), 'w') as f:
+            f.write(f"{exit_code}\n")
+        
+        return exit_code
+        
+    except subprocess.CalledProcessError as e:
+        print(f"Error running cmpr --files-blocks: {e}", file=sys.stderr)
+        return 2
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
+        return 2
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+*/
+
+#!/usr/bin/env python3
+
+import subprocess
+import json
+import os
+import sys
+from datetime import datetime
+
+def main():
+    state_dir = ".cmpr/agents/block_names"
+    os.makedirs(state_dir, exist_ok=True)
+    try:
+        result = subprocess.run(
+            ["cmpr", "--files-blocks"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        lines = result.stdout.strip().split('\n')
+        unnamed_blocks = []
+        current_file = None
+        for line in lines:
+            if line.startswith("file: "):
+                current_file = line[6:]
+            elif line.startswith("Block "):
+                if ':' not in line:
+                    block_num = line.split()[1]
+                    unnamed_blocks.append({
+                        "file": current_file,
+                        "block": block_num
+                    })
+        report_path = os.path.join(state_dir, "report.txt")
+        with open(report_path, 'w') as f:
+            for item in unnamed_blocks:
+                out_line = f"{item['file']}: Block {item['block']}\n"
+                f.write(out_line)
+                print(out_line, end='')
+        metrics = {
+            "agent": "block_names",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "status": "issues_found" if unnamed_blocks else "ok",
+            "count": len(unnamed_blocks),
+            "summary": f"{len(unnamed_blocks)} unnamed blocks"
+        }
+        metrics_path = os.path.join(state_dir, "metrics.json")
+        with open(metrics_path, 'w') as f:
+            json.dump(metrics, f, indent=2)
+        with open(os.path.join(state_dir, "last-run"), 'w') as f:
+            f.write(datetime.utcnow().isoformat() + "Z\n")
+        exit_code = 1 if unnamed_blocks else 0
+        with open(os.path.join(state_dir, "last-status"), 'w') as f:
+            f.write(f"{exit_code}\n")
+        return exit_code
+    except subprocess.CalledProcessError as e:
+        print(f"Error running cmpr --files-blocks: {e}", file=sys.stderr)
+        return 2
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
+        return 2
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+/* #cmpr_justify_check @agent_infrastructure @example_block_map @files_blocks_format_example
+
+This is the check script for the justify agent. It runs once and reports unjustified blocks.
+
+A block is justified if it is reachable from the root node, which is the project root #cmpr_project.
+
+The definition of reachable is that in the root block there are "mentions" of other blocks, which is defined currently as just the literal occurrence of a blockid.
+@- Note that false positives which do not exist are not a problem for this algorithm, but it does mean that there is no way to "escape" a mention of a blockid in some block, so e.g. "the deleted block [...]" would justify that block even though that is obviously not the intent.
+@- We might revisit this by requiring explicit Justify lines.
+
+Implementation approach:
+
+1. Read .cmpr/block-map to get the set of all blockids that exist in the project
+2. BFS traversal from #cmpr_project to find reachable blocks:
+   - Start with queue containing just #cmpr_project
+   - For each block in the queue:
+     - Call `cmpr --print-comment <blockid>` to get that block's NL comment
+     - Parse blockid mentions from the comment using regex
+     - Filter mentions to only those that exist in the block-map (optimization: don't fetch non-existent blocks)
+     - Add newly discovered existing blockids to the queue and mark as seen
+   - This lazy evaluation means we only call cmpr for reachable blocks that exist
+3. Compare: blocks that exist in block-map but weren't reached are unjustified
+
+Critical implementation details:
+- For each block during BFS, use `cmpr --print-comment` to get ONLY that block's NL comment
+- Only process blockids that exist in the block-map (avoid trying to fetch comments for non-existent blocks like #c, #id, etc.)
+- Handle cmpr errors silently (if a block can't be fetched, skip it without printing errors)
+
+Output format (following #agent_infrastructure):
+- stdout: one unjustified blockid per line
+- stderr: diagnostic messages (should be minimal/silent during normal operation)
+- exit 0 if no issues, 1 if unjustified blocks found, 2 on error
+
+State storage:
+- Write to .cmpr/agents/justify/ following #agent_infrastructure pattern
+- metrics.json with count of unjustified blocks
+- report.txt with full list
+
+Script install:
+
+cmpr --print-code '#cmpr_justify_check' > scripts/justify-check && chmod +x scripts/justify-check
+
+Implementation:
+
+In this block we have the contents of the check script (Python).
+
+*/
+
+#!/usr/bin/env python3
+import sys
+import os
+import re
+import subprocess
+import time
+import json
+
+BLOCK_MAP_FILE = '.cmpr/block-map'
+AGENT_NAME = 'justify'
+AGENT_DIR = f'.cmpr/agents/{AGENT_NAME}'
+METRICS_FILE = os.path.join(AGENT_DIR, 'metrics.json')
+REPORT_FILE = os.path.join(AGENT_DIR, 'report.txt')
+LAST_RUN_FILE = os.path.join(AGENT_DIR, 'last-run')
+LAST_STATUS_FILE = os.path.join(AGENT_DIR, 'last-status')
+ROOT_BLOCKID = '#cmpr_project'
+BLOCKID_RE = re.compile(r'#[a-zA-Z0-9_]+')
+
+def read_block_map(path):
+    blockids = set()
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.startswith('Block '):
+                    idx = line.find(':')
+                    if idx != -1:
+                        txt = line[idx+1:].strip()
+                        # Only add blockid if present
+                        if txt.startswith('#'):
+                            blockids.add(txt)
+                    # If no id, skip
+    except Exception as e:
+        print(f'Error reading {path}: {e}', file=sys.stderr)
+        sys.exit(2)
+    return blockids
+
+def comment_of(blockid):
+    try:
+        out = subprocess.run(
+            ['cmpr', '--print-comment', blockid],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, encoding='utf-8', timeout=5
+        )
+        if out.returncode == 0:
+            return out.stdout
+    except Exception:
+        pass
+    return ''
+
+def find_mentions(text, known_blockids):
+    return set(b for b in BLOCKID_RE.findall(text) if b in known_blockids)
+
+def bfs_reachable(root, blockids):
+    seen = set()
+    queue = [root] if root in blockids else []
+    while queue:
+        current = queue.pop(0)
+        if current in seen: continue
+        seen.add(current)
+        comment = comment_of(current)
+        mentions = find_mentions(comment, blockids)
+        for m in mentions:
+            if m not in seen:
+                queue.append(m)
+    return seen
+
+def write_agent_state(unjustified, status):
+    os.makedirs(AGENT_DIR, exist_ok=True)
+    now_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    with open(REPORT_FILE, 'w', encoding='utf-8') as f:
+        for uj in unjustified:
+            f.write(uj + '\n')
+    metrics = {
+        'agent': AGENT_NAME,
+        'timestamp': now_iso,
+        'status': 'issues_found' if status == 1 else 'ok',
+        'count': len(unjustified),
+        'summary': f"{len(unjustified)} unjustified blocks" if unjustified else "all blocks justified"
+    }
+    with open(METRICS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(metrics, f)
+    with open(LAST_RUN_FILE, 'w', encoding='utf-8') as f:
+        f.write(now_iso+'\n')
+    with open(LAST_STATUS_FILE, 'w', encoding='utf-8') as f:
+        f.write(str(status)+'\n')
+
+def main():
+    try:
+        blockids = read_block_map(BLOCK_MAP_FILE)
+        if not ROOT_BLOCKID in blockids:
+            print(f"Root block {ROOT_BLOCKID} not found in block-map", file=sys.stderr)
+            write_agent_state([], 2)
+            sys.exit(2)
+        reachable = bfs_reachable(ROOT_BLOCKID, blockids)
+        unjustified = sorted(blockids - reachable)
+        for uj in unjustified:
+            print(uj)
+        status = 1 if unjustified else 0
+        write_agent_state(unjustified, status)
+        sys.exit(status)
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        try:
+            write_agent_state([], 2)
+        except Exception:
+            pass
+        sys.exit(2)
+
+if __name__ == '__main__':
+    main()
+
+
+/* #agent_block_names @agent_infrastructure @cmpr_block_names_check
+
+The block_names agent runs continuously and monitors the project for blocks without names.
+
+How it works:
+
+The agent watches .cmpr/block-map for changes.
+When the block-map changes, it runs scripts/block-names-check to detect unnamed blocks.
+The check script writes results to .cmpr/agents/block_names/ following the infrastructure pattern.
+
+Implementation:
+
+This is a shell script that runs in an infinite loop:
+
+#!/bin/sh
+mkdir -p .cmpr/agents/block_names
+while sleep 0.1; do
+  if [ -f .cmpr/block-map ]; then
+    echo .cmpr/block-map | entr -n -d sh -c "scripts/block-names-check"
+  else
+    sleep 1
+  fi
 done
-```
 
-WRONG APPROACHES (do not use):
+Note: The -n flag to entr runs it in non-interactive mode, which is needed when running as a background agent.
 
-1. **"Embedded pattern"** - trying to avoid deduplication:
-   ```
-   "Block #foo is reachable" 255.  # WRONG
-   "Block #bar is unreachable" 255.  # WRONG
-   ```
-   This tries to load all entities into one T state, violating T's transient design.
+The agent will run until manually terminated.
 
-2. **Loading hundreds of events into one T state**:
-   Fights the design. T is not a database for all historical state.
+Agent install:
 
-3. **"Alternative mechanisms"** (files, databases, etc.):
-   The intended pattern is to use the T workflow correctly:
-   Loop with --T0, set context, add events, --memorize.
+cmpr --print-code '#agent_block_names' > agents/block_names && chmod +x agents/block_names
 
-When designing solutions:
-- If you find yourself fighting `--T0` or avoiding `--memorize`, reconsider the approach
-- T is for CURRENT work context, snapshots (via --memorize) are for HISTORICAL queries
-- Pay attention to what system commands exist - they reveal design intent
-- The existence of --T0 means T is MEANT to be cleared regularly
+For the check script that does the actual work, see #cmpr_block_names_check.
 
-## File Structure
+*/
 
-- **Core Application**: `cmpr.c` (main application with CLI and TUI, includes hardcoded prompt templates)
-- **I/O Library**: `spanio.c` (span-based string handling)
-- **Staging Area**: `INBOX.c` (staging area for new blocks)
-- **Configuration**: `.cmpr/conf` (project configuration)
-- **Build System**: `Makefile` (see #makefile for details)
-- **Revisions**: `.cmpr/revs/` (automatic versioning)
-- **Events**: `.cmpr/events/` (event system snapshots), `.cmpr/T` (current transient memory)
-- **Build Output**: `dist/cmpr` (compiled binary)
-
-## Common Pitfalls and Process Reminders
-
-**CRITICAL: Always Use cmpr Commands**
-
-After exiting planning mode or when context-switching, it's easy to forget cmpr commands exist and fall back to traditional file editing (Write, Edit tools). This makes you 10x slower and less token-efficient.
-
-**Before touching ANY file**:
-1. Check if it's block-managed: `cmpr --files-blocks | grep filename`
-2. If yes, use ONLY cmpr commands: `--print-comment`, `--replace`, `--after`
-3. NEVER use Write/Edit tools on block-managed files
-
-**Common mistakes**:
-- ❌ Using Task tool with Explore subagent to "explore the codebase" → ✅ Start at root block and navigate
-- ❌ Using `Write` to create new blocks → ✅ Use `cmpr --after <block_id>`
-- ❌ Using `Edit` to modify existing blocks → ✅ Use `cmpr --replace '#block_id'`
-- ❌ Using `Read` + manual parsing → ✅ Use `cmpr --print-comment '#block_id'`
-- ❌ Using `grep`/`find` to locate code → ✅ Use `cmpr --grep` or navigate from root
-- ❌ Manually reading .cmpr/revs files → ✅ Use existing rvs indices and helpers
-- ❌ Starting ANY task without reading root block first → ✅ Always start by reading the root block to see navigation hubs
-- ❌ Piping commands into `--replace-code` without testing → ✅ Test with `wc -l`, then `grep`, THEN replace
-- ❌ Grepping or filtering `make` output → ✅ Read it directly - it's a serious build system, not npm
-- ❌ Creating blocks without knowing final location → ✅ Use `cmpr --after '#INBOX'` and move later
-
-**CRITICAL: Navigation Structure**
-
-Every block MUST be reachable from #root in ≤2 hops. This is the #root want that root_agent maintains.
-
-When creating new blocks:
-1. ❌ **WRONG**: Create block in INBOX, leave it there permanently
-2. ✅ **CORRECT**: Create block AND immediately integrate it into navigation:
-   - Add reference to relevant hub block (e.g., #cmpr_events, #root_agent)
-   - OR create new hub if starting a new subsystem
-   - OR use INBOX only for temporary/experimental blocks
-
-The navigation structure IS the codebase organization. Breaking navigation means:
-- The block is effectively lost (not discoverable)
-- It won't appear in anyone's mental model of the system
-- The #root want is violated
-
-Fix navigation BEFORE implementing anything else. If you cannot reach the blocks you need in 2 hops from #root by following references, that is a PROBLEM that must be fixed first, not worked around.
-
-**Block structure patterns**:
-- ❌ One block containing multiple function implementations → ✅ Overview block listing child blocks
-- Each block should either be:
-  - An overview/index block (NL only, listing other blocks)
-  - A single implementation block (NL + PL for one function/feature)
-- When you see a block with many functions, refactor it into an overview + individual blocks
-- Don't be afraid to refactor a block into two new blocks.
-  When you do this: make the first block the right size and the second block contain everything else.
-  If it can't be divided up that way, don't refactor it.
-  Use the _2 prefix for the second block unless there's clearly something better to call it (like draw_the_rest_of_the_fucking_owl).
-  When you do that, don't change anything else, and wrap up the session and commit the change soon if you can.
-
-**When working with existing infrastructure**:
-- DON'T reimplement helpers that already exist (like checksum functions)
-- DO navigate from root block to find existing functionality
-- DO check #rvs_index_catalog before designing new indices
-- DO look at similar command blocks for patterns (e.g., #rvs_history for new rvs commands)
-
-Never be afraid to go back to the root block and look for something else.
-
-**Plan mode amnesia**:
-- Planning mode can last multiple turns - easy to forget the cmpr workflow
-- When exiting plan mode, IMMEDIATELY verify: "Am I working with block-managed files?"
-- Refresh memory of cmpr commands before starting implementation
-
-## Experience Reports
-
-**When to Write**:
-- At the end of every work session
-- When completing significant tasks (planning, implementation, debugging)
-- When stopping work on something that's not finished
-
-**What to Include**:
-- Session goal
-- What was accomplished (detailed)
-- What works
-- Known issues/blockers
-- Next steps
-- Full context for resuming work
-
-**Naming Pattern**:
-- Format: `#<agent>_experience_report_<topic>_YYYYMMDD_N`
-- Agent names: claude, codex, or other agents
-- Examples: `#claude_experience_report_root_agent_per_block_plan_20251227`
-
-**Response Format**:
-- Chat responses should be ONE LINE referencing the experience report
-- Example: "See #claude_experience_report_root_agent_per_block_plan_20251227"
-- ALL details, summaries, and context go in the experience report block
-- Keep conversation clean and searchable - detail lives in blocks
-
-**Storage**:
-- Experience reports go in INBOX initially: `cat report.txt | cmpr --after '#INBOX'`
-- Can be moved to permanent locations later during review
-- Or left in INBOX as temporal documentation
-Test nl2pl
+#!/bin/sh
+mkdir -p .cmpr/agents/block_names
+while sleep 0.1; do
+  if [ -f .cmpr/block-map ]; then
+    echo .cmpr/block-map | entr -n -d sh -c "scripts/block-names-check"
+  else
+    sleep 1
+  fi
+done
 
 
+/* #agent_nl2pl
+
+In ./agents/nl2pl is the nl2pl agent.
+
+An agent has two functions, a step function and a predicate function.
+(This is from when we first started designing the agent system, and then we just created some shell scripts to get started.
+We still want to get back to this and build a framework that runs our agents for us, which started a little bit in #agents_meta.)
+
+The predicate function is run by ./agents/nl2pl with no arguments, and it produces output on stderr and an exit code of 1 if the PL is out of date.
+The output produced is suitable to be piped as input to ./agents/nl2pl -, which opens and reads stdin linewise.
+
+@- The ./agents/nl2pl - invocation opens stdin and reads a list of blockids to rewrite.
+@- We also support an ordinary invocation mode with blockids taken from argv.
+
+Actually, we have a design principle which says that an agent should just call other existing scripts to do the work.
+Agents shouldn't be complicated by design, they are really just some scaffolding around two functions.
+
+So the agent just runs a process.
+In this case, we could either solve the big problem of the whole codebase, or a more specific problem by taking an argument.
+
+So the nl2pl subsystem is happy when all the blocks have current PL code.
+Currently we have added an 'rvs stale' command to test this condition, but it only works for a single block at a time.
+
+> rvs stale
+
+See #agent_nl2pl_implementation for current implementation plan.
+
+*/
 
 
+/* #agent_meta @agent_infrastructure
+
+The meta-agent manages and monitors other agents in the cmpr ecosystem.
+
+Purpose:
+- Show which agents are installed (from agents/ directory)
+- Show which agents are currently running
+- Start agents that aren't running
+- Stop running agents
+
+This is a manual control script, not a continuous monitoring agent.
+For now, configuration is auto-detected: any executable file in agents/ is considered an installed agent.
+
+Commands:
+- list: Show all installed agents (executable files in agents/)
+- status: Show which agents are running (checks processes with pgrep)
+- start: Start all stopped agents, or start a specific agent if name is given
+- stop <agent>: Stop a specific agent by killing its process
+
+Implementation:
+
+The script is a POSIX shell script with #!/bin/sh shebang.
+
+Helper functions:
+- list_agents(): Find executable files in agents/ excluding meta itself
+- is_running <agent>: Check if agent process is running using pgrep
+- get_pid <agent>: Get PID of running agent
+- show_status(): Display status of all agents
+- start_agent <agent>: Start a specific agent with nohup in background
+- start_all(): Start all stopped agents
+- stop_agent <agent>: Stop agent with SIGTERM, then SIGKILL if needed
+
+The pgrep pattern uses \$ anchor to avoid matching "agents/justify" when looking for "agents/just".
+
+The start command waits 0.5 seconds after starting to verify the agent actually started.
+
+The stop command tries SIGTERM first, then SIGKILL if that fails after 0.5 seconds.
+
+Main dispatch uses case statement to handle: list, status, start [agent], stop <agent>.
+Default command (no arguments) shows status.
+
+Manually maintained.
+
+*/
+#!/bin/sh
+# Meta-agent: manage and monitor other agents
+
+# Agent control script - manage the agent ecosystem
+
+usage() {
+    cat <<EOF
+Usage: agents/meta [command]
+
+Commands:
+    list      - Show all installed agents
+    status    - Show which agents are running  
+    start     - Start all agents that aren't running
+    start <agent> - Start a specific agent
+    stop <agent>  - Stop a specific agent
+
+If no command is given, show status.
+EOF
+    exit 0
+}
+
+# Get list of installed agents (executable files in agents/, excluding meta itself)
+list_agents() {
+    find agents -maxdepth 1 -type f -executable ! -name meta -printf '%f\n' | sort
+}
+
+# Check if an agent is running
+is_running() {
+    agent="$1"
+    pgrep -f "agents/$agent\$" > /dev/null
+}
+
+# Get PID of running agent
+get_pid() {
+    agent="$1"
+    pgrep -f "agents/$agent\$"
+}
+
+# Show status of all agents
+show_status() {
+    echo "Agent Status:"
+    echo "============="
+    for agent in $(list_agents); do
+        if is_running "$agent"; then
+            pid=$(get_pid "$agent")
+            echo "  $agent: RUNNING (PID $pid)"
+        else
+            echo "  $agent: STOPPED"
+        fi
+    done
+}
+
+# Start an agent
+start_agent() {
+    agent="$1"
+    if [ ! -x "agents/$agent" ]; then
+        echo "Error: agents/$agent not found or not executable" >&2
+        return 1
+    fi
+    
+    if is_running "$agent"; then
+        echo "Agent $agent is already running (PID $(get_pid "$agent"))"
+        return 0
+    fi
+    
+    echo "Starting $agent..."
+    nohup ./agents/$agent > /dev/null 2>&1 &
+    sleep 0.5
+    
+    if is_running "$agent"; then
+        echo "Started $agent (PID $(get_pid "$agent"))"
+    else
+        echo "Failed to start $agent" >&2
+        return 1
+    fi
+}
+
+# Start all agents
+start_all() {
+    echo "Starting all agents..."
+    for agent in $(list_agents); do
+        start_agent "$agent"
+    done
+}
+
+# Stop an agent
+stop_agent() {
+    agent="$1"
+    if ! is_running "$agent"; then
+        echo "Agent $agent is not running"
+        return 0
+    fi
+    
+    pid=$(get_pid "$agent")
+    echo "Stopping $agent (PID $pid)..."
+    kill "$pid"
+    sleep 0.5
+    
+    if ! is_running "$agent"; then
+        echo "Stopped $agent"
+    else
+        echo "Failed to stop $agent, trying SIGKILL..." >&2
+        kill -9 "$pid"
+    fi
+}
+
+# Main command dispatch
+cmd="${1:-status}"
+
+case "$cmd" in
+    list)
+        list_agents
+        ;;
+    status)
+        show_status
+        ;;
+    start)
+        if [ -n "$2" ]; then
+            start_agent "$2"
+        else
+            start_all
+        fi
+        ;;
+    stop)
+        if [ -z "$2" ]; then
+            echo "Error: stop requires an agent name" >&2
+            usage
+        fi
+        stop_agent "$2"
+        ;;
+    help|--help|-h)
+        usage
+        ;;
+    *)
+        echo "Error: unknown command '$cmd'" >&2
+        usage
+        ;;
+esac
+
+/* #agent_justify @agent_infrastructure @cmpr_justify_check
+
+The justify agent runs continuously and monitors the project for unjustified blocks.
+
+How it works:
+
+The agent watches .cmpr/block-map for changes.
+When the block-map changes, it runs scripts/justify-check to detect unjustified blocks.
+The check script writes results to .cmpr/agents/justify/ following the infrastructure pattern.
+
+Implementation:
+
+This is a shell script that runs in an infinite loop:
+
+#!/bin/sh
+mkdir -p .cmpr/agents/justify
+while sleep 0.1; do
+  if [ -f .cmpr/block-map ]; then
+    echo .cmpr/block-map | entr -n -d sh -c "scripts/justify-check"
+  else
+    sleep 1
+  fi
+done
+
+Note: The -n flag to entr runs it in non-interactive mode, which is needed when running as a background agent.
+
+The agent will run until manually terminated.
+
+Agent install:
+
+cmpr --print-code '#agent_justify' > agents/justify && chmod +x agents/justify
+
+For the check script that does the actual work, see #cmpr_justify_check.
+
+*/
+
+#!/bin/sh
+mkdir -p .cmpr/agents/justify
+while sleep 0.1; do
+  if [ -f .cmpr/block-map ]; then
+    echo .cmpr/block-map | entr -n -d sh -c "scripts/justify-check"
+  else
+    sleep 1
+  fi
+done
+
+
+/* #cmpr_agent_202511
+
+## Definition of a cmpr agent
+
+An agent has two parts: a stopping function and a step function.
+In general we can define an agent by an English language description of both of them, and rely on the framework to turn this into something we can execute.
+
+The basic framework lets us run cmpr agents from the command line.
+
+We will develop the framework and the agent definition together by way of example.
+
+First we take two examples, one is the PA agent, and the other is the agent that maintains the code behind the PA feature.
+
+The PA agent does not have a specific stopping function, which is kind of a problem actually and a limitation.
+In fact PA is not an agent, it's an assistant but we have to explicitly run it for some fixed number of steps.
+For PA to have a stopping function, we would have to trust the model more than we do, or we would have to specialize PA into a specific task.
+
+One of the functions an agent can have is to construct a context.
+In fact, an agent that can construct contexts is a general-purpose agent that can construct any other agent.
+As long as the context can include, e.g. a system prompt, then we have a general-purpose structure for dealing with agents.
+
+So it is useful to say how an agent can construct a context.
+
+## A context-constructing agent
+
+We have defined an agent as a prompt and a stopping mechanism.
+If we already have a stopping mechanism, then all we need to have a complete agent is a prompt.
+However, we will often want the prompt to include context that is relevant to the specific situation at hand, not determined in advance.
+So let's assume that we have a Turing-complete facility to construct prompts, such as a general-purpose programming language like Python.
+Then the way to get a prompt is to run a command in the project directory that names that prompt, and this command gathers necessary information and outputs a string.
+We say a string, but if we want to pass this to an LLM and include, e.g. a system prompt, then we have to include some structure, so we could emit a JSON array of chat-message style `{role,message}` objects.
+
+Currently we also have an "include" mechanism in use which allows pulling in the contents of named files.
+The point of this feature is that those files are hosted on the server side, and may contain trade secrets.
+This is a feature that our LLM API supports directly.
+We can ignore this feature if we are not considering server-side-only APIs such as nl2pl.
+
+*/
+
+
+/* #agent_infrastructure_from_cmpr2
+
+Agents are Unix processes that monitor and maintain project health.
+This block describes common patterns and infrastructure shared across agent implementations.
+
+Agent Interface Contract:
+
+All agents should follow these conventions:
+
+1. Exit codes:
+   - 0: Success, no issues detected
+   - 1: Issues found (the primary use case for health monitoring)
+   - 2: Agent error (missing dependencies, configuration problems, etc.)
+
+2. Output format:
+   - Write actionable items to stdout (one per line when possible)
+   - Write diagnostic/error messages to stderr
+   - Keep output machine-readable for dashboard consumption
+
+3. Invocation modes:
+   - No arguments: Run in "check" mode, report all issues
+   - With arguments: Run in "fix" mode or operate on specific items
+   - Support `-` as argument to read items from stdin (for piping)
+
+Agent State Storage:
+
+Agents should store persistent state under .cmpr/agents/<agent-name>/:
+   - last-run: timestamp of last execution
+   - last-status: exit code from last run
+   - report.txt: full output from last run
+   - metrics.json: structured data for dashboard consumption
+
+Example metrics.json structure:
+{
+  "agent": "justify",
+  "timestamp": "2025-12-19T07:30:00Z",
+  "status": "issues_found",
+  "count": 850,
+  "summary": "850 unjustified blocks"
+}
+
+Dashboard Integration:
+
+A future health dashboard (CLI or web) can:
+- Read metrics.json from all agents
+- Display summary: "justify: 850 issues, build: OK, nl2pl: 42 stale"
+- Show trends over time
+- Trigger agent runs and display live output
+
+Implementation Notes:
+
+Agents can be simple shell scripts or Python programs.
+They should be stateless - all state goes in .cmpr/agents/<name>/.
+This makes it easy to run agents manually, via cron, or via the TUI.
+
+*/
+
+/* #cmpr_agents_from_cmpr2
+
+In agents/ we have a set of executable files that can be run.
+Each one is the name of an agent, and will run that agent as an ordinary process.
+We rely on Unix here.
+
+The files are populated from the contents of same-named blocks.
+The list of agents is maintained here:
+
+#agent_nl2pl
+#agent_cmpr1_build
+#agent_justify
+#agent_block_names
+#agent_doc_build
+#agent_meta
+#agent_sn
+
+These are also the filenames under agents/, with the prefix "#agent_" stripped, e.g. agents/nl2pl corresponds to #agent_nl2pl.
+Currently, the agents are run manually by the user, but we will add some kind of a framework to manage them; this is a work in progress.
+For common agent infrastructure patterns (output format, state storage, dashboard integration), see #agent_infrastructure.
+
+The meta-agent (#agent_meta) is designed to run and monitor other agents, providing a single entry point for the agent ecosystem.
+
+Agents vs Scripts:
+
+Agents are continuous processes that monitor and respond to changes.
+They typically use file watching (entr) in an infinite loop.
+Example: agents/justify watches .cmpr/block-map for changes.
+
+Scripts are one-shot operations that run once and exit.
+They do the actual work when invoked by agents.
+Example: scripts/justify-check performs the justification check.
+
+This separation allows:
+- Manual execution of checks without running the agent
+- Agents to be simple monitors/schedulers
+- Scripts to focus on the actual task logic
+
+The list of check scripts is maintained here:
+
+#cmpr_justify_check
+#cmpr_nl2pl_check
+#cmpr_block_names_check
+#cmpr_doc_build_check
+
+These correspond to scripts/justify-check, scripts/nl2pl-check, etc.
+Each check script should have a corresponding block that defines its NL specification and PL implementation.
+
+There is also:
+
+.cmpr/agent-dashboard.sh
+    an in-progress view onto the system health data maintained by the individual agents under .cmpr/agents, e.g. `find .cmpr/agents/justify` and see the justify agent for the developing conventions here.
+
+What we eventually want here (among other things) is a tabular view of the health of every block.
+Currently we have columnar data stored under .cmpr/agents about the state of all the blocks wrt. some particular health check.
+What we want from the UI is to put these columns together into a table and show us the rows (blocks) that are most interesting.
+
+Another thing we want somewhat urgently is to be able to see the date of last change of a block.
+We already have access to this information via `rvs history` but it may need some testing or work.
+
+Agent Recipe:
+
+When adding a new agent:
+
+- create a new block or blocks for the agent and its check script
+- add the agent to the agents list above
+- add the check script to the check scripts list above
+- write NL for any new blocks, generate PL for them
+- for now, installation is manual; later we'll think about having some generic way to install the agents (i.e. to populate the agents/* files from the corresponding blocks)
+
+*/
+
+/* #claude_experience_report_wants_status_20251228_commentary
+
+Commentary from the programmer on #claude_experience_report_wants_status_20251228
+
+What was asked for was to create two blocks.
+
+One would be just about the use of the event system, and would not talk about the feature specifically being developed.
+
+One would be about the feature, and would not talk about the event system.
+
+This wasn't really accomplished, so we'll keep working towards that.
+
+The actual idea is this one: we know what we want because we have --wants already.
+
+What we don't know yet is how much of what we want we already have.
+So for that, we can query the event snapshots.
+
+By the way, we have a bunch of terms and we need to unify them.
+
+The product pattern (cmpr2 calls it this).
+The E/T/S whatever.
+The Model (I like this one).
+The CMP model (historical reasons).
+
+We don't have one term for all of this yet.
+Maybe CMP model is a good term.
+CMP here doesn't stand for anything and doesn't signify anything about the structure of the model, it's just a moniker.
+
+(It does have a historical meaning but that's not necessary or relevant here.)
+
+The CMP model is a model that explains and unifies thinking or intelligence of any kind, whether human or machine.
+It has been written about elsewhere.
+
+Related: SN (standand notation for thoughts), T (the total thought), P (the total pattern), CMP the book (available as a pdf) goes into these.
+
+The CMP model is this:
+
+You have $T_n$ and $P_n$ and then you get $T_{n+1}$ and $P_{n+1}$ by an update.
+Somewhere in here is $E$ which can be seen as part of $P$ (implicit) or it can be made explicit.
+The update is a function of the current states of T and P, and the update function is defined as part of the model, and has nothing to with the specific state of the agent: the update function is constant over time.
+What does vary is P and of course T.
+So P are the patterns that determine how T changes, but T can also influence P, otherwise we wouldn't be able to learn.
+(Incidentally, a model is a program that learns, a program is a model that doesn't learn: programs are precisely an implementation of a fixed P without a learning update.)
+
+Of course, the interesting thing about the CMP model is how you get P and we won't get into that here.
+But the framework can map onto any computer program or model in an obvious way.
+
+Now, for the want status:
+
+First, this should actually just be a check script for an "all wants" uber-agent.
+We are just checking whether all our wants are satisfied.
+If not, we can present that info, and then do something about it.
+We have an agent framework that runs an agent and produces a report; this is the cmpr2 agents model and we need to:
+
+1. compare and contrast the cmpr2 and cmpr1 agent implementations / ideas / frameworks and then
+2. unify them, making cmpr1 the source of truth
+
+That's all an aside though.
+What we really want to do is:
+
+We have wants.
+Load up the wants, one at a time.
+Use --recall.
+Figure out if the want is satisfied.
+Put that in a report.
+Put the report on disk under .cmpr/agents/something like cmpr2 does it.
+All the visualization work we've been doing can then start from these reports, and doesn't have to know about the event system at all.
+
+Event system: the --event --T --T0 and --memorize flags.
+
+Now: let's talk about event spaces, where they live, and what they are.
+In the CMP model, T and P can be joined by E which is a set of event spaces.
+Event spaces are the only thing provides downward pressure on the probabilities of any even in the CMP model.
+
+In our event system, the event spaces are:
+
+- recognized after the fact (that means we write code that generates events, only later do we derive event spaces)
+- prefix based ("The blockid is: ..." forms an ES).
+
+This means we can define an ES by a name ("The block id") and a predicate function that is implemented as f : string -> bool and implemented as f = starts_with "The blockid is: ".
+
+With the wants, we load up things like "The want is: ..." and then we have an ES that is: the want is satisfied or it's not.
+My point here is that these events are the same for every want, because the want is a variable that exists because of the "The want is: ..." ES.
+
+So what wants-status should be is: a single CHECK mode script (predicate script) that 
+
+Side note:
+- we have wants that are documented in the system, but we also have wants about the system that aren't documented inside it.
+
+It's a bit like incompleteness. You can't have everything come from inside the system.
+
+Essentially there is something that could be an agent but isn't.
+
+More on jargon:
+
+A cmpr agent is, in cmpr2, just a process. I like this concept but "agent" is overloaded, but I still like it.
+We're sticking with it.
+A cmpr agent is just a unix process that runs and it does something.
+But, a cmpr agent is defined by a predicate and a step function.
+These are both runnable (if they exist) by the same recipe.
+
+So this is something we immediately can fix:
+
+"We want it to be easy to list and run agents." 255.
+
+We already have cmpr --agents but it's got some problems.
+
+1. in cmpr1, Claude rewrote the definition from blockid starting with to ending with e.g. #agent_foo to #foo_agent.
+This is wrong, we want #agent_* to be the namespace because it's clear, and because in cmpr2 we have tab completion on blockids so we like prefix systems.
+
+2. --agents should be a one-stop shop, not only telling us what's available, but if it's running, if it's stopped, if it's happy, if there's a report, etc.
+
+Every agent corresponds to a want, but we don't have to have total visibility into that right now. (meta level)
+
+Our next scope of work is to align and unify the cmpr2 (much richer) and cmpr1 (maybe foundationally right in some key aspects) agent systems.
+
+*/
 /* #claude_experience_report_wants_status_20251228
 
 Experience report: Adding --wants-status CLI flag using event system temporal queries
