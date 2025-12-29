@@ -90,6 +90,8 @@ In main() or similar it is common to call init_spans and often also read_and_cou
 /* #thran
 @- experimental, may go away
 
+@- three-span
+
 A thran has three pointers and can be addressed as two spans which share an endpoint; it is naturally used internally for things like buffers, pipes, and in general anywhere where information is being consumed linearly (usually left-to-right, i.e. ascending addresses in memory, but could be in reverse), for example in parsing.
 You can think of it as a span with a progress bar.
 

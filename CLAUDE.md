@@ -297,11 +297,29 @@ This is a pure C application with no web frontend or HTTP server:
 
 ### Agent System and Decision Tracking
 
+**AGENT COMMUNICATION CONTRACT**:
+
+ALL agent results are communicated via T (transient memory):
+- Agents use `cmpr --event "..." --strength N` for ALL output
+- NO stdout/stderr for communicating results (infrastructure files in .cmpr/agents/ are fine)
+- Callers read results via `cmpr --T`
+- This makes all agent activity queryable and persistent
+
+Required event patterns:
+```
+"Agent: <name>" 255.
+"Mode: CHECK|FIX" 255.
+"Status: <result>" 255.
+"<domain-specific facts>" N.
+```
+
 **Running Agents**:
 
 To execute an agent:
 ```bash
+cmpr --T0  # Clear T first
 cmpr --print-code '#agent_block_id' | bash
+cmpr --T   # Read results
 ```
 
 To list all available agents:
@@ -309,9 +327,11 @@ To list all available agents:
 dist/cmpr --agents
 ```
 
-Example - run an agent:
+Example - run an agent and read results:
 ```bash
+cmpr --T0
 cmpr --print-code '#agent_block_id' | bash
+cmpr --T
 ```
 
 Navigation to agents:
@@ -332,9 +352,9 @@ Navigation to agents:
 **Implementing Agents**:
 - Create two blocks: predicate block + step function block
 - Both executable via `cmpr --print-code '#blockid' | sh` or `bash`
-- Step functions report state using SN notation
+- ALL results communicated via T using `cmpr --event` (no stdout for results)
 - Example pattern: predicate block + CHECK mode block + FIX mode block
-- Agents integrate with the event system (T) to record activity
+- See `cmpr --help agents` for current protocol details
 
 **SN Notation** for confidence levels:
 - 255 bits = definitional (statement is defined to be true)
@@ -619,6 +639,20 @@ cmpr --T  # View loaded context
    ```bash
    cmpr --memorize
    ```
+
+**Before git commit:**
+
+Always `cmpr --memorize` before committing. This preserves temporal context.
+
+For major changes to cmpr.c, consider committing one event file to git:
+```bash
+cmpr --memorize
+# Pick the most recent snapshot
+git add .cmpr/events/YYYYMMDD-HHMMSS-*
+git commit -m "your message"
+```
+
+This creates git-tracked checkpoints of system state at significant moments.
 
 This creates a queryable checkpoint. Future sessions can use `--recall` to load all events from this session, providing full context about what was done, which agents ran, what state was observed, etc.
 

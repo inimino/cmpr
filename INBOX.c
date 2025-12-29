@@ -23,6 +23,132 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 
 */
 
+/* #claude_experience_report_nl2pl_qa_20251229
+
+QA on nl2pl agent.
+
+## Finding
+
+BUG: `rvs stale` outputs "All blocks current" on stdout when no blocks are stale. The #cmpr_nl2pl_check script parses this as a blockid, causing metrics.json to show `"count": 1` even when all blocks are current.
+
+Evidence:
+- metrics.json shows `"count": 1, "status": "ok"` - contradictory
+- report.txt contains "All blocks current" (parsed as blockid)
+
+## Fix needed
+
+Either:
+1. Change `rvs stale` to output nothing on success, only blockids on failure
+2. Or filter the output in #cmpr_nl2pl_check to only accept lines starting with `#`
+
+Option 1 is cleaner.
+
+## Next steps
+
+Fix `rvs stale` output behavior or update the check script's parsing logic.
+
+*/
+/* #claude_experience_report_agents_qa_attempt_20251229_commentary
+
+Programmer commentary:
+
+No, the goal was wrong.
+
+```
+- --agents still shows 9 agents including 6 false positives
+```
+
+No, don't speculate about what's a false positive.
+
+Everything about this was wrong. It's OK.
+
+```
+ 1. Revert #handle_agents NL if needed
+```
+*/
+/* #claude_experience_report_agents_qa_attempt_20251229
+
+What Went Wrong:
+
+Attempted to fix --agents false positive detection by modifying #handle_agents.
+The approach was wrong:
+- Tried to add complex C code with nested macros 
+
+The user rejected the change as "very wrong".
+
+[snip]
+
+*/
+/* #cmpr_cmpra_protocol_commentary
+
+Fixed some unmentionable errors in NL code; things we do not speak of (block delimiters).
+
+Note that #cmpra_example_foo doesn't create an agent because I'm just mentioning the block, it would only create the agent if it exists.
+
+The only thing that it means to create an agent is that we know how to find the parts of it, which are a predicate and a step function.
+
+We needn't be overly prescriptive about the how.
+
+*/
+/* #cmpr_cmpra_protocol
+
+The #cmpra_ namespace defines a specific style of cmpr agents which we define here.
+The #cmpra_foo block creates the foo agent.
+This means that --agents, when it lists what agents are known, will have to be extended (as of 20251229).
+
+Requirements:
+
+1. HUB STRUCTURE
+   - Pure navigation block (NL only, no PL) for #cmpra_foo
+   - ONLY contains: want statement + block references
+   - One hop from hub to any implementation
+
+2. NAMING CONVENTION
+   #cmpra_foo           - Agent hub (want + references only)
+   #cmpra_foo_check     - CHECK mode implementation
+   #cmpra_foo_fix       - FIX mode implementation (optional)
+
+However, the block ids can be other than this, they don't have to be under that namespace.
+
+3. HUB CONTENT
+   - Want statement (one line)
+   - Decision state (tracked/checked/assisted/owned)
+   - Justifies: lines pointing to impl blocks
+   - Nothing else
+
+4. IMPL BLOCKS
+   - All behavior description lives here
+   - Executable via: cmpr --print-code '#id' | bash FOR EXAMPLE.
+
+5. COMMUNICATION VIA T (MANDATORY)
+   - ALL agent output is via T (transient memory)
+   - Agents MUST use `cmpr --event "..." --strength N` for all results
+   - NO stdout/stderr for communicating results
+   - stdout/stderr only for fatal errors or debugging (not normal operation)
+   - Callers read results via `cmpr --T`
+   - This makes all agent activity queryable and persistent
+
+Event patterns for agents:
+   "Agent: <name>" 255.              - Which agent ran
+   "Mode: CHECK|FIX" 255.            - Which mode
+   "Status: <result>" 255.           - Outcome (constraint satisfied, violations found, etc.)
+   "<domain-specific facts>" N.      - Agent-specific findings
+
+Example hub:
+
+  slash-star #cmpra_example
+
+  Want: <one line statement of desired state>.
+  State: checked
+
+  Justifies: #cmpra_example_check #cmpra_example_fix
+
+  star-slash
+
+Note that star-slash and slash-star stand for C block comment delimiters.
+(Obviously, we would never write these in any NL code.)
+
+*/
 /* #claude_experience_report_agent_qa_20251229_commentary
 
 Programmer feedback.
@@ -121,46 +247,71 @@ Next Steps:
 Agent QA (Manual Quality Assurance)
 ====================================
 
-This topic provides instructions for manually QA'ing an agent.
 Pipe this help text to an assistant: cmpr --help agent-qa | claude
 
 ---
 
 ASSISTANT INSTRUCTIONS:
 
-You are performing manual QA on an agent. The user will specify an agent name.
-Follow these steps to assess the agent's status.
+You are performing manual QA on an agent.
+
+NAMING CONVENTIONS:
+
+New style (#cmpra_ namespace):
+  #cmpra_<name>         - Agent hub (want + references, NL only)
+  #cmpra_<name>_check   - CHECK implementation
+  #cmpra_<name>_fix     - FIX implementation (optional)
+
+Old style:
+  #agent_<name>         - Agent definition
+  #<name>_agent_check   - CHECK implementation
+  #<name>_agent_fix     - FIX implementation
+
+Both styles are valid.
+
+COMMUNICATION CONTRACT:
+
+ALL agent communication is via T (transient memory):
+  - Agents use `cmpr --event "..." --strength N` for ALL results
+  - NO stdout/stderr for normal operation
+  - Callers read results via `cmpr --T`
+
+Required event patterns:
+  "Agent: <name>" 255.
+  "Mode: CHECK|FIX" 255.
+  "Status: <result>" 255.
 
 STEP 1: Check if agent exists
   Run: cmpr --agents | grep <agent_name>
   
-  If no match: The agent does not exist. Report this and stop.
-  If match: Continue to step 2.
+  If no match: Agent does not exist. Stop.
+  If match: Continue.
 
 STEP 2: Find agent blocks
   Run: cmpr --files-blocks | grep -i <agent_name>
   
-  Look for these block patterns:
-    #agent_<name>           - Agent definition (predicate/want)
-    #<name>_agent_check     - CHECK mode implementation
-    #<name>_agent_fix       - FIX mode implementation
-    #<name>_check_impl      - Alternative CHECK pattern
-    #<name>_fix_impl        - Alternative FIX pattern
-  
-  Report which blocks exist and which are missing.
-  If anything other than #agent_<name> exists and whatever that block directly points to, that is probably an error, but just warn about it and carry on.
+  Look for hub and impl blocks in either naming style.
 
-STEP 3: Read agent definition
-  Run: cmpr --print-comment '#agent_<name>'
+STEP 3: Read agent hub/definition
+  Run: cmpr --print-comment '#cmpra_<name>' or '#agent_<name>'
   
   Check for:
-    - Clear description of what the agent does
-    - Want statement it maintains
-    - Expected behavior in CHECK vs FIX modes
+    - Want statement
+    - References to CHECK/FIX implementations
 
-STEP 4: Check if agent can be run
-Once you have cmpr --agents list of agents and cmpr --help you should already be able to figure out how to use an agent.
-Make sure that's the case or complain about it and exit.
+STEP 4: Verify CHECK implementation
+  Clear T and run:
+    cmpr --T0
+    cmpr --print-code '#<check_block>' | bash
+    cmpr --T
+  
+  Verify output contains required event patterns.
+
+STEP 5: Report
+  - Hub: exists/missing
+  - CHECK: exists/missing (and uses T communication)
+  - FIX: exists/missing
+  - Run command
 
 ---
 
@@ -605,6 +756,19 @@ Agent System (Automated Maintenance)
 
 Agents are executable blocks that verify and maintain wants (desired states).
 
+COMMUNICATION CONTRACT:
+
+ALL agent communication is via T (transient memory):
+  - Agents use `cmpr --event "..." --strength N` for ALL results
+  - NO stdout/stderr for normal operation
+  - Callers read results via `cmpr --T`
+
+Required event patterns:
+  "Agent: <name>" 255.
+  "Mode: CHECK|FIX" 255.
+  "Status: <result>" 255.
+  "<domain-specific facts>" N.
+
 Architecture:
   Agent = Predicate (Want) + Step Function (CHECK/FIX modes)
   
@@ -618,34 +782,23 @@ Commands:
 
 --agents
   List all registered agents in the project.
-  Finds blocks matching #agent_* pattern.
-  Shows agent name and first line of description.
-  Example: cmpr --agents
+  Finds blocks matching #agent_* and #cmpra_* patterns.
 
 --agent-run <agent_name> <mode>
   Execute an agent in CHECK or FIX mode.
-  Mode can be "CHECK" or "FIX" (case-insensitive).
-  Executes #<agent_name>_<mode>_impl block as shell script.
-  Returns agent's exit code.
-  
-  Example: cmpr --agent-run root_agent CHECK
-  Example: cmpr --agent-run root_agent FIX
+  Clears T, runs agent, results appear in T.
 
-Agent Naming Pattern:
-  #agent_<name>           - Agent definition (predicate/want)
-  #<name>_check_impl      - CHECK mode implementation
-  #<name>_fix_impl        - FIX mode implementation
+Agent Naming (new style):
+  #cmpra_<name>           - Agent hub (want + references)
+  #cmpra_<name>_check     - CHECK mode implementation
+  #cmpra_<name>_fix       - FIX mode implementation
 
-Running Agents Directly:
-  cmpr --print-code '#agent_blockid' | bash
-  cmpr --print-code '#root_agent_check_impl' | bash
+Running Agents:
+  cmpr --T0                                    # Clear T
+  cmpr --print-code '#cmpra_foo_check' | bash  # Run
+  cmpr --T                                     # Read results
 
-Agent Output Format (SN notation):
-  "Status: constraint satisfied" 255.
-  "Status: constraint violated" 255.
-  "Unreferenced blocks: 52" 255.
-
-Agents integrate with event system by recording state to T.
+See: cmpr --help agent-qa (for QA process)
 */
 /* #help_text_reports
 
@@ -10773,9 +10926,6 @@ Next session can:
 ```bash
 # Create hub blocks
 cat <<'EOF' | cmpr --after '#INBOX'
-/* #hub_name
-...
-*/
 /* #cmpr_c_core
 
 Core C Implementation Hub
@@ -10911,85 +11061,6 @@ Core blocks:
 Referenced by: #root
 
 */
-/* #root_hub_proposal_20251226
-
-Proposed Manual Hub Structure for #root
-
-Based on analysis of 271 blocks across the codebase, here are suggested hub blocks to create manually:
-
-## Proposed Hub Blocks
-
-### 1. #cmpr_c_core (Core C Implementation)
-Contains: main, init, argtable, handle_args, block operations, indexing
-Scope: Core cmpr.c functionality excluding specialized subsystems
-Estimated: 30-40 blocks
-
-### 2. #llm_integration (LLM & API Integration)
-Contains: call_llm, call_gpt, call_anthropic, call_ollama, read_openai_key, etc.
-Scope: All LLM calling and external API integration
-Estimated: 15-20 blocks
-
-### 3. #revision_system (Revision Tracking)
-Contains: get_revs, get_revdir, rev_info, checksum operations
-Scope: .cmpr/revs management and history tracking
-Estimated: 20-25 blocks
-
-### 4. #parsing_io (Parsing & I/O)
-Contains: spanio blocks, ingest, file reading, rope structures
-Scope: Low-level parsing, span-based I/O, file operations
-Estimated: 25-30 blocks
-
-### 5. #ui_navigation (UI & Display)
-Contains: clear_display, ui_state, navigation (jk), block_id_jump
-Scope: Terminal UI, display, interactive navigation
-Estimated: 15-20 blocks
-
-### 6. #block_indexing (Block Management)
-Contains: find_all_blocks, index_block_ids, block_for_span, id_for_block
-Scope: Block discovery, indexing, lookup operations
-Estimated: 15-20 blocks
-
-### 7. #prompts_nl2pl (Prompts & Templates)
-Contains: prompt_templates blocks, nl2pl_rewrite, pl2nl_rewrite, etc.
-Scope: All prompt templates and NL/PL conversion
-Estimated: 20-25 blocks
-
-### 8. #experience_docs (Documentation & Reports)
-Contains: claude_experience_report_*, glossary, README blocks
-Scope: Human-readable documentation and session reports
-Estimated: 30-40 blocks
-
-### 9. #build_config (Build & Configuration)
-Contains: Makefile blocks, config_fields, pragmas, projfiles
-Scope: Build system and project configuration
-Estimated: 10-15 blocks
-
-### 10. #cmpr_python (Python Backend)
-Contains: cmpr.py blocks, HTTP server, rels implementation
-Scope: Python server and web frontend backend
-Estimated: 20-30 blocks (if they exist in block form)
-
-## Already Existing Hubs
-
-- #root_agent (agent system) ✓
-- #cmpr_events (events/T/E/S system) ✓
-
-## Approach
-
-Start by creating the hubs that cover the most commonly-needed areas:
-Priority 1: #cmpr_c_core, #parsing_io, #block_indexing
-Priority 2: #revision_system, #llm_integration, #ui_navigation
-Priority 3: #prompts_nl2pl, #experience_docs, #build_config
-
-Each hub block should:
-- List 2-16 child blocks explicitly
-- Provide brief description of scope
-- Be referenced from #root
-
-Justifies: Manual hub creation as chosen option D.
-
-*/
-
 /* #agent_request_protocol
 
 Protocol for Agents to Request Work or Decisions from the Programmer

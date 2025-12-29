@@ -1,7 +1,7 @@
+    automatically suggest regen of stale downstream blocks
     get rid of .bak when we write a rev (false sense of security anyway, once you save twice...) (let's wait until we detect files changing on disk)
     make "@" be a menu of references from this block
     "@@" or sth is menu of blocks that refer to us
-    automatically suggest regen of stale downstream blocks
     idea: when a TODO item is done, put the relevant blocks in a comment
     bring compiler errors into the workflow (line no -> block, etc) 3 3 9
     add translations into ~every language 4 2 8
