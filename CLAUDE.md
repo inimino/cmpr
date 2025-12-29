@@ -50,7 +50,10 @@ cmpr --version
 - `cmpr` - For normal operations with the installed version
 - After you're happy with `dist/cmpr` testing, install it with `sudo make install`
 
-The cmpr --help output and build system details are documented in blocks accessible from the root block.
+**Getting Help**:
+- `cmpr --help` - Print usage summary
+- `cmpr --help topics` - List all available help topics
+- `cmpr --help <topic>` - Get detailed help on a specific topic (e.g., `cmpr --help events`, `cmpr --help editing`)
 
 ## Code Updates
 
@@ -241,7 +244,6 @@ We're using cmpr to build cmpr itself here, so if cmpr doesn't work right, then 
 
 ### Project Configuration
 - Configuration is stored in `.cmpr/conf`
-- Bootstrap scripts provide AI context: `./bootstrap.sh` -- this is obsolete
 - Default model and build commands are configurable per project
 
 ## Core Architecture

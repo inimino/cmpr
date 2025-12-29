@@ -23,6 +23,508 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 
 */
 
+/* #claude_experience_report_help_topics_20251229
+
+Session Goal:
+Add cmpr --help topics system with --help [topic] to provide detailed help on different command groups.
+
+What Was Accomplished:
+1. Created comprehensive help text blocks covering all major topic areas:
+   - #help_topics_index - Master index of all topics
+   - #help_text_topics, #help_text_basic, #help_text_blocks, #help_text_editing
+   - #help_text_search, #help_text_nl2pl, #help_text_events
+   - #help_text_agents, #help_text_reports, #help_text_wants
+
+2. Modified argument parsing to accept optional topic argument for --help
+   - Updated #handle_args_2 to add help_topic variable
+   - Updated #handle_args_3 to capture optional topic argument  
+   - Updated #handle_args_4 to call handle_help_topic()
+
+3. Created #handle_help_topic function (in cmpr.c after #handle_agents)
+
+Critical Mistake - Compile Time vs Runtime Confusion:
+The implementation attempted to make --help look up help text from code blocks at RUNTIME.
+This is fundamentally wrong because:
+- --help is a basic command that must work without loading the codebase
+- Help text should be compiled into the binary, not looked up from blocks
+- The blocks are compile-time organization, not runtime data structures
+
+The correct approach would be:
+- Define help text as compile-time string constants in C code
+- Use blocks to organize/maintain the help text during development
+- Generate the actual C string constants from blocks during build
+- Have --help simply print the compiled-in strings, no block lookup
+
+Current State:
+- Help text blocks exist with good content (in INBOX.c)
+- Argument parsing captures topic argument correctly
+- handle_help_topic function exists but is fundamentally wrong (tries to scan blocks at runtime)
+- Build fails because handle_help_topic uses incorrect data structures
+
+Next Steps To Fix:
+1. Remove runtime block scanning from handle_help_topic
+2. Convert help text blocks to compile-time string constants
+3. Possibly add build step to extract help text from blocks into C strings
+4. Rewrite handle_help_topic to just print string constants based on topic argument
+5. Test that --help works without loading codebase
+
+Key Lesson:
+Always distinguish compile-time vs runtime. --help is a basic utility that must work
+independently of the codebase it's in. Don't make basic commands depend on complex
+runtime systems.
+
+Files Modified:
+- cmpr.c: Added help_topic variable, modified --help handling, added handle_help_topic
+- INBOX.c: Created 10 help text blocks with comprehensive documentation
+
+Build Status:
+BROKEN - handle_help_topic implementation is wrong, uses incorrect data structures
+*/
+/* #help_topics_index
+
+Master index of all help topics available via `cmpr --help <topic>`.
+
+This block contains a simple list of help text block IDs. Each block ID follows the pattern #help_text_<topic>, where <topic> is the user-facing topic name.
+
+Help text blocks:
+
+#help_text_topics
+#help_text_basic
+#help_text_blocks
+#help_text_editing
+#help_text_search
+#help_text_nl2pl
+#help_text_events
+#help_text_agents
+#help_text_reports
+#help_text_wants
+
+Implementation notes:
+
+The handle_help_topic() function extracts topic names by stripping the "help_text_" prefix from block IDs.
+When --help or --help topics is called, list all topics by reading this block.
+When --help <topic> is called, look up #help_text_<topic> and print its NL comment.
+*/
+/* #help_text_topics
+
+Usage: cmpr --help topics
+       cmpr --help
+
+List all available help topics.
+
+Available topics:
+  topics   - List all available help topics (this message)
+  basic    - Basic commands (help, version, init, conf)
+  blocks   - Block viewing commands
+  editing  - Block editing commands
+  search   - Search and navigation
+  nl2pl    - Natural language to code generation
+  events   - Event system (temporal reasoning)
+  agents   - Agent system (automated maintenance)
+  reports  - HTML reports and dashboards
+  wants    - Want tracking and decision states
+
+For help on a specific topic:
+  cmpr --help <topic>
+
+Example:
+  cmpr --help blocks
+  cmpr --help events
+*/
+/* #help_text_basic
+
+Basic Commands
+==============
+
+--help [topic]
+  Display help information.
+  Without topic: list all available topics.
+  With topic: show detailed help for that topic.
+  Example: cmpr --help events
+
+--version
+  Display version number and build timestamp.
+
+--init
+  Initialize .cmpr/ directory structure in current directory.
+  Creates necessary subdirectories and configuration files.
+  Cannot be combined with --conf.
+
+--conf <filepath>
+  Use alternate configuration file.
+  Specify before other commands to override default .cmpr/conf location.
+  Example: cmpr --conf /path/to/custom.conf --print-block '#root'
+
+--print-conf
+  Display current configuration settings.
+  Shows all configuration variables and their values.
+*/
+/* #help_text_blocks
+
+Block Viewing Commands
+======================
+
+--print-block <id>
+  Print complete block (both NL comment and PL code parts).
+  ID can be block ID like '#root' or one-based index.
+  Example: cmpr --print-block '#root'
+  Example: cmpr --print-block 1
+
+--print-comment <id>
+  Print only the NL (natural language) comment part of a block.
+  Useful for reading documentation without code.
+  Example: cmpr --print-comment '#argtable'
+
+--print-code <id>
+  Print only the PL (programming language) code part of a block.
+  Useful for extracting executable code.
+  Example: cmpr --print-code '#agent_root' | bash
+
+--expand-block <id>
+  Print block with all @blockid references transitively expanded inline.
+  Recursively expands references to show complete context.
+  Example: cmpr --expand-block '#root'
+
+--files-blocks
+  Print structured list of all files and their blocks.
+  Shows file names and block IDs/indices within each file.
+  Useful for understanding project structure.
+
+--print-all
+  Print all blocks in the project sequentially.
+  Outputs complete content (NL + PL) for every block.
+
+--count-blocks
+  Print total number of blocks in the project.
+*/
+/* #help_text_editing
+
+Block Editing Commands
+======================
+
+--after <id>
+  Insert new block after the specified block ID.
+  Reads new block content (NL + PL) from stdin.
+  New block is inserted in the same file.
+  Example: cat newblock.txt | cmpr --after '#INBOX'
+
+--replace <id>
+  Replace entire block (both NL and PL parts) with content from stdin.
+  Completely overwrites existing block.
+  Example: cat updated.txt | cmpr --replace '#blockid'
+
+--replace-comment <id>
+  Replace only the NL (comment) part, keeping PL unchanged.
+  Use this to update documentation without touching code.
+  Example: cat new_comment.txt | cmpr --replace-comment '#blockid'
+
+--replace-code <id>
+  Replace only the PL (code) part, keeping NL unchanged.
+  Less preferred than --rewritepl which generates from NL.
+  Example: cat new_code.c | cmpr --replace-code '#blockid'
+
+Standard Workflow:
+  1. Edit NL using --replace-comment
+  2. Regenerate PL using --rewritepl
+  3. Verify with --print-code
+  4. Test changes with dist/cmpr
+  5. Install when satisfied: sudo make install
+
+Note: Always prefer editing NL and regenerating PL over directly editing PL.
+      Mark blocks "Manually maintained." only when necessary.
+*/
+/* #help_text_search
+
+Search and Navigation Commands
+==============================
+
+--grep <pattern>
+  Search all blocks using POSIX Extended Regular Expression.
+  Searches both NL (comment) and PL (code) parts.
+  Returns space-separated list of matching block IDs.
+  Outputs "#id" for NL matches, "#id:code" for PL-only matches.
+  
+  Pattern syntax: POSIX ERE (not JavaScript regex)
+  - Use [0-9] instead of \d
+  - Use [a-zA-Z0-9_] instead of \w
+  - Use [[:space:]] instead of \s
+  
+  Example: cmpr --grep 'handle.*help'
+  Example: cmpr --grep '#[a-z_]+'
+
+--content-index <search>
+  Search for literal string (not regex) across all blocks.
+  Returns space-separated list of one-based indices.
+  Example: cmpr --content-index 'event_system'
+
+--files-blocks
+  Print structured list of all files and blocks.
+  Each line shows either "file: filename" or "Block N: #id".
+  Useful for understanding project structure.
+  
+  Filter to specific file:
+  cmpr --files-blocks | grep -A 1000 'file: spanio.c' | \
+    grep -B 1000 -m 1 '^file:' | head -n -1
+
+Navigation Pattern:
+  1. Start at root: cmpr --print-comment '#root'
+  2. Follow references to hubs (2-3 hops to reach any block)
+  3. Use --grep only when navigation doesn't work
+*/
+/* #help_text_nl2pl
+
+Natural Language to Code Generation
+===================================
+
+--rewritepl <id>
+  Regenerate PL (code) from NL (comment) using LLM.
+  Sends NL part to configured LLM API.
+  Replaces PL part with generated code.
+  This is the preferred way to update code after changing NL.
+  
+  Workflow:
+  1. Edit NL: cat new_nl.txt | cmpr --replace-comment '#blockid'
+  2. Generate code: cmpr --rewritepl '#blockid'
+  3. Verify: cmpr --print-code '#blockid'
+  4. Test: make && dist/cmpr [test commands]
+  5. Install: sudo make install
+  
+  Example: cmpr --rewritepl '#handle_help_topic'
+
+--prompt <id>
+  Print the prompt that would be sent to the LLM for nl2pl conversion.
+  Does NOT call the LLM - just shows what prompt would be used.
+  Useful for debugging and understanding LLM context.
+  Example: cmpr --prompt '#blockid'
+
+Configuration:
+  LLM settings are in .cmpr/conf:
+  - llm_command: Command to call LLM API
+  - llm_model: Model name to use
+  
+  Default uses claude-sonnet-4-5 via Anthropic API.
+
+NL Precision Principle:
+  The nl2pl system generates correct code only when NL is unambiguous.
+  Be explicit about:
+  - Exact algorithms
+  - Data structures  
+  - Edge cases
+  - What NOT to do
+  
+  If generated PL is wrong, fix the NL, not the PL.
+
+Manually Maintained Blocks:
+  Add "Manually maintained." as last line of NL comment.
+  Only use when you MUST write PL directly.
+  Avoid when possible - prefer letting the system generate code.
+*/
+/* #help_text_events
+
+Event System (Temporal Reasoning)
+==================================
+
+The event system provides temporal reasoning through tracking events
+in transient memory (T).
+
+Core Concepts:
+  T - Transient memory (current event state)
+  E - Events (strings with associated strength values)
+  S - Strength (binary log odds, 0-255 bits of support)
+
+Commands:
+
+--T0
+  Reset T to empty state.
+  Use at start of new work session to clear transient context.
+  Example: cmpr --T0
+
+--event <string> --strength <value>
+  Add event to T with specified strength (0-255).
+  Events are deduplicated - adding duplicate updates strength.
+  Currently only strength 255 is well-supported.
+  Example: cmpr --event "The block id is: #root" --strength 255
+
+--T
+  Print current T state as SN (strength-notation) lines.
+  Format: "event_string" strength.
+  Example: cmpr --T
+
+--memorize
+  Save current T to timestamped snapshot in .cmpr/events/
+  Creates permanent record of current transient state.
+  Example: cmpr --memorize
+
+--recall
+  Use current T as query to search memorized snapshots.
+  Finds most recent snapshot containing any query event.
+  Loads all events from that snapshot into T (associative memory).
+  T must be non-empty before calling --recall.
+  Example:
+    cmpr --T0
+    cmpr --event "The block id is: #foo" --strength 255
+    cmpr --recall
+
+--snapshots
+  List all event snapshots with timestamps and previews.
+
+--snapshot-view <timestamp>
+  View complete contents of specific snapshot.
+  Timestamp format: YYYYMMDD-HHMMSS-nanos (from --snapshots)
+
+Workflow Pattern:
+  1. Clear T: cmpr --T0
+  2. Set context: cmpr --event "The block id is: #foo" --strength 255
+  3. Add facts: cmpr --event "Block is reachable" --strength 255
+  4. Save snapshot: cmpr --memorize
+
+T is TRANSIENT - meant to be cleared between work sessions.
+Snapshots provide HISTORICAL queries via --recall.
+*/
+/* #help_text_agents
+
+Agent System (Automated Maintenance)
+====================================
+
+Agents are executable blocks that verify and maintain wants (desired states).
+
+Architecture:
+  Agent = Predicate (Want) + Step Function (CHECK/FIX modes)
+  
+  Four decision states:
+  1. Tracked - Want is recorded but not verified
+  2. Checked - Can determine if want is satisfied
+  3. Assisted - Can offer help with fixing
+  4. Owned - Automatically maintains the want
+
+Commands:
+
+--agents
+  List all registered agents in the project.
+  Finds blocks matching #agent_* pattern.
+  Shows agent name and first line of description.
+  Example: cmpr --agents
+
+--agent-run <agent_name> <mode>
+  Execute an agent in CHECK or FIX mode.
+  Mode can be "CHECK" or "FIX" (case-insensitive).
+  Executes #<agent_name>_<mode>_impl block as shell script.
+  Returns agent's exit code.
+  
+  Example: cmpr --agent-run root_agent CHECK
+  Example: cmpr --agent-run root_agent FIX
+
+Agent Naming Pattern:
+  #agent_<name>           - Agent definition (predicate/want)
+  #<name>_check_impl      - CHECK mode implementation
+  #<name>_fix_impl        - FIX mode implementation
+
+Running Agents Directly:
+  cmpr --print-code '#agent_blockid' | bash
+  cmpr --print-code '#root_agent_check_impl' | bash
+
+Agent Output Format (SN notation):
+  "Status: constraint satisfied" 255.
+  "Status: constraint violated" 255.
+  "Unreferenced blocks: 52" 255.
+
+Agents integrate with event system by recording state to T.
+*/
+/* #help_text_reports
+
+HTML Reports and Dashboards
+===========================
+
+Commands that generate HTML reports for system visibility.
+
+--wants-dashboard
+  Generate All Wants Dashboard HTML report.
+  Checks staleness and regenerates if needed (daily).
+  Creates public_html/wants_dashboard.html
+  Shows all wants grouped by decision state.
+  Requires pandoc for HTML conversion.
+  Example: cmpr --wants-dashboard
+
+--event-report
+  Generate Event System Activity Report HTML.
+  Checks staleness and regenerates if needed (daily).
+  Creates public_html/event_activity.html
+  Shows agent runs, work sessions, and metrics over time.
+  Requires pandoc for HTML conversion.
+  Example: cmpr --event-report
+
+--export-docs
+  Generate markdown reports in docs/ directory for GitHub.
+  Creates:
+    - docs/wants_dashboard.md
+    - docs/event_activity.md
+    - docs/README.md
+  Always regenerates (no staleness check).
+  Suitable for committing to version control.
+  Example: cmpr --export-docs
+
+Visualization Generators (execute via --print-code):
+  #generate_timeline_html      - Event timeline scatter plot
+  #generate_metric_plot        - Metric tracking over time
+  #generate_snapshot_stats     - Snapshot statistics
+  #generate_visualization_index - Navigation page
+
+All HTML visualizations are self-contained.
+Reports contain only metadata, no sensitive data.
+
+Note: Current visualizations use Chart.js, but we plan to remove
+this dependency in favor of a simpler approach.
+*/
+/* #help_text_wants
+
+Want Tracking and Decision States
+==================================
+
+Want = statement of desired state, dual to an agent.
+
+Commands:
+
+--wants
+  Find and print all want statements in the project.
+  Searches all files for SN lines starting with "We want ".
+  Scans source files, .cmpr/T, and .cmpr/events/*
+  Example: cmpr --wants
+
+--agents-wants
+  Show relationship between wants and agents.
+  Displays decision state for each want:
+    - TRACKED: Want recorded, no agent
+    - CHECKED: Has CHECK implementation
+    - ASSISTED: Has CHECK and FIX implementations
+    - OWNED: Automatic maintenance (future)
+  
+  Output grouped by decision state showing:
+    - Want text
+    - Block ID containing want
+    - Agent ID (if any)
+    - Implementation blocks
+  
+  Example: cmpr --agents-wants
+
+Want Format (SN notation):
+  "We want <description of desired state>" <strength>.
+
+Example want statements:
+  "We want all blocks reachable from #root in ≤2 hops" 255.
+  "We want the build to complete without warnings" 255.
+
+Decision State Progression:
+  tracked → checked → assisted → owned
+
+Each state adds capability:
+  - Checked: Can verify if satisfied
+  - Assisted: Can help fix violations
+  - Owned: Automatically maintains
+
+Wants establish event spaces (desired state, complement).
+Agents verify and maintain wants through CHECK and FIX modes.
+*/
+
 /* #claude_experience_report_agent_infrastructure_unification_20251229
 
 Experience Report: Agent Infrastructure Unification and Justify Agent Case Study

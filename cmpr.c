@@ -5418,7 +5418,7 @@ Indicator variables needed:
 - ind_wants
 
 Argument pointers needed:
-- conf_filepath, content_index_search, grep_pattern, run_block_id
+- conf_filepath, help_topic, content_index_search, grep_pattern, run_block_id
 - arg_print_block, arg_print_comment, arg_print_code, arg_expand_block
 - arg_rewritepl, arg_prompt, arg_after, arg_replace, arg_replace_comment, arg_replace_code
 - event_string, event_strength_str
@@ -5428,8 +5428,7 @@ We also need an int "action_arg" which tracks whether one of the action flags ha
 Manually maintained.
 
 */
-
-		int ind_conf = 0;
+int ind_conf = 0;
 	int ind_print_conf = 0;
 	int ind_print_bootstrap = 0;
 	int ind_init = 0;
@@ -5469,6 +5468,7 @@ Manually maintained.
 	int ind_export_docs = 0;
 
 	char *conf_filepath = NULL;
+	char *help_topic = NULL;
 	char *content_index_search = NULL;
 	char *grep_pattern = NULL;
 	char *run_block_id = NULL;
@@ -5486,8 +5486,6 @@ Manually maintained.
 	char *event_strength_str = NULL;
 	
 	int action_arg = 0;
-
-
 /* #handle_args_3 @handle_args_2:all @block_from_arg
 
 Now we iterate argv and parse the flags.
@@ -5499,7 +5497,7 @@ For each argument:
 - If an unknown flag starting with "--" is encountered, we print an error and exit
 
 The parsing loop should handle all flags listed in #argtable:
-- --help, --version, --init
+- --help [topic], --version, --init
 - --conf <file>, --print-conf
 - --print-block <id>, --print-comment <id>, --print-code <id>, --expand-block <id>
 - --content-index <search>, --grep <pattern>, --count-blocks, --files-blocks, --print-all
@@ -5510,6 +5508,8 @@ The parsing loop should handle all flags listed in #argtable:
 - --map-error, --test-block-map
 - --wants
 
+For --help: optionally takes a topic name. If the next argument doesn't start with "--", treat it as the topic name and capture it.
+
 For unknown flags, print error: "Unknown flag: <flag>" and exit with status 1.
 
 For flags requiring arguments, if the argument is missing, print error like "Missing <id> argument for --print-block" and exit.
@@ -5517,12 +5517,15 @@ For flags requiring arguments, if the argument is missing, print error like "Mis
 Manually maintained.
 
 */
-
-	for (int i = 1; i < argc; i++) {
+for (int i = 1; i < argc; i++) {
 		char *arg = argv[i];
 		
 		if (strcmp(arg, "--help") == 0) {
 			ind_help = 1;
+			// Check if next argument exists and doesn't start with "--"
+			if (i + 1 < argc && argv[i + 1][0] != '-') {
+				help_topic = argv[++i];
+			}
 		} else if (strcmp(arg, "--version") == 0) {
 			ind_version = 1;
 		} else if (strcmp(arg, "--init") == 0) {
@@ -5634,16 +5637,13 @@ Manually maintained.
 			flush_exit(1);
 		}
 	}
-
-
-
 /* #handle_args_4 @handle_args_3:all @blocks
 
 Here we dispatch using the indicators, and finally close the handle_args function.
 
 First we handle --help, --version, and --init.
 For --version, we prt "Version: $VERSION$\n" verbatim, which will get replaced by our build system.
-For --help, we prt the usage summary.
+For --help, we need to call get_code() first (since handle_help_topic needs to search blocks), then call handle_help_topic(help_topic). The help_topic argument may be NULL for the default topic list.
 For --init we call cmpr_init.
 After any of these we flush_exit(0).
 
@@ -5671,11 +5671,11 @@ As this is the last block, we close the function body with a final closing brace
 Manually maintained.
 
 */
-
-		// Handle --help, --version, --init first
+// Handle --help, --version, --init first
 	if (ind_help) {
-		prt("Usage: cmpr [--help] [--version] [--init] [--conf <file>] [--print-conf] [--print-bootstrap] [--print-block <id>] [--print-comment <id>] [--print-code <id>] [--expand-block <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks] [--files-blocks] [--print-all] [--rewritepl <id>] [--prompt <id>] [--after <id>] [--replace <id>] [--replace-comment <id>] [--replace-code <id>] [--run <id>] [--agents] [--checksum] [--T0] [--event <string>] [--strength <value>] [--memorize] [--recall] [--T] [--map-error] [--test-block-map] [--wants] [--agents-wants]\n");
-		flush_exit(0);
+		get_code();
+		handle_help_topic(help_topic);
+		// handle_help_topic calls flush_exit, so we never reach here
 	}
 	
 	if (ind_version) {
@@ -5954,8 +5954,6 @@ Manually maintained.
 
 	// No action arg - return to enter interactive mode
 }
-
-
 /* #print_files_blocks @gcb @ids_for_block
 
 void print_files_blocks();
@@ -12091,6 +12089,119 @@ void handle_agents() {
     prt("\nTotal agents: %d\n", agent_count);
     flush_exit(0);
 }
+/* #handle_help_topic
+
+Handle --help [topic] command.
+
+If topic is NULL or "topics", print list of all available topics by reading #help_topics_index and extracting topic names.
+
+Otherwise, look up #help_text_<topic> block and print its NL comment.
+
+Algorithm:
+1. If topic is NULL or equals "topics":
+   - Find #help_topics_index block
+   - Extract all block IDs matching #help_text_* from its NL comment
+   - For each help_text_<name> block ID:
+     - Extract topic name by stripping "help_text_" prefix
+     - Print topic name
+   - Exit successfully
+
+2. Otherwise (specific topic requested):
+   - Construct block ID: #help_text_<topic>
+   - Find block by ID
+   - If not found: print error "Unknown help topic: <topic>" and list available topics
+   - If found: print the NL comment of that block
+   - Exit successfully
+
+Parameters:
+  topic - Topic name string, or NULL for topic list
+
+Returns: Does not return (calls flush_exit)
+
+Note: Must be called after get_code() since it needs to search blocks.
+*/
+
+void handle_help_topic(char *topic) {
+	// Default to "topics" if NULL
+	if (topic == NULL) {
+		topic = "topics";
+	}
+	
+	// Find the help topics index
+	int index_idx = -1;
+	for (int i = 0; i < state->blocks.n; i++) {
+		if (streq(state->blocks.e[i].id, S("help_topics_index"))) {
+			index_idx = i;
+			break;
+		}
+	}
+	
+	if (index_idx < 0) {
+		prt("Error: Help system not initialized (#help_topics_index not found)\n");
+		flush_exit(1);
+	}
+	
+	// If requesting topic list, extract and print all topics
+	if (strcmp(topic, "topics") == 0) {
+		// Print the NL comment of help_text_topics block
+		int topics_idx = -1;
+		for (int i = 0; i < state->blocks.n; i++) {
+			if (streq(state->blocks.e[i].id, S("help_text_topics"))) {
+				topics_idx = i;
+				break;
+			}
+		}
+		
+		if (topics_idx < 0) {
+			prt("Error: #help_text_topics block not found\n");
+			flush_exit(1);
+		}
+		
+		print_comment(topics_idx);
+		flush_exit(0);
+	}
+	
+	// Look up specific topic
+	// Construct block ID: help_text_<topic>
+	char blockid_buf[256];
+	snprintf(blockid_buf, sizeof(blockid_buf), "help_text_%s", topic);
+	span blockid = S(blockid_buf);
+	
+	// Find the block
+	int topic_idx = -1;
+	for (int i = 0; i < state->blocks.n; i++) {
+		if (streq(state->blocks.e[i].id, blockid)) {
+			topic_idx = i;
+			break;
+		}
+	}
+	
+	if (topic_idx < 0) {
+		prt("Unknown help topic: %s\n\n", topic);
+		prt("Available topics:\n");
+		
+		// List all available topics by scanning for help_text_* blocks
+		for (int i = 0; i < state->blocks.n; i++) {
+			span id = state->blocks.e[i].id;
+			if (id.buf != NULL && spanlen(id) > 10) {
+				// Check if starts with "help_text_"
+				if (memcmp(id.buf, "help_text_", 10) == 0) {
+					// Extract topic name (everything after "help_text_")
+					span topic_name = { id.buf + 10, id.end };
+					prt("  %.*s\n", (int)spanlen(topic_name), topic_name.buf);
+				}
+			}
+		}
+		
+		prt("\nFor help on a topic: cmpr --help <topic>\n");
+		flush_exit(1);
+	}
+	
+	// Print the help text
+	print_comment(topic_idx);
+	flush_exit(0);
+}
+
 /* #handle_prompt @nl2pl_rewrite
 
 void handle_prompt(int block_idx);
