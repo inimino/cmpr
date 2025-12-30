@@ -1,26 +1,3 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "spanio.c"
 
 
@@ -166,6 +143,7 @@ typedef struct ui_state {
     struct timespec now;
     spans outputs_filenames;
     event_entries events;
+    span manual_filename;
     #define X(name) span name;
     CONFIG_FIELDS
     #undef X
@@ -952,6 +930,7 @@ int ind_conf = 0;
 	int ind_wants_dashboard = 0;
 	int ind_event_report = 0;
 	int ind_export_docs = 0;
+	int ind_file_argument = 0;
 
 	char *conf_filepath = NULL;
 	char *help_topic = NULL;
@@ -970,6 +949,7 @@ int ind_conf = 0;
 	char *arg_replace_code = NULL;
 	char *event_string = NULL;
 	char *event_strength_str = NULL;
+	char *file_argument = NULL;
 	
 	int action_arg = 0;
 
@@ -1091,12 +1071,20 @@ for (int i = 1; i < argc; i++) {
 		} else if (arg[0] == '-' && arg[1] == '-') {
 			prt("Unknown flag: "); prt(arg); prt("\n");
 			flush_exit(1);
-		}
+		} else {
+                        // handle file arguments
+                        ind_file_argument = 1;
+                        file_argument = arg;
+                }
 	}
+
+if (ind_file_argument) {
+                state->manual_filename = S(file_argument);
+        }
 
 // Handle --help, --version, --init first
 	if (ind_help) {
-		get_code();
+		//get_code();
 		handle_help_topic(help_topic);
 		// handle_help_topic calls flush_exit, so we never reach here
 	}
@@ -1131,12 +1119,10 @@ for (int i = 1; i < argc; i++) {
 	}
 
 	// Handle --print-bootstrap
-#ifndef PROMPT_LIST
 	if (ind_print_bootstrap) {
 		print_bootstrap();
 		flush_exit(0);
 	}
-#endif
 
 	// Count action flags (excluding event-related flags which are handled separately)
 	action_arg = ind_print_block + ind_print_comment + ind_print_code + ind_expand_block +
@@ -3651,6 +3637,8 @@ void parse_config() {
     span config_content = read_file_S_into_span(state->config_file_path, cmp_free_space);
     cmp.end = config_content.end; // Update cmp to avoid overwriting config
 
+    int manual_file = empty(state->manual_filename) ? 0 : 1;
+
     while (!empty(config_content)) {
         span line = next_line(&config_content);
         int pos = find_char(line, ':');
@@ -3664,9 +3652,9 @@ void parse_config() {
 
         // Handle special keys
         if (span_eq(key, S("language"))) {
-            handle_conf_language(value);
+            if (!manual_file) handle_conf_language(value);
         } else if (span_eq(key, S("file"))) {
-            handle_conf_file(value);
+            if (!manual_file) handle_conf_file(value);
         } else {
             // Handle general configuration keys
             #define X(name) \
@@ -3677,6 +3665,11 @@ void parse_config() {
             CONFIG_FIELDS
             #undef X
         }
+    }
+
+    if (manual_file) {
+        handle_conf_language(S("C"));
+        handle_conf_file(state->manual_filename);
     }
 
     state->ollama_models = split_commas_ws(state->ollamas);
