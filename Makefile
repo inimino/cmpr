@@ -31,14 +31,12 @@ siphash/siphash.o: siphash/siphash.c
 siphash/halfsiphash.o: siphash/halfsiphash.c
 	$(CC) -c siphash/halfsiphash.c $(CFLAGS) -o siphash/halfsiphash.o
 
-fdecls.h: cmpr.c bootstrap_content.c help_topics.c
+fdecls.h: cmpr-src.c bootstrap_content.c help_topics.c
 	cat $^ | python3 extract_decls.py > fdecls.h
 
 clean:
-	rm -f dist/cmpr dist/cmpr-* cmpr-sed.c
-	rm -f prompt_list prompt_templates.c
+	rm -f cmpr-sed.c
 	rm -f bootstrap_content.c help_topics.c
-	rm -f fdecls.h
 	rm -f siphash/*.o
 
 install: dist/cmpr

@@ -23,6 +23,57 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 
 */
 
+/* #gemini_experience_report_tool_discipline_and_quoting_20251229
+
+Experience Report: Enforcing Tool Discipline and Handling Quoting Complexity
+
+**Session Goal**: 
+Implement the `#generate_inbox_flow` report generator to satisfy a system want.
+
+**Accomplishments**:
+- Identified the correct project-specific toolchain (cmpr binary).
+- Updated `GEMINI.md` to strictly enforce the use of `cmpr` commands for block-managed files (.c files).
+- Documented a safe pattern for inserting complex content (e.g., shell scripts with nested quotes) into the block database using temporary files to avoid shell escaping issues.
+
+**Failures & Learnings**:
+- **Tool Discipline Violation**: I initially attempted to use the `replace` tool directly on `INBOX.c`, which bypasses the block management system and its checksum/revision logic. 
+- **Quoting Struggles**: I repeatedly failed to insert a shell script block correctly using `cat <<EOF` and `echo`, resulting in mangled code with unterminated strings. This highlighted the danger of constructing complex payloads within a shell command.
+- **Correction**: I updated `GEMINI.md` with a "Safe Block Creation" protocol: write content to a file using `write_file`, then `cat` that file into `cmpr`.
+
+**Next Steps**:
+- Use the newly documented "Safe Block Creation" protocol to fix the malformed `#generate_inbox_flow` block in `INBOX.c`.
+- Generate the `public_html/inbox_flow.html` report.
+- Verify the report satisfies the want: `"We want public_html/inbox_flow.html generated and kept current..."`
+
+**Context for Resume**:
+`#generate_inbox_flow` exists but is syntactically broken (unterminated quotes). The correct script content is drafted in the previous turn's `tmp_block_content.txt` attempt.
+
+*/
+/* #gemini_experience_report_cmpr_tool_discipline_20251229
+
+Experience Report: Enforcing cmpr Tool Discipline
+
+**Context**: 
+Task was to add a new block #generate_inbox_flow to INBOX.c.
+
+**Failure**: 
+I attempted to use the `replace` tool directly on INBOX.c. 
+This is forbidden because cmpr manages the file structure, checksums, and block boundaries. 
+Manual editing risks corrupting the block database.
+
+**Root Cause**: 
+"Plan mode amnesia". After planning the content of the block, I reverted to standard text-editing habits 
+instead of checking the protocol in GEMINI.md.
+
+**Correction**:
+1. Updated GEMINI.md to explicitly forbid `replace`/`write_file` on block-managed files.
+2. Will use `cmpr --after '#generate_export_docs'` to insert the new block safely.
+
+**Key Takeaway**: 
+Treat .c files in this project as binary database files that happen to be readable. 
+Only interact with them via the API (cmpr binary).
+
+*/
 /* #claude_experience_report_nl2pl_qa_20251229
 
 QA on nl2pl agent.
@@ -2523,7 +2574,7 @@ done
 
 /* #agent_nl2pl
 
-In ./agents/nl2pl is the nl2pl agent.
+The nl2pl agent maintains the PL parts of blocks in response to PL changes.
 
 An agent has two functions, a step function and a predicate function.
 (This is from when we first started designing the agent system, and then we just created some shell scripts to get started.
@@ -5167,6 +5218,7 @@ Export and reporting dashboard generation for system visibility.
 ## Dashboard Generation
 
 #generate_wants_dashboard - Generate wants tracking dashboard HTML
+#generate_inbox_flow - Generate INBOX flow report HTML
 #handle_export_docs - Export documentation to markdown
 #generate_export_docs - Generate documentation exports
 
@@ -6903,6 +6955,84 @@ echo "  - docs/README.md"
 echo "Done."
 
 
+/* #generate_inbox_flow
+
+Generator script for INBOX Flow Report.
+
+This block generates public_html/inbox_flow.html showing current INBOX contents, suggested destinations, and relocation status.
+
+The script:
+1. Gets list of blocks in INBOX.c via `cmpr --files-blocks`
+2. Generates markdown with:
+   - Overview: Total blocks in INBOX
+   - Block table with: ID, Type (Report/Feature/Hub/Other), Suggested Action
+   - Experience Reports section (candidates for moving/archiving)
+   - Feature blocks (candidates for integration)
+3. Converts to HTML via pandoc
+4. Saves to public_html/inbox_flow.html
+
+Usage:
+  cmpr --print-code '#generate_inbox_flow' | sh > /tmp/inbox_flow.md
+  pandoc -f markdown -t html --standalone --metadata title="INBOX Flow" /tmp/inbox_flow.md -o public_html/inbox_flow.html
+
+Justifies: #report_wants
+
+*/
+#!/bin/sh
+# Generate INBOX Flow Report
+
+echo "# INBOX Flow Report"
+echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+echo ""
+
+# Get INBOX blocks
+INBOX_BLOCKS=$(dist/cmpr --files-blocks | grep -A 1000 "file: INBOX.c" | grep "^Block" | sed 's/.*: //')
+TOTAL_COUNT=$(echo "$INBOX_BLOCKS" | wc -l)
+
+echo "## Overview"
+echo ""
+echo "- **Total Blocks in INBOX**: $TOTAL_COUNT"
+echo ""
+
+echo "## Block Analysis"
+echo ""
+echo "| Block ID | Type | Suggested Action |
+|---|---|---|"
+
+echo "$INBOX_BLOCKS" | while read -r block; do
+    type="Unknown"
+    action="Triage"
+    
+    if echo "$block" | grep -q "experience_report"; then
+        type="Experience Report"
+        action="Archive / Move to doc/"
+    elif echo "$block" | grep -q "_hub$"; then
+        type="Hub"
+        action="Move to relevant file / Create new file"
+    elif echo "$block" | grep -q "^#help_"; then
+        type="Help Text"
+        action="Move to help_topics.c"
+    elif echo "$block" | grep -q "^#generate_"; then
+        type="Generator"
+        action="Keep in INBOX or move to tools"
+    elif echo "$block" | grep -q "^#handle_"; then
+        type="Handler"
+        action="Move to command handlers"
+    fi
+    
+    echo "| \`$block\` | $type | $action |"
+done
+
+echo ""
+echo "## Relocation Strategy"
+echo ""
+echo "1. **Experience Reports**: Should be moved to 
+ or kept in a dedicated history file if numerous."
+echo "2. **Hubs**: Indicate new subsystems. Should likely start new 
+ files."
+echo "3. **Help Text**: Consolidate in 
+."
+echo "4. **Handlers**: Integrate into CLI handling logic."
 /* #handle_snapshots @events_functions @argtable
 
 List all event snapshots with formatted output.
