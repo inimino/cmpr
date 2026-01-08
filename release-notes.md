@@ -1,3 +1,11 @@
+# v10 (planned)
+
+Target features:
+- Agent system with CHECK/FIX modes
+- Event system (T/E/S) for temporal reasoning
+- Help topics (`cmpr --help <topic>`)
+- Full cmpr.c rewrite by Claude
+
 # v9
 
 ### Anthropic Claude support
@@ -12,6 +20,7 @@ Previously this was just moving through the blocks, but in v9 we added an empty 
 So the j/k order is now all of your blocks, plus any empty files listed in your conf file.
 (This replaces the really awkward handling of empty files we had before, where they created empty blocks. Now there's no such thing as an empty block.)
 We still don't handle files that don't exist, but now you can add a file to your project by touching the file and adding it to .cmpr/conf.
+
 ### The Palette
 
 The operations palette or palette is probably the biggest new feature in v9.
@@ -63,6 +72,7 @@ To this end, we implement palette operations in their own files (under ops/) and
 If you want to see how any of our prompts work, just look at the files under prompts.
 All you have to do to add your own ops to the palette is to copy one of the existing ones and modify it to your needs.
 As we expose more of the functionality of cmpr to the palette ops, this extension point will become more powerful.
+
 ### Undo
 
 There is now a basic undo feature.
@@ -94,6 +104,7 @@ The similarity measure is very basic (and fast) but will probably be tuned over 
 If you find any cases that don't do the most useful thing, please let us know about them!
 
 Note that you can also use the similarity to find code that is similar but different; for example copy-pasted functions will probably be picked up.
+
 # v8
 
 ### Block references

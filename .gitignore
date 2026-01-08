@@ -4,6 +4,7 @@
 .cmpr/cache
 .cmpr/events
 .cmpr/rev-indices
+.cmpr/claude_p_runs
 revs
 tmp
 api_calls
@@ -22,3 +23,4 @@ siphash/vectors.h
 functions.sh
 cmpr-sed.c
 tags
+claude_prompt_*

@@ -16,7 +16,8 @@ cmpr provides code block database features.
 **Standard workflow for source changes**:
 
 ```bash
-# Build and test
+# Regenerate cmpr.c from blocks, then build
+scripts/cmpr-c-from-cmpr-src-c
 make
 dist/cmpr --version  # Verify it built
 
@@ -31,7 +32,8 @@ sudo make install
 
 **Build commands**:
 ```bash
-# Build only
+# Regenerate cmpr.c from blocks, then build
+scripts/cmpr-c-from-cmpr-src-c
 make
 
 # Test the build
@@ -49,6 +51,11 @@ cmpr --version
 - `dist/cmpr` - For testing changes immediately after `make`
 - `cmpr` - For normal operations with the installed version
 - After you're happy with `dist/cmpr` testing, install it with `sudo make install`
+
+**Adding new blocks to cmpr.c**:
+- New blocks must be created IN cmpr.c (not INBOX.c) for compilation
+- Add the block ID to `cmpr-c-build` to include it in the build
+- The build script reads blocks from cmpr.c and assembles them
 
 **Getting Help**:
 - `cmpr --help` - Print usage summary
@@ -201,6 +208,17 @@ All navigation MUST start from the root block and follow block references:
   - Data structures (e.g., "block-scoped graph, not file-scoped")
   - What NOT to do (e.g., "don't scan entire files, only individual NL comments")
 - If the generated PL is wrong, the NL was probably ambiguous - fix the NL, not the PL
+
+**Function Declarations in NL**:
+- Every C function block in cmpr.c must have a function declaration in the NL comment (e.g., `void handle_foo(span arg)`)
+- This removes ambiguity for nl2pl and serves as documentation for callers
+- The build process extracts all declarations from NL comments into fdecls.h automatically
+- Therefore: order of C functions in cmpr.c doesn't matter; forward declarations are never needed
+
+**Using @C for Idiomatic Code**:
+- Always add `@C` blockref when creating C function blocks
+- #C references #libraryintro which documents idiomatic C patterns using our spanio library
+- If nl2pl consistently makes the same mistake, add notes or refs to #C so it always sees them when generating code
 
 **Important Notes**:
 - `cmpr` (at `/usr/local/bin/cmpr`) is the installed system version

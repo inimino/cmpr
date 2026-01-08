@@ -1,7 +1,1355 @@
-#include "spanio.c"
+/* #includes */
+#define _GNU_SOURCE // for memmem
+#include "siphash/siphash.h"
+#include <dirent.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <assert.h>
+#include <string.h>
+#include <stdarg.h>
+#include <sys/types.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <ctype.h>
+#include <limits.h>
+#include <termios.h>
+#include <errno.h>
+#include <time.h>
+#include <math.h>
+#include <stddef.h>
+#include <regex.h>
+typedef unsigned char u8;
+typedef uint64_t u64;
+#define flush_exit(n) flush(); exit(n) // used only by handle_args; let's do this differently
 
 
+/* #dbgx */
+#define dbgd(x) prt(#x ": %d\n", x),flush()
+#define dbgx(x) prt(#x ": %x\n", x),flush()
+#define dbgf(x) prt(#x ": %f\n", x),flush()
+#define dbgp(x) prt(#x ": %p\n", x),flush()
+#define dbgs(x) prt(#x ": %.*s\n", len(x), x.buf),flush()
 
+
+/* #span */
+typedef struct {
+  u8 *buf;
+  u8 *end;
+} span;
+
+typedef struct {
+  u8 *buf;
+  u8 *end;
+  u8 *p;
+} thran;
+
+#define BUF_SZ (1 << 30)
+
+u8 *input_space; // remains immutable once stdin has been read up to EOF.
+u8 *output_space;
+u8 *cmp_space;
+span out, inp, cmp;
+span* outp;
+
+int empty(span);
+int len(span);
+
+void init_spans(); // main spanio init function
+void init_spans_ioc(size_t,size_t,size_t);
+
+// basic spanio primitives
+
+typedef struct {
+  span* outp;
+} out_sav;
+
+void prt(const char *, ...);
+void w_char(char);
+void wrs(span);
+void bksp();
+void sp();
+void terpri();
+void w_char_esc(char);
+void w_char_esc_pad(char);
+void w_char_esc_dq(char);
+void w_char_esc_sq(char);
+void wrs_esc(span);
+out_sav out2cmp();     // redirect all output functions (prt, wrs, etc) to cmp instead of out
+//out_sav out2atp(span); // redirect to append to a file (creating paths and files if needed)
+void out_rst(out_sav); // undo effect of out2cmp or out2atp
+void flush();
+//void discard(); // experimental, probably going away
+void flush_err();
+void write_to_file(span content, const char* filename);
+int readable_file(span);
+span read_file_into_span(char *filename, span buffer);
+span read_file_S_into_span(span filename, span buffer);
+span read_file_into_cmp(span filename);
+void advance1(span*);
+void advance(span*,int);
+int find_char(span s, char c); int find_char_rev(span s, char c);
+int contains(span, span);
+span take_n(int, span*);
+span next_line(span*);
+span first_n(span, int);
+int span_eq(span, span);
+int span_cmp(span, span);
+span S(char*);
+span nullspan();
+int copy_file(const char *src, const char *dest); // TODO: maybe take spans instead
+
+span inp_compl();
+span cmp_compl();
+span out_compl();
+
+/* #read_stdin_into_cmp */
+span read_stdin_into_cmp() {
+  span ret = {cmp.end,cmp.end};
+  char c;
+  while ((c = getchar()) != EOF) {
+    *cmp.end = c;
+    cmp.end++;
+    if (len(cmp) == BUF_SZ) { prt("cmp space overflow reading stdin\n"); flush_err(); exit(1); }
+  }
+  ret.end = cmp.end;
+  return ret;
+}
+
+/* #spanio_basics */
+int empty(span s) {
+  return s.end == s.buf;
+}
+
+inline int len(span s) { return s.end - s.buf; }
+
+thran thran_of(span s) { return (thran){ s.buf, s.end, s.buf }; }
+span thran_a(thran t) { return (span){t.buf, t.p}; }
+span thran_b(thran t) { return (span){t.p, t.end}; }
+span thran_full(thran t) { return (span) {t.buf, t.end}; }
+
+int out_WRITTEN = 0, cmp_WRITTEN = 0;
+
+void init_spans() {
+  init_spans_ioc(BUF_SZ,BUF_SZ,BUF_SZ);
+}
+
+void init_spans_ioc(size_t i, size_t o, size_t c) {
+  input_space = malloc(i);
+  output_space = malloc(o);
+  cmp_space = malloc(c);
+  out.buf = output_space;
+  out.end = output_space;
+  inp.buf = input_space;
+  inp.end = input_space;
+  cmp.buf = cmp_space;
+  cmp.end = cmp_space;
+  outp = &out;
+}
+
+void bksp() { (*outp).end--; }
+
+void sp() { w_char(' '); }
+
+span head_n(int n, span *io) {
+  span ret;
+  ret.buf = io->buf;
+  ret.end = io->buf + n;
+  io->buf += n;
+  return ret;
+}
+
+int span_eq(span s1, span s2) {
+  if (len(s1) != len(s2)) return 0;
+  for (int i = 0; i < len(s1); ++i) if (s1.buf[i] != s2.buf[i]) return 0;
+  return 1;
+}
+
+int span_cmp(span s1, span s2) {
+  for (;;) {
+    if (empty(s1) && !empty(s2)) return 1;
+    if (empty(s2) && !empty(s1)) return -1;
+    if (empty(s1)) return 0;
+    int dif = *(s1.buf++) - *(s2.buf++);
+    if (dif) return dif;
+  }
+}
+
+span S(char *s) {
+  span ret = {(u8*)s, (u8*)s + strlen(s) };
+  return ret;
+}
+
+char* s_buffer(char* buf, int n, span s) {
+  size_t l = (n - 1) < len(s) ? (n - 1) : len(s);
+  memmove(buf, s.buf, l);
+  buf[l] = '\0';
+  return buf;
+}
+
+char* s(span s) {
+  if (len(s) && s.end[-1] == '\0') return (char*)s.buf;
+  char* ret = (char*)cmp.end;
+  out_sav o = out2cmp();
+  wrs(s);
+  w_char('\0');
+  out_rst(o);
+  return ret;
+}
+
+void read_and_count_stdin() {
+  int c;
+  while ((c = getchar()) != EOF) {
+    //if (c == ' ') continue;
+    assert(c != 0);
+    *inp.buf = c;
+    inp.buf++;
+    if (len(inp) == BUF_SZ) { prt("input overflow\n"); flush_err(); exit(1); }
+  }
+  inp.end = inp.buf;
+  inp.buf = input_space;
+}
+
+// set if debugging some crash
+const int ALWAYS_FLUSH = 0;
+
+ /* C convenience methods
+
+    We have a copy_file already here.
+
+    We add mkdir_p and pathpart just to simplify out2atp.
+ */
+
+
+/* #copy_file */
+int copy_file(const char *src, const char *dest) {
+    int source_fd, dest_fd;
+    ssize_t n_read, n_written;
+    char buffer[4096];
+
+    source_fd = open(src, O_RDONLY);
+    if (source_fd < 0) {
+        return -1; // Error opening source file
+    }
+
+    dest_fd = open(dest, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (dest_fd < 0) {
+        close(source_fd);
+        return -2; // Error opening destination file
+    }
+
+    while ((n_read = read(source_fd, buffer, sizeof(buffer))) > 0) {
+        char *out_ptr = buffer;
+        ssize_t n_left = n_read;
+        while (n_left > 0) {
+            n_written = write(dest_fd, out_ptr, n_left);
+            if (n_written <= 0) {
+                if (errno == EINTR) {
+                    continue; // Retry if interrupted by signal
+                }
+                close(source_fd);
+                close(dest_fd);
+                return -3; // Error writing to destination file
+            }
+            n_left -= n_written;
+            out_ptr += n_written;
+        }
+    }
+
+    close(source_fd);
+    close(dest_fd);
+
+    if (n_read == 0) { // Successfully copied
+        return 0;
+    } else {
+        return -4; // Error reading from source file
+    }
+}
+
+/* #mkdir_p */
+void mkdir_p(span dir) {
+    u8* end = cmp.end;
+    char old_cwd[PATH_MAX];
+    if (getcwd(old_cwd, sizeof(old_cwd)) == NULL) {
+        prt("Failed to get current working directory");
+        flush_err();
+        perror("mkdir_p");
+        exit(1);
+    }
+    span remaining = dir;
+    while (!empty(remaining)) {
+        int idx = find_char(remaining, '/');
+        if (idx == -1) break;
+        span component = take_n(idx, &remaining);
+        advance1(&remaining); // skip the "/"
+        char path[PATH_MAX];
+        s_buffer(path, PATH_MAX, component);
+        if (chdir(path) != 0) {
+            if (mkdir(path, 0755) != 0 || chdir(path) != 0) {
+                prt("%.*s", len(component), component.buf);
+                flush_err();
+                perror("mkdir_p");
+                exit(1);
+            }
+        }
+    }
+    if (chdir(old_cwd) != 0) {
+        prt("Failed to return to directory: %s", old_cwd);
+        flush_err();
+        perror("mkdir_p");
+        exit(1);
+    }
+    cmp.end = end;
+}
+
+/* #pathpart */
+span pathpart(span dir) {
+    int last_slash = find_char_rev(dir, '/');
+    if (last_slash == -1) {
+        return (span){ .buf = dir.buf, .end = dir.buf };
+    }
+    return (span){ .buf = dir.buf, .end = dir.buf + last_slash + 1 };
+}
+
+
+/* #spanio_basics2 */
+out_sav out2cmp() { out_sav ret = {0}; ret.outp = outp; outp = &cmp; return ret; }
+
+void out_rst(out_sav sav) {
+  outp = sav.outp;
+}
+
+void prt(const char * fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  char *buffer;
+  int n = vasprintf(&buffer, fmt, ap);
+  memcpy(outp->end, buffer, n);
+  free(buffer);
+  outp->end += n;
+  if (outp->buf + BUF_SZ < outp->end) {
+    printf("OUTPUT OVERFLOW (%ld)\n", outp->end - outp->buf);
+    exit(7);
+  }
+  va_end(ap);
+  if (ALWAYS_FLUSH) flush();
+}
+
+span prs(char * fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  span ret = { .buf = cmp.end };
+  char *buffer;
+  int n = vasprintf(&buffer, fmt, ap);
+  if (BUF_SZ < len(cmp) + n) {
+    printf("CMP OVERFLOW (%d)\n", len(cmp) + n);
+    exit(7);
+  }
+  memcpy(cmp.end, buffer, n);
+  free(buffer);
+  cmp.end += n;
+  va_end(ap);
+  if (ALWAYS_FLUSH) flush();
+  ret.end = cmp.end;
+  return ret;
+}
+
+void terpri() {
+  *outp->end = '\n';
+  outp->end++;
+  if (ALWAYS_FLUSH) flush();
+}
+
+void w_char(char c) {
+  *outp->end++ = c;
+}
+
+void w_char_esc(char c) {
+  if (c < 0x20 || c == 127) {
+    outp->end += sprintf((char*)outp->end, "\\%03o", (u8)c);
+  } else {
+    *outp->end++ = c;
+  }
+}
+
+void w_char_esc_pad(char c) {
+  if (c < 0x20 || c == 127) {
+    outp->end += sprintf((char*)outp->end, "\\%03o", (u8)c);
+  } else {
+    sp();sp();sp();
+    *outp->end++ = c;
+  }
+}
+
+void w_char_esc_dq(char c) {
+  if (c < 0x20 || c == 127) {
+    outp->end += sprintf((char*)outp->end, "\\%03o", (u8)c);
+  } else if (c == '"') {
+    *outp->end++ = '\\';
+    *outp->end++ = '"';
+  } else if (c == '\\') {
+    *outp->end++ = '\\';
+    *outp->end++ = '\\';
+  } else {
+    *outp->end++ = c;
+  }
+}
+
+void w_char_esc_sq(char c) {
+  if (c < 0x20 || c == 127) {
+    outp->end += sprintf((char*)outp->end, "\\%03o", (u8)c);
+  } else if (c == '\'') {
+    *outp->end++ = '\\';
+    *outp->end++ = '\'';
+  } else if (c == '\\') {
+    *outp->end++ = '\\';
+    *outp->end++ = '\\';
+  } else {
+    *outp->end++ = c;
+  }
+}
+
+void wrs(span s) {
+  for (u8 *c = s.buf; c < s.end; c++) w_char(*c);
+}
+
+void wrs_esc(span s) {
+  for (u8 *c = s.buf; c < s.end; c++) w_char_esc(*c);
+}
+
+void flush() {
+  int *WRITTEN = (output_space < outp->end && outp->end < output_space + BUF_SZ) ? &out_WRITTEN : &cmp_WRITTEN;
+  if (*WRITTEN < len(*outp)) {
+    //fprintf(flush_target,"%.*s", len(*outp) - *WRITTEN, outp->buf + *WRITTEN);
+    fwrite(outp->buf + *WRITTEN, 1, len(*outp) - *WRITTEN, stdout);
+    *WRITTEN = len(*outp);
+    fflush(stdout);
+  }
+}
+
+void discard() {
+  int *WRITTEN = (output_space < outp->end && outp->end < output_space + BUF_SZ) ? &out_WRITTEN : &cmp_WRITTEN;
+  *WRITTEN = len(*outp);
+}
+
+void flush_err() {
+  int *WRITTEN = (output_space < outp->end && outp->end < output_space + BUF_SZ) ? &out_WRITTEN : &cmp_WRITTEN;
+  if (*WRITTEN < len(*outp)) {
+    fprintf(stderr, "%.*s", len(*outp) - *WRITTEN, outp->buf + *WRITTEN);
+    *WRITTEN = len(*outp);
+    fflush(stderr);
+  }
+}
+
+
+/* #write_to_file */
+void write_to_file_2(span, const char*, int);
+
+void write_to_file(span content, const char* filename) {
+  write_to_file_2(content, filename, 0);
+}
+
+void write_to_file_2(span content, const char* filename, int clobber) {
+  // Attempt to open the file with O_CREAT and O_EXCL to ensure it does not already exist
+  /* clobber thing is a manual fixup */
+  int flags = O_WRONLY | O_CREAT | O_TRUNC;
+  if (!clobber) flags |= O_EXCL;
+  int fd = open(filename, flags, 0644);
+  if (fd == -1) {
+    if (clobber) {
+      prt("Error opening %s for writing: File cannot be created or opened.\n", filename);
+    } else {
+      prt("Error opening %s for writing: File already exists or cannot be created.\n", filename);
+    }
+    flush();
+    exit(EXIT_FAILURE);
+  }
+
+  // Write the content of the span to the file
+  ssize_t written = write(fd, content.buf, len(content));
+  if (written != len(content)) {
+    // Handle partial write or write error
+    prt("Error writing to file %s.\n", filename);
+    flush();
+    close(fd); // Attempt to close the file before exiting
+    exit(EXIT_FAILURE);
+  }
+
+  // Close the file
+  if (close(fd) == -1) {
+    prt("Error closing %s after writing.\n", filename);
+    flush();
+    exit(EXIT_FAILURE);
+  }
+}
+
+void write_to_file_span(span content, span filename_span, int clobber) {
+  char filename[filename_span.end - filename_span.buf + 1];
+  memcpy(filename, filename_span.buf, filename_span.end - filename_span.buf);
+  filename[filename_span.end - filename_span.buf] = '\0';
+  write_to_file_2(content, filename, clobber);
+}
+
+
+/* #readable_file */
+int readable_file(span path) {
+    char buffer[PATH_MAX];
+    s_buffer(buffer, PATH_MAX, path);
+    struct stat sb;
+    if (stat(buffer, &sb) != 0) return 0;
+    if (!S_ISREG(sb.st_mode)) return 0;
+    if (access(buffer, R_OK) != 0) return 0;
+    return 1;
+}
+
+span read_file_into_cmp(span filename) {
+  span ret = read_file_S_into_span(filename, cmp_compl());
+  cmp.end = ret.end;
+  return ret;
+}
+
+span read_file_S_into_span(span filename, span buffer) {
+  char path[2048];
+  s_buffer(path,2048,filename);
+  return read_file_into_span(path, buffer);
+}
+
+span read_file_into_span(char* filename, span buffer) {
+  // Open the file
+  int fd = open(filename, O_RDONLY);
+  if (fd == -1) {
+    prt("Failed to open %s\n", filename);
+    flush_err();
+    exit(1);
+  }
+
+  // Get the file size
+  struct stat statbuf;
+  if (fstat(fd, &statbuf) == -1) {
+    close(fd);
+    prt("Failed to get file size for %s\n", filename);
+    flush_err();exit(1);
+  }
+
+  // Check if the file's size fits into the provided buffer
+  size_t file_size = statbuf.st_size;
+  if (file_size > len(buffer)) {
+    close(fd);
+    prt("File content for %s does not fit into the provided buffer\n", filename);
+    flush_err();exit(1);
+  }
+
+  // Read file contents into the buffer
+  ssize_t bytes_read = read(fd, buffer.buf, file_size);
+  if (bytes_read == -1) {
+    close(fd);
+    prt("Failed to read file contents for %s\n", filename);
+    flush_err();exit(1);
+  }
+
+  // Close the file
+  if (close(fd) == -1) {
+    prt("Failed to close file %s\n", filename);
+    flush_err();exit(1);
+  }
+
+  // Create and return a new span that reflects the read content
+  span new_span = {buffer.buf, buffer.buf + bytes_read};
+  return new_span;
+}
+
+
+/* #take_n */
+span take_n(int n, span *io) {
+  span ret;
+  ret.buf = io->buf;
+  ret.end = io->buf + n;
+  io->buf += n;
+  return ret;
+}
+
+void advance1(span *s) {
+  if (!empty(*s)) s->buf++;
+}
+
+void advance(span *s, int n) {
+  if (len(*s) >= n) s->buf += n;
+  else s->buf = s->end; // Move to the end if n exceeds span length
+}
+
+void shorten1(span *s) {
+  if (!empty(*s)) s->end--;
+}
+
+void shorten(span *s, int n) {
+  if (n <= len(*s)) s->end -= n;
+  else s->end = s->buf;
+}
+
+int contains(span haystack, span needle) {
+  /*
+  prt("contains() haystack:\n");
+  wrs(haystack);terpri();
+  prt("needle:\n");
+  wrs(needle);terpri();
+  */
+  if (len(haystack) < len(needle)) {
+    return 0; // Needle is longer, so it cannot be contained
+  }
+  void *result = memmem(haystack.buf, haystack.end - haystack.buf, needle.buf, needle.end - needle.buf);
+  return result != NULL ? 1 : 0;
+}
+
+int contains_ptr(span a, span b) {
+  return a.buf <= b.buf && b.end <= a.end;
+}
+
+int starts_with(span a, span b) {
+  return len(b) <= len(a) && 0 == memcmp(a.buf, b.buf, len(b));
+}
+
+int ends_with(span a, span b) {
+  return len(b) <= len(a) && 0 == memcmp(a.end - len(b), b.buf, len(b));
+}
+
+span first_n(span s, int n) {
+  span ret;
+  if (len(s) < n) n = len(s); // Ensure we do not exceed the span's length
+  ret.buf = s.buf;
+  ret.end = s.buf + n;
+  return ret;
+}
+
+span skip_n(span s, int n) {
+  if (len(s) <= n) return (span){s.end, s.end};
+  return (span){s.buf + n, s.end};
+}
+
+void skip_whitespace(span *s) {
+  while (isspace(*s->buf)) s->buf++;
+}
+
+int find_char(span s, char c) {
+  for (int i = 0; i < len(s); ++i) {
+    if (s.buf[i] == c) return i;
+  }
+  return -1; // Character not found
+}
+
+int find_char_rev(span s, char c) {
+  for (int i = len(s); i; --i) {
+    if (s.buf[i-1] == c) return i-1;
+  }
+  return -1;
+}
+
+span trim(span s) {
+  while (len(s) && isspace((unsigned char)*s.buf)) s.buf++;
+  while (len(s) && isspace((unsigned char)*(s.end - 1))) s.end--;
+  return s;
+}
+
+span concat(span a, span b) {
+  if (a.end == b.buf) return (span){a.buf, b.end};
+  span ret = {cmp.end};
+  out_sav o = out2cmp();
+  wrs(a);
+  wrs(b);
+  out_rst(o);
+  ret.end = cmp.end;
+  return ret;
+}
+
+/* #next_line */
+span next_line(span *input) {
+  if (empty(*input)) return nullspan();
+  span line;
+  line.buf = input->buf;
+  while (input->buf < input->end && *input->buf != '\n') {
+    input->buf++;
+  }
+  line.end = input->buf;
+  if (input->buf < input->end) { // If '\n' found, move past it for next call
+    input->buf++;
+  }
+  return line;
+}
+
+
+/* #consume_prefix */
+span consume_prefix(span prefix, span *input) {
+  if (len(*input) < len(prefix) || !span_eq(first_n(*input, len(prefix)), prefix)) {
+    return nullspan();
+  }
+  span ret = {.buf = input->buf};
+  input->buf += len(prefix);
+  ret.end = input->buf;
+  return ret;
+}
+
+/* #generic_array_implementation */
+#define MAKE_ARENA(E, T, STACK_SIZE) \
+typedef struct { \
+    E* a; \
+    size_t n; \
+    size_t cap; \
+} T; \
+\
+typedef struct { \
+    E* arena; \
+    size_t arena_size; \
+    size_t allocated; \
+    size_t stack[STACK_SIZE]; \
+    size_t stack_top; \
+} T##_arena; \
+\
+T##_arena T##_global_arena; \
+\
+void T##_arena_alloc(int N) { \
+    T##_global_arena.arena = (E*)malloc(sizeof(E) * N); \
+    if (!T##_global_arena.arena) { \
+        prt("Failed to allocate memory for arena.\n"); \
+        flush(); \
+        exit(1); \
+    } \
+    T##_global_arena.arena_size = N; \
+    T##_global_arena.allocated = 0; \
+    T##_global_arena.stack_top = 0; \
+} \
+\
+void T##_arena_free() { \
+    free(T##_global_arena.arena); \
+    T##_global_arena.arena = NULL; \
+    T##_global_arena.arena_size = 0; \
+    T##_global_arena.allocated = 0; \
+    T##_global_arena.stack_top = 0; \
+} \
+\
+void T##_arena_push() { \
+    if (T##_global_arena.stack_top >= STACK_SIZE) { \
+        prt("Arena stack overflow.\n"); \
+        flush(); \
+        exit(1); \
+    } \
+    T##_global_arena.stack[T##_global_arena.stack_top++] = T##_global_arena.allocated; \
+} \
+\
+void T##_arena_pop() { \
+    if (T##_global_arena.stack_top == 0) { \
+        prt("Arena stack underflow.\n"); \
+        flush(); \
+        exit(1); \
+    } \
+    T##_global_arena.allocated = T##_global_arena.stack[--T##_global_arena.stack_top]; \
+} \
+\
+T T##_alloc(size_t N) { \
+    T t; \
+    if (!T##_global_arena.arena) { \
+        prt("Arena not allocated.\n"); \
+        flush(); \
+        exit(1); \
+    } \
+    if (T##_global_arena.allocated + N > T##_global_arena.arena_size) { \
+        prt("Arena overflow.\n"); \
+        flush(); \
+        exit(1); \
+    } \
+    t.a = T##_global_arena.arena + T##_global_arena.allocated; \
+    t.n = 0; \
+    t.cap = N; \
+    T##_global_arena.allocated += N; \
+    return t; \
+} \
+\
+void T##_push(T* t, E e) { \
+    if (t->n >= t->cap) { \
+        if (t->a + t->cap == T##_global_arena.arena + T##_global_arena.allocated) { \
+            T##_global_arena.allocated += 1; \
+            t->cap += 1; \
+        } else { \
+            size_t new_cap = t->cap ? t->cap * 2 : 2; \
+            if (T##_global_arena.allocated + new_cap > T##_global_arena.arena_size) { \
+                prt("Arena overflow.\n"); \
+                flush(); \
+                exit(1); \
+            } \
+            E* new_a = T##_global_arena.arena + T##_global_arena.allocated; \
+            for (size_t i = 0; i < t->n; ++i) { \
+                new_a[i] = t->a[i]; \
+            } \
+            t->a = new_a; \
+            T##_global_arena.allocated += new_cap; \
+            t->cap = new_cap; \
+        } \
+    } \
+    t->a[t->n++] = e; \
+}
+
+
+/* #first_generic_array_is_spans */
+MAKE_ARENA(span,spans,256);
+
+int bool_neq(int, int);
+span spanspan(span haystack, span needle);
+int is_one_of(span x, spans ys);
+
+span nullspan() {
+  return (span){0, 0};
+}
+
+int bool_neq(int a, int b) { return ( a || b ) && !( a && b); }
+
+spans split_commas_ws(span s) {
+  int n_commas = 0;
+  for (int i=0;i<len(s);i++) {
+    if (s.buf[i] == ',') n_commas++;
+  }
+  spans ret = spans_alloc(n_commas + 1);
+  //int idx = 0;
+  while (len(s)) {
+    int comma = find_char(s,',');
+    if (comma < 0) {
+      //ret.a[idx++] = trim(s);
+      spans_push(&ret,trim(s));
+      break;
+    } else {
+      spans_push(&ret,trim(first_n(s,comma)));
+      //ret.a[idx++] = trim(first_n(s,comma));
+      s = skip_n(s, comma+1);
+    }
+  }
+  return ret;
+}
+
+spans split_whitespace(span s) {
+  int n_tokens = 0;
+  for (int i=0;i<len(s);i++) {
+    if (!isspace(s.buf[i]) && (i == 0 || isspace(s.buf[i-1]))) n_tokens++;
+  }
+  spans ret = spans_alloc(n_tokens);
+  int idx = 0;
+  while (len(s)) {
+    while (len(s) && isspace(*s.buf)) s.buf++;
+    if (!len(s)) break;
+    span tok = {.buf = s.buf};
+    while (len(s) && !isspace(*s.buf)) s.buf++;
+    tok.end = s.buf;
+    ret.a[idx++] = tok;
+  }
+  ret.n = idx;
+  return ret;
+}
+
+/* #json */
+typedef struct {
+  span s;
+} json;
+
+int json_is_null(json);
+
+// constructors
+json json_s(span);
+json json_n(double);
+json json_b(int);
+json json_0();
+json json_o();
+json json_a();
+json nulljson();
+
+// extraction
+span json_un_s(json);
+span json_s2s(json,span*,u8*);
+
+// extend
+void json_o_extend(json*,span,json);
+void json_a_extend(json*,json);
+
+// predicates
+int json_sp(json);
+int json_np(json);
+int json_bp(json);
+int json_0p(json);
+int json_op(json);
+int json_ap(json);
+
+// lookups
+json json_key(span, json);
+json json_index(int, json);
+
+// from spans
+json json_parse(span);
+json make_json(span);
+json json_parse_prefix(span*);
+json json_parse_prefix_string(span*);
+json json_parse_prefix_number(span*);
+json json_parse_prefix_littok(span*);
+
+// implementation
+
+int json_is_null(json j) { return !j.s.buf; }
+
+json json_s(span s) {
+  out_sav out = out2cmp();
+  json ret = {0};
+  ret.s.buf = cmp.end;
+  prt("\"");
+  for (u8* p=s.buf;p<s.end;p++) {
+    switch (*p) {
+      case '\b':
+        prt("\\b");
+      case '\f':
+        prt("\\f");
+      case '\n':
+        prt("\\n");
+        break;
+      case '\r':
+        prt("\\r");
+      case '\t':
+        prt("\\t");
+      case '"':
+        prt("\\\"");
+        break;
+      case '\\':
+        prt("\\\\");
+        break;
+      default:
+        if (iscntrl(*p)) {
+          prt("\\u%04X", *p);
+        }
+        w_char(*p);
+    }
+  }
+  prt("\"");
+  ret.s.end = cmp.end;
+  out_rst(out);
+  return ret;
+}
+
+json json_n(double n) {
+  out_sav rst = out2cmp();
+  json ret = {.s = {.buf = cmp.end }};
+  prt("%G", n);
+  ret.s.end = cmp.end;
+  out_rst(rst);
+  return ret;
+}
+
+json json_b(int b) {
+  out_sav rst = out2cmp();
+  json ret = {.s = {.buf = cmp.end }};
+  if (b) prt("true"); else prt("false");
+  ret.s.end = cmp.end;
+  out_rst(rst);
+  return ret;
+}
+
+json json_0() {
+  out_sav rst = out2cmp();
+  json ret = {.s = {.buf = cmp.end }};
+  prt("null");
+  ret.s.end = cmp.end;
+  out_rst(rst);
+  return ret;
+}
+
+json json_o() {
+  out_sav rst = out2cmp();
+  json ret = {.s = {.buf = cmp.end }};
+  prt("{}");
+  ret.s.end = cmp.end;
+  out_rst(rst);
+  return ret;
+}
+
+void json_o_extend(json *j, span key, json val) {
+  out_sav rst = out2cmp();
+  u8* keybuf = malloc(len(key));
+  u8* valbuf = malloc(len(val.s));
+  memcpy(keybuf, key.buf, len(key));
+  memcpy(valbuf, val.s.buf, len(val.s));
+  span key2 = {keybuf, keybuf + len(key)};
+  span val2 = {valbuf, valbuf + len(val.s)};
+  cmp.end = j->s.end;
+  bksp();
+  if (*(cmp.end - 1) != '{') prt(",");
+  //wrs(key2);
+  json_s(key2);
+  prt(":");
+  wrs(val2);
+  prt("}");
+  j->s.end = cmp.end;
+  free(keybuf);
+  free(valbuf);
+  out_rst(rst);
+}
+
+json json_a() {
+  out_sav rst = out2cmp();
+  json ret = {.s = {.buf = cmp.end }};
+  prt("[]");
+  ret.s.end = cmp.end;
+  out_rst(rst);
+  return ret;
+}
+
+void json_a_extend(json *a, json val) {
+  out_sav rst = out2cmp();
+  cmp.end = a->s.end;
+  bksp();
+  if (*(cmp.end - 1) != '[') prt(",");
+  wrs(val.s);
+  prt("]");
+  a->s.end = cmp.end;
+  out_rst(rst);
+}
+
+json nulljson() { return (json) {nullspan()}; }
+
+int json_sp(json j) { return j.s.buf && *j.s.buf == '"'; }
+int json_np(json j) {
+  if (!j.s.buf) return 0;
+  switch(*j.s.buf) {
+    case '-':
+    case '0':
+    case '1':
+    case '2':
+    case '3':
+    case '4':
+    case '5':
+    case '6':
+    case '7':
+    case '8':
+    case '9':
+      return 1;
+    default:
+      return 0;
+  }
+}
+int json_bp(json j) { return j.s.buf && (*j.s.buf == 't' || *j.s.buf == 'f'); }
+int json_0p(json j) { return j.s.buf && *j.s.buf == 'n'; }
+int json_op(json j) { return j.s.buf && *j.s.buf == '{'; }
+int json_ap(json j) { return j.s.buf && *j.s.buf == '['; }
+
+json json_index(int n, json a) {
+  json ret = {0};
+  a.s.buf++;
+  while (*a.s.buf != ']') {
+    skip_whitespace(&a.s);
+    ret = json_parse_prefix(&a.s);
+    if (json_is_null(ret)) return nulljson();
+    if (!n--) return ret;
+    skip_whitespace(&a.s);
+    if (*a.s.buf != ',') return nulljson();
+    a.s.buf++;
+  };
+  return nulljson();
+}
+
+json json_key(span s, json o) {
+  o.s.buf++;
+  while (*o.s.buf != '}') {
+    skip_whitespace(&o.s);
+    json key = json_parse_prefix(&o.s);
+    if (json_is_null(key)) return key;
+    skip_whitespace(&o.s);
+    if (*(o.s.buf++) != ':') return nulljson();
+    skip_whitespace(&o.s);
+    json value = json_parse_prefix(&o.s);
+    if (json_is_null(value)) return nulljson();
+    span key_s = json_s2s(key, &cmp, cmp_space + BUF_SZ);
+    if (span_eq(key_s, s)) return value;
+    skip_whitespace(&o.s);
+    if (*(o.s.buf++) != ',') return nulljson();
+    skip_whitespace(&o.s);
+  }
+  return nulljson();
+}
+
+json make_json(span s) { return (json){s}; }
+
+span json_un_s(json s) {
+  return json_s2s(s, &cmp, cmp_space + BUF_SZ);
+}
+
+/* #json_parse */
+json json_parse(span s) {
+  skip_whitespace(&s);
+  json ret = json_parse_prefix(&s);
+  skip_whitespace(&s);
+  if (empty(s)) return ret;
+  return nulljson();
+}
+
+/* #json_parse_prefix */
+json json_parse_prefix(span *input) {
+    json ret = {0};
+    //skip_whitespace(input);
+    ret.s.buf = input->buf;
+
+    char first_char = *input->buf;
+    switch (first_char) {
+        case '\"':
+            ret = json_parse_prefix_string(input);
+            break;
+        case '-':
+        case '0' ... '9':
+            ret = json_parse_prefix_number(input);
+            break;
+        case 't':
+        case 'f':
+        case 'n':
+            ret = json_parse_prefix_littok(input);
+            break;
+        case '{':
+            input->buf++; // consume '{'
+            skip_whitespace(input);
+            while (*input->buf != '}') {
+                json key = json_parse_prefix_string(input);
+                if (key.s.buf == NULL) return nulljson();
+                skip_whitespace(input);
+                if (*input->buf != ':') return nulljson();
+                input->buf++; // consume ':'
+                skip_whitespace(input);
+                json value = json_parse_prefix(input);
+                if (value.s.buf == NULL) return nulljson();
+                skip_whitespace(input);
+                if (*input->buf == ',') input->buf++; // consume ','
+                skip_whitespace(input);
+            }
+            if (*input->buf == '}') input->buf++; // consume '}'
+            else return nulljson();
+            break;
+        case '[':
+            input->buf++; // consume '['
+            skip_whitespace(input);
+            while (*input->buf != ']') {
+                json value = json_parse_prefix(input);
+                if (value.s.buf == NULL) return nulljson();
+                skip_whitespace(input);
+                if (*input->buf == ',') input->buf++; // consume ','
+                skip_whitespace(input);
+            }
+            if (*input->buf == ']') input->buf++; // consume ']'
+            else return nulljson();
+            break;
+        default:
+            return nulljson();
+    }
+    ret.s.end = input->buf;
+    return ret;
+}
+
+/* #json_s2s */
+// Utility to convert a hex digit to its integer value
+int hex_to_int(char c) {
+    if ('0' <= c && c <= '9') return c - '0';
+    if ('a' <= c && c <= 'f') return 10 + c - 'a';
+    if ('A' <= c && c <= 'F') return 10 + c - 'A';
+    return -1; // Error case, should never happen if input is correct
+}
+
+// Function to parse unicode sequence and write as UTF-8
+void write_utf8_from_hex(u8 **buf, char *hex) {
+    int codepoint = (hex_to_int(hex[0]) << 12) | (hex_to_int(hex[1]) << 8) |
+                    (hex_to_int(hex[2]) << 4) | hex_to_int(hex[3]);
+    if (codepoint < 0x80) {
+        *(*buf)++ = codepoint;
+    } else if (codepoint < 0x800) {
+        *(*buf)++ = 192 + (codepoint >> 6);
+        *(*buf)++ = 128 + (codepoint & 63);
+    } else if (codepoint < 0x10000) {
+        *(*buf)++ = 224 + (codepoint >> 12);
+        *(*buf)++ = 128 + ((codepoint >> 6) & 63);
+        *(*buf)++ = 128 + (codepoint & 63);
+    } else {
+        *(*buf)++ = 240 + (codepoint >> 18);
+        *(*buf)++ = 128 + ((codepoint >> 12) & 63);
+        *(*buf)++ = 128 + ((codepoint >> 6) & 63);
+        *(*buf)++ = 128 + (codepoint & 63);
+    }
+}
+
+span json_s2s(json j, span *buffer, u8 *max) {
+    u8 *buf = buffer->end;
+    span ret = { buf, buf };
+
+    if (*j.s.buf != '\"') {
+        prt("Expected starting quote in JSON string\n");
+        flush();
+        exit(1);
+    }
+
+    for (u8 *s = j.s.buf + 1; s < j.s.end && *s != '\"'; s++) {
+        if (buf >= max) {
+            prt("Buffer overflow detected\n");
+            flush();
+            exit(1);
+        }
+        if (*s == '\\') {
+            s++;
+            switch (*s) {
+                case 'b': *buf++ = '\b'; break;
+                case 'f': *buf++ = '\f'; break;
+                case 'n': *buf++ = '\n'; break;
+                case 'r': *buf++ = '\r'; break;
+                case 't': *buf++ = '\t'; break;
+                case '\"': case '\\': case '/': *buf++ = *s; break;
+                case 'u':
+                    if (s + 4 >= j.s.end) {
+                        prt("Incomplete unicode escape in JSON string\n");
+                        flush();
+                        exit(1);
+                    }
+                    write_utf8_from_hex(&buf, (char *)(s + 1));
+                    s += 4;
+                    break;
+                default:
+                    prt("Unknown escape sequence in JSON string\n");
+                    flush();
+                    exit(1);
+            }
+        } else {
+            *buf++ = *s;
+        }
+    }
+    ret.end = buf;
+    buffer->end = buf;
+    return ret;
+}
+
+
+/* #json_parse_prefix_string */
+json json_parse_prefix_string(span *input) {
+    if (empty(*input) || *input->buf != '\"') return nulljson();
+    advance1(input);
+    span start = *input;
+    while (!empty(*input) && *input->buf != '\"') {
+        if (*input->buf == '\\') {
+            advance1(input);
+            if (empty(*input)) return nulljson();
+            if (*input->buf == 'u') {
+                for (int i = 0; i < 4; i++) {
+                    advance1(input);
+                    if (empty(*input) || !isxdigit(*input->buf)) return nulljson();
+                }
+            } else if (strchr("bfnrt\"\\/", *input->buf) == NULL) {
+                return nulljson();
+            }
+        }
+        advance1(input);
+    }
+    if (empty(*input)) return nulljson();
+    advance1(input);
+    return make_json((span){start.buf - 1, input->buf});
+}
+
+
+/* #json_parse_prefix_number */
+json json_parse_prefix_number(span *input) {
+  json ret = {0};
+  ret.s.buf = input->buf;
+
+  if (*input->buf == '-') advance1(input);
+
+  if (!isdigit(*input->buf)) return nulljson();
+  while (isdigit(*input->buf)) input->buf++;
+
+  if (*input->buf == '.') {
+    advance1(input);
+    if (!isdigit(*input->buf)) return nulljson();
+    while(isdigit(*input->buf)) input->buf++;
+  }
+  if (*input->buf == 'e' || *input->buf == 'E') {
+    advance1(input);
+    if (*input->buf == '+' || *input->buf == '-') {
+      advance1(input);
+    }
+    if (!isdigit(*input->buf)) return nulljson();
+    while (isdigit(*input->buf)) {
+      advance1(input);
+    }
+  }
+
+  ret.s.end = input->buf;
+  return ret;
+}
+
+/* #json_parse_prefix_littok */
+json json_parse_prefix_littok(span *input) {
+  span inner;
+  if (!empty(inner = consume_prefix(S("true"), input))) return (json){inner};
+  if (!empty(inner = consume_prefix(S("false"), input))) return (json){inner};
+  if (!empty(inner = consume_prefix(S("null"), input))) return (json){inner};
+  return nulljson();
+}
+
+
+/* #sio */
+
+/* #parserpattern */
+
+/* #jsonparser */
+
+/* #spanspan */
+span spanspan(span haystack, span needle) {
+  if (empty(needle)) return (span){haystack.buf, haystack.buf};
+
+  if (len(needle) > len(haystack)) return nullspan();
+
+  void *result = memmem(haystack.buf, len(haystack), needle.buf, len(needle));
+
+  if (!result) return (span){haystack.end, haystack.end};
+
+  return (span){result, result + len(needle)};
+}
+
+// Checks if a given span is contained in a spans.
+// Returns 1 if found, 0 otherwise.
+// Actually a more useful function would return an index or -1, so we don't need another function when we care where the thing is.
+int is_one_of(span x, spans ys) {
+  for (int i = 0; i < ys.n; ++i) {
+    if (span_eq(x, ys.a[i])) {
+      return 1; // Found
+    }
+  }
+  return 0; // Not found
+}
+
+int index_of(span x, spans ys) {
+  for (int i=0; i<ys.n; i++) {
+    if (span_eq(ys.a[i], x)) return i;
+  }
+  return -1;
+}
+
+
+/* #inp_compl */
+span inp_compl() {
+  span compl;
+  compl.buf = inp.end;
+  compl.end = input_space + BUF_SZ;
+  return compl;
+}
+
+span cmp_compl() {
+  span compl;
+  compl.buf = cmp.end;
+  compl.end = cmp_space + BUF_SZ;
+  return compl;
+}
+
+span out_compl() {
+  span compl;
+  compl.buf = out.end;
+  compl.end = output_space + BUF_SZ;
+  return compl;
+}
+
+
+/* #config_fields */
 #define CONFIG_FIELDS \
     X(cmprdir) \
     X(buildcmd) \
@@ -14,8 +1362,7 @@
     X(debug)
 
 
-
-
+/* #checksum_setup */
 typedef struct {
     u64 __u;
 } checksum;
@@ -23,6 +1370,7 @@ typedef struct {
 MAKE_ARENA(checksum, checksums, 256)
 
 
+/* #projfiles */
 typedef struct {
     span path;
     span language;
@@ -32,6 +1380,7 @@ typedef struct {
 
 MAKE_ARENA(projfile, projfiles, 256)
 
+/* #rope */
 #define SEGMENT_SIZE (32 * 1024 * 1024)
 
 typedef struct rope_segment {
@@ -95,6 +1444,7 @@ span rope_alloc_atleast(rope *r, size_t size) {
 }
 
 
+/* #rev_info */
 typedef struct {
     span contents;
     checksums sorted_line_cksums;
@@ -112,6 +1462,7 @@ typedef struct {
 } rev_info;
 
 
+/* #events_types */
 typedef struct {
     span event_str;
     unsigned char strength;
@@ -119,6 +1470,7 @@ typedef struct {
 
 MAKE_ARENA(event_entry, event_entries, 256)
 
+/* #ui_state */
 typedef struct ui_state {
     projfiles files;
     span current_language;
@@ -152,6 +1504,7 @@ typedef struct ui_state {
 ui_state* state;
 
 
+/* #events_functions */
 span read_whole_file(span filename) {
     if (!readable_file(filename)) return (span){0};
     return read_file_into_cmp(filename);
@@ -214,7 +1567,7 @@ void event_add_internal(span event_str, unsigned char strength) {
             return;
         }
     }
-    
+
     // Not found, add new event
     event_entry e;
     e.event_str = event_str;
@@ -230,6 +1583,36 @@ void event_T0() {
 void event_add(span event_str, unsigned char strength) {
     event_add_internal(event_str, strength);
     event_save_T();
+
+    // Check recursion depth (max 1 for now - cautious approach)
+    char *depth_str = getenv("CMPR_PATTERN_DEPTH");
+    int depth = depth_str ? atoi(depth_str) : 0;
+    if (depth >= 1) return;  // Skip patterns if already recursing
+
+    // Set environment variables for scripts/patterns
+    char event_buf[4096];
+    int event_len = len(event_str);
+    if (event_len >= (int)sizeof(event_buf)) event_len = sizeof(event_buf) - 1;
+    memcpy(event_buf, event_str.buf, event_len);
+    event_buf[event_len] = '\0';
+    setenv("CMPR_EVENT", event_buf, 1);
+
+    char strength_buf[16];
+    snprintf(strength_buf, sizeof(strength_buf), "%d", strength);
+    setenv("CMPR_STRENGTH", strength_buf, 1);
+
+    char new_depth[16];
+    snprintf(new_depth, sizeof(new_depth), "%d", depth + 1);
+    setenv("CMPR_PATTERN_DEPTH", new_depth, 1);
+
+    system("scripts/patterns");
+
+    // Reset depth after return
+    if (depth_str) {
+        setenv("CMPR_PATTERN_DEPTH", depth_str, 1);
+    } else {
+        unsetenv("CMPR_PATTERN_DEPTH");
+    }
 }
 
 void event_memorize() {
@@ -288,7 +1671,7 @@ void event_recall() {
 
     // Save current T events as query (before we potentially overwrite them)
     event_entries query_events = state->events;
-    
+
     // 2. Get list of snapshot files
     span events_dir = prs("%.*s/events", len(state->cmprdir), state->cmprdir.buf);
     spans files = dir_listing(events_dir);
@@ -300,10 +1683,10 @@ void event_recall() {
 
     // 3. Search snapshots in reverse chronological order (newest first)
     for (int i = (int)files.n - 1; i >= 0; i--) {
-        span snapshot_path = prs("%.*s/%.*s", len(events_dir), events_dir.buf, 
+        span snapshot_path = prs("%.*s/%.*s", len(events_dir), events_dir.buf,
                                   len(files.a[i]), files.a[i].buf);
         span content = read_whole_file(snapshot_path);
-        
+
         if (empty(content)) continue;
 
         // Parse snapshot into temporary storage
@@ -311,10 +1694,10 @@ void event_recall() {
         span saved_cmp = cmp;
         event_entries saved_state_events = state->events;
         state->events = snapshot_events;
-        
+
         event_parse_content(content);
         snapshot_events = state->events;
-        
+
         // Check if any query event matches any snapshot event
         int found_match = 0;
         for (size_t qi = 0; qi < query_events.n; qi++) {
@@ -345,6 +1728,20 @@ void event_recall() {
     flush_exit(1);
 }
 
+
+void event_query(span event_str) {
+    for (size_t i = 0; i < state->events.n; i++) {
+        if (span_eq(state->events.a[i].event_str, event_str)) {
+            prt("%d\n", state->events.a[i].strength);
+            flush();
+            return;
+        }
+    }
+    prt("0\n");
+    flush();
+}
+
+/* #event_parse_sn */
 void event_parse_sn(span content) {
     state->events.n = 0;
 
@@ -395,6 +1792,7 @@ void event_parse_sn(span content) {
     }
 }
 
+/* #network_ret */
 typedef struct {
   int success;
   span response;
@@ -402,6 +1800,7 @@ typedef struct {
 } network_ret;
 
 
+/* #sbv_state */
 typedef struct {
     int *revblock_indices;
     int max_index;
@@ -411,6 +1810,7 @@ typedef struct {
 } sbv_state;
 
 
+/* #partials */
 typedef enum {
     PARTIAL_SP_SP,
     PARTIAL_SP
@@ -458,6 +1858,7 @@ void apply_partial(Partial p, span arg) {
 
 typedef Partial llm_message_handler;
 
+/* #all_functions */
 #include "fdecls.h"
 
  /*
@@ -468,12 +1869,10 @@ void finalize_search();
 void search_forward();
 void search_backward();
 int find_block(span); // find first block containing text
-int block_by_id(span); // find a block by id (without hash char)
 
 // ex commands
 void start_ex();
 void handle_ex_command();
-void bootstrap();
 void addfile(span);
 void addlib(span);
 void ex_help();
@@ -503,6 +1902,7 @@ int count_blocks();
 void clear_display();
 */
 
+/* #ingest_functions */
 void get_code(); // read and index current code
 void get_revs(); // read and index revs
 spans find_blocks(span); // find the blocks in a file
@@ -512,6 +1912,7 @@ void index_block_ids();
 void ingest(); // updates everything that needs to be updated after code has changed
 
 
+/* #set_default_clipboard_commands */
 char* detect_os() {
     #ifdef _WIN32
         return "Windows";
@@ -555,6 +1956,7 @@ void set_default_clipboard_commands() {
 }
 
 
+/* #main */
 int main(int argc, char** argv) {
     ui_state stack_state = (ui_state){0};
     state = &stack_state;
@@ -566,6 +1968,7 @@ int main(int argc, char** argv) {
 }
 
 
+/* #init */
 void init() {
     init_spans_ioc(1UL<<30, 1UL<<30, 1UL<<30);
 
@@ -587,6 +1990,7 @@ void init() {
 }
 
 
+/* #read_ */
 void read_(int argc, char** argv) {
     clock_gettime(CLOCK_REALTIME, &state->now);
     handle_args(argc, argv);
@@ -596,6 +2000,7 @@ void read_(int argc, char** argv) {
     get_code();
 }
 
+/* #call_llm */
 void call_llm(span model, json messages, llm_message_handler cb) {
     network_ret ret;
     int is_gpt = starts_with(model, S("gpt")) || span_eq(model, S("llama.cpp"));
@@ -627,6 +2032,7 @@ void call_llm(span model, json messages, llm_message_handler cb) {
 }
 
 
+/* #read_openai_key */
 void read_openai_key() {
     char path[PATH_MAX];
     struct stat st;
@@ -642,6 +2048,7 @@ void read_openai_key() {
 }
 
 
+/* #read_anthropic_key */
 void read_anthropic_key() {
     char path[PATH_MAX];
     struct stat st;
@@ -657,13 +2064,16 @@ void read_anthropic_key() {
 }
 
 
+/* #filename_template */
 span filename_template(span template) {
     spans vars = filename_variables();
     return expand_template(template, vars);
 }
 
 
+/* #assoc_spans */
 
+/* #assoc_spans_lookup */
 span assoc_spans_lookup(spans assoc_list, span key) {
     for (size_t i = 0; i < assoc_list.n / 2; ++i) {
         if (span_eq(assoc_list.a[i*2], key)) {
@@ -674,6 +2084,7 @@ span assoc_spans_lookup(spans assoc_list, span key) {
 }
 
 
+/* #filename_variables */
 spans filename_variables() {
     spans vars = spans_alloc(4);
 
@@ -695,6 +2106,7 @@ spans filename_variables() {
 }
 
 
+/* #call_gpt */
 network_ret call_gpt(json messages, span model) {
     span base_filename, req_filename, resp_filename, err_filename;
     char timestr[20];
@@ -733,6 +2145,7 @@ network_ret call_gpt(json messages, span model) {
 }
 
 
+/* #call_gpt_curl */
 network_ret call_gpt_curl(span req, span resp, span err) {
     span curl_cmd = S("curl");
     if (!empty(state->curlbin)) {
@@ -768,6 +2181,7 @@ network_ret call_gpt_curl(span req, span resp, span err) {
 }
 
 
+/* #call_ollama */
 network_ret call_ollama(json messages, span model) {
     json j = json_o();
     json_o_extend(&j, S("messages"), messages);
@@ -794,6 +2208,7 @@ network_ret call_ollama(json messages, span model) {
 }
 
 
+/* #call_ollama_curl */
 network_ret call_ollama_curl(span req, span resp, span err) {
     span curl_bin = empty(state->curlbin) ? S("curl") : state->curlbin;
     char cmd[1024]; 
@@ -820,6 +2235,7 @@ network_ret call_ollama_curl(span req, span resp, span err) {
 }
 
 
+/* #call_anthropic */
 network_ret call_anthropic(json messages, span model) {
     json j = json_o();
     json_o_extend(&j, S("messages"), messages);
@@ -836,6 +2252,7 @@ network_ret call_anthropic(json messages, span model) {
 }
 
 
+/* #call_anthropic_curl */
 network_ret call_anthropic_curl(span req, span resp, span err) {
     network_ret ret = {0};
     if (empty(state->anthropic_key)) {
@@ -872,6 +2289,7 @@ network_ret call_anthropic_curl(span req, span resp, span err) {
 }
 
 
+/* #print_config */
 void print_config() {
     #define X(name) prt(#name ": %.*s\n", len(state->name), state->name.buf);
     CONFIG_FIELDS
@@ -880,6 +2298,7 @@ void print_config() {
 }
 
 
+/* #print_bootstrap */
 // Forward declaration for function generated in bootstrap_content.c
 span get_bootstrap_content_span();
 
@@ -889,9 +2308,12 @@ void print_bootstrap() {
     flush();
 }
 
+/* #argtable */
 
+/* #handle_args */
 void handle_args(int argc, char **argv) {
 
+/* #handle_args_2 */
 int ind_conf = 0;
 	int ind_print_conf = 0;
 	int ind_print_bootstrap = 0;
@@ -919,6 +2341,7 @@ int ind_conf = 0;
 	int ind_T0 = 0;
 	int ind_event = 0;
 	int ind_strength = 0;
+	int ind_query = 0;
 	int ind_memorize = 0;
 	int ind_recall = 0;
 	int ind_T = 0;
@@ -930,6 +2353,9 @@ int ind_conf = 0;
 	int ind_wants_dashboard = 0;
 	int ind_event_report = 0;
 	int ind_export_docs = 0;
+	int ind_snapshot_join = 0;
+	int ind_learn = 0;
+	int ind_log_stochastic_count_joint = 0;
 	int ind_file_argument = 0;
 
 	char *conf_filepath = NULL;
@@ -949,10 +2375,16 @@ int ind_conf = 0;
 	char *arg_replace_code = NULL;
 	char *event_string = NULL;
 	char *event_strength_str = NULL;
+	char *query_string = NULL;
+	char *arg_snapshot_join_es1 = NULL;
+	char *arg_snapshot_join_es2 = NULL;
+	char *arg_learn_es1 = NULL;
+	char *arg_learn_es2 = NULL;
 	char *file_argument = NULL;
 	
 	int action_arg = 0;
 
+/* #handle_args_3 */
 for (int i = 1; i < argc; i++) {
 		char *arg = argv[i];
 		
@@ -1046,12 +2478,30 @@ for (int i = 1; i < argc; i++) {
 			ind_strength = 1;
 			if (i + 1 >= argc) { prt("Missing <value> argument for --strength\n"); flush_exit(1); }
 			event_strength_str = argv[++i];
+		} else if (strcmp(arg, "--query") == 0) {
+			ind_query = 1;
+			if (i + 1 >= argc) { prt("Missing <string> argument for --query\n"); flush_exit(1); }
+			query_string = argv[++i];
 		} else if (strcmp(arg, "--memorize") == 0) {
 			ind_memorize = 1;
 		} else if (strcmp(arg, "--recall") == 0) {
 			ind_recall = 1;
 		} else if (strcmp(arg, "--T") == 0) {
 			ind_T = 1;
+		} else if (strcmp(arg, "--snapshot-join") == 0) {
+			ind_snapshot_join = 1;
+			if (i + 1 >= argc) { prt("Missing <ES1> argument for --snapshot-join\n"); flush_exit(1); }
+			arg_snapshot_join_es1 = argv[++i];
+			if (i + 1 >= argc) { prt("Missing <ES2> argument for --snapshot-join\n"); flush_exit(1); }
+			arg_snapshot_join_es2 = argv[++i];
+		} else if (strcmp(arg, "--learn") == 0) {
+			ind_learn = 1;
+			if (i + 1 >= argc) { prt("Missing <ES1> argument for --learn\n"); flush_exit(1); }
+			arg_learn_es1 = argv[++i];
+			if (i + 1 >= argc) { prt("Missing <ES2> argument for --learn\n"); flush_exit(1); }
+			arg_learn_es2 = argv[++i];
+		} else if (strcmp(arg, "--log-stochastic-count-joint") == 0) {
+			ind_log_stochastic_count_joint = 1;
 		} else if (strcmp(arg, "--map-error") == 0) {
 			ind_map_error = 1;
 		} else if (strcmp(arg, "--test-block-map") == 0) {
@@ -1078,6 +2528,7 @@ for (int i = 1; i < argc; i++) {
                 }
 	}
 
+/* #handle_args_4 */
 if (ind_file_argument) {
                 state->manual_filename = S(file_argument);
         }
@@ -1135,7 +2586,10 @@ if (ind_file_argument) {
 	             ind_agents_wants +
 	             ind_wants_dashboard +
 	             ind_event_report +
-	             ind_export_docs;
+	             ind_export_docs +
+	             ind_snapshot_join +
+	             ind_learn +
+	             ind_log_stochastic_count_joint;
 	
 	if (action_arg > 1) {
 		prt("Error: Only one action argument may be used at a time.\n");
@@ -1143,7 +2597,7 @@ if (ind_file_argument) {
 	}
 	
 	// Get code database if needed (for most commands)
-	if (action_arg > 0 && !ind_checksum && !ind_wants) {
+	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint) {
 		get_code();
 	}
 	
@@ -1185,11 +2639,6 @@ if (ind_file_argument) {
 			flush_exit(1);
 		}
 		expand_block(idx);
-
-	if (ind_export_docs) {
-		handle_export_docs();
-		flush_exit(0);
-	}
 		flush_exit(0);
 	}
 	
@@ -1276,8 +2725,23 @@ if (ind_file_argument) {
 		flush_exit(0);
 	}
 	
+	if (ind_snapshot_join) {
+		handle_snapshot_join(S(arg_snapshot_join_es1), S(arg_snapshot_join_es2));
+		flush_exit(0);
+	}
+
+	if (ind_learn) {
+		handle_learn(S(arg_learn_es1), S(arg_learn_es2));
+		flush_exit(0);
+	}
+
+	if (ind_log_stochastic_count_joint) {
+		handle_log_stochastic_count_joint();
+		flush_exit(0);
+	}
+	
 	// Event system commands (have special validation)
-	if (ind_T0 || ind_event || ind_strength || ind_memorize || ind_recall || ind_T) {
+	if (ind_T0 || ind_event || ind_strength || ind_query || ind_memorize || ind_recall || ind_T) {
 		if (ind_event && !ind_strength) {
 			prt("Error: --event requires --strength\n");
 			flush_exit(1);
@@ -1287,9 +2751,9 @@ if (ind_file_argument) {
 			flush_exit(1);
 		}
 		
-		int event_actions = ind_T0 + ind_event + ind_memorize + ind_recall + ind_T;
+		int event_actions = ind_T0 + ind_event + ind_query + ind_memorize + ind_recall + ind_T;
 		if (event_actions > 1) {
-			prt("Error: --T0, --event, --memorize, --recall, and --T cannot be combined\n");
+			prt("Error: --T0, --event, --query, --memorize, --recall, and --T cannot be combined\n");
 			flush_exit(1);
 		}
 		
@@ -1319,6 +2783,11 @@ if (ind_file_argument) {
 			event_print_T();
 			flush_exit(0);
 		}
+		if (ind_query) {
+			span query_span = { (u8 *)query_string, (u8 *)query_string + strlen(query_string) };
+			event_query(query_span);
+			flush_exit(0);
+		}
 	}
 	
 	if (ind_map_error) {
@@ -1326,10 +2795,10 @@ if (ind_file_argument) {
 		flush_exit(1);
 	}
 	
-	if (ind_test_block_map) {
-		block_map_selftest();
-		flush_exit(0);
-	}
+// if (ind_test_block_map) {
+// block_map_selftest();
+// flush_exit(0);
+// }
 	
 	if (ind_wants) {
 		handle_wants();
@@ -1364,7 +2833,127 @@ if (ind_file_argument) {
 	// No action arg - return to enter interactive mode
 }
 
+/* #handle_snapshot_join */
+void handle_snapshot_join(span es1, span es2) {
+    // Build filter paths
+    char es1_path[256], es2_path[256];
+    snprintf(es1_path, sizeof(es1_path), ".cmpr/es/%.*s", len(es1), es1.buf);
+    snprintf(es2_path, sizeof(es2_path), ".cmpr/es/%.*s", len(es2), es2.buf);
+    
+    // Check filters exist and are executable
+    if (access(es1_path, X_OK) != 0) {
+        prt("Error: Event space filter not found: %s\n", es1_path);
+        flush();
+        exit(1);
+    }
+    if (access(es2_path, X_OK) != 0) {
+        prt("Error: Event space filter not found: %s\n", es2_path);
+        flush();
+        exit(1);
+    }
+    
+    // Open events directory
+    DIR *dir = opendir(".cmpr/events");
+    if (!dir) {
+        flush();
+        return;
+    }
+    
+    // Collect snapshot filenames
+    char *snapshots[4096];
+    int n = 0;
+    struct dirent *de;
+    while ((de = readdir(dir)) != NULL && n < 4096) {
+        if (de->d_name[0] == '.') continue;
+        snapshots[n++] = strdup(de->d_name);
+    }
+    closedir(dir);
+    
+    if (n == 0) {
+        flush();
+        return;
+    }
+    
+    // Sort newest first (reverse strcmp)
+    for (int i = 0; i < n - 1; i++) {
+        for (int j = i + 1; j < n; j++) {
+            if (strcmp(snapshots[i], snapshots[j]) < 0) {
+                char *tmp = snapshots[i];
+                snapshots[i] = snapshots[j];
+                snapshots[j] = tmp;
+            }
+        }
+    }
+    
+    // Process each snapshot
+    for (int i = 0; i < n; i++) {
+        char snap_path[512];
+        snprintf(snap_path, sizeof(snap_path), ".cmpr/events/%s", snapshots[i]);
+        
+        // Run through ES1 filter
+        char cmd1[1024];
+        snprintf(cmd1, sizeof(cmd1), "cat '%s' | '%s'", snap_path, es1_path);
+        FILE *fp1 = popen(cmd1, "r");
+        char *es1_lines[1024];
+        int es1_n = 0;
+        if (fp1) {
+            char buf[4096];
+            while (fgets(buf, sizeof(buf), fp1) && es1_n < 1024) {
+                size_t l = strlen(buf);
+                if (l > 0 && buf[l-1] == '\n') buf[l-1] = 0;
+                if (buf[0]) es1_lines[es1_n++] = strdup(buf);
+            }
+            pclose(fp1);
+        }
+        
+        // Run through ES2 filter
+        char cmd2[1024];
+        snprintf(cmd2, sizeof(cmd2), "cat '%s' | '%s'", snap_path, es2_path);
+        FILE *fp2 = popen(cmd2, "r");
+        char *es2_lines[1024];
+        int es2_n = 0;
+        if (fp2) {
+            char buf[4096];
+            while (fgets(buf, sizeof(buf), fp2) && es2_n < 1024) {
+                size_t l = strlen(buf);
+                if (l > 0 && buf[l-1] == '\n') buf[l-1] = 0;
+                if (buf[0]) es2_lines[es2_n++] = strdup(buf);
+            }
+            pclose(fp2);
+        }
+        
+        // Check for strength 255 in each
+        int es1_has_255 = 0, es2_has_255 = 0;
+        for (int j = 0; j < es1_n; j++) {
+            char *p = strrchr(es1_lines[j], ' ');
+            if (p && atoi(p+1) == 255) { es1_has_255 = 1; break; }
+        }
+        for (int j = 0; j < es2_n; j++) {
+            char *p = strrchr(es2_lines[j], ' ');
+            if (p && atoi(p+1) == 255) { es2_has_255 = 1; break; }
+        }
+        
+        // Output if both have 255
+        if (es1_has_255 && es2_has_255) {
+            prt("%s\n", snapshots[i]);
+            for (int j = 0; j < es1_n; j++) prt("%s\n", es1_lines[j]);
+            for (int j = 0; j < es2_n; j++) prt("%s\n", es2_lines[j]);
+            prt("\n");
+        }
+        
+        // Free lines
+        for (int j = 0; j < es1_n; j++) free(es1_lines[j]);
+        for (int j = 0; j < es2_n; j++) free(es2_lines[j]);
+    }
+    
+    // Free snapshots
+    for (int i = 0; i < n; i++) free(snapshots[i]);
+    flush();
+}
 
+/* #help_text_nl2pl */
+
+/* #print_physical_lines */
 void print_physical_lines(span block, int lines_to_print) {
     while (!empty(block) && lines_to_print > 0) {
         span line = next_line(&block); // Get the next logical line from the block
@@ -1400,6 +2989,7 @@ void print_physical_lines(span block, int lines_to_print) {
     }
 }
 
+/* #print_files_blocks */
 void print_files_blocks() {
     for (int f = 0; f < state->files.n; f++) {
         projfile *file = &state->files.a[f];
@@ -1421,12 +3011,14 @@ void print_files_blocks() {
     flush();
 }
 
+/* #clear_display */
 void clear_display() {
     prt("\033[2J\033[H"); // Escape codes to clear the screen and move the cursor to the top-left corner
     flush();
 }
 
 
+/* #block_sanity_check */
 void block_sanity_check(span file, spans blocks) {
     if (empty(file)) {
         if (blocks.n != 1 || !empty(blocks.a[0])) {
@@ -1462,6 +3054,7 @@ void block_sanity_check(span file, spans blocks) {
 }
 
 
+/* #inp_sanity_checks */
 void inp_sanity_checks() {
     // Check blocks tile inp
     if (state->blocks.n == 0) {
@@ -1534,8 +3127,9 @@ void inp_sanity_checks() {
 }
 
 
+/* #jk_implementation */
 
-
+/* #find_all_blocks */
 void find_all_blocks() {
    state->blocks = spans_alloc(256);
 
@@ -1555,6 +3149,7 @@ void find_all_blocks() {
    }
 }
 
+/* #find_all_lines */
 void find_all_lines() {
     span input_copy = inp;
     int line_count = 0;
@@ -1573,6 +3168,7 @@ void find_all_lines() {
 }
 
 
+/* #selected_checksum */
 checksum selected_checksum(span input) {
     static const char key[16] = "ABCDEFGHIJKLMNOP";
     u64 result;
@@ -1581,6 +3177,7 @@ checksum selected_checksum(span input) {
 }
 
 
+/* #get_code */
 void get_code() {
     for (int i = 0; i < state->files.n; i++) {
         state->files.a[i].contents = read_file_S_into_span(state->files.a[i].path, inp_compl());
@@ -1594,6 +3191,7 @@ void get_code() {
 }
 
 
+/* #ingest */
 void ingest() {
     find_all_blocks();
     find_all_lines();
@@ -1602,8 +3200,11 @@ void ingest() {
 }
 
 
+/* #blocks */
 
+/* #files */
 
+/* #index_block_ids */
 void index_block_ids() {
     int id_count = 0;
     for (int i = 0; i < state->blocks.n; i++) {
@@ -1638,6 +3239,7 @@ void index_block_ids() {
 }
 
 
+/* #ids_for_block */
 spans ids_for_block(span block) {
     int id_count = 0;
     span block_copy = block;
@@ -1668,7 +3270,9 @@ spans ids_for_block(span block) {
 }
 
 
+/* #block_idx */
 
+/* #block_for_span */
 int block_for_span(span s) {
     for (int i = 0; i < state->blocks.n; i++) {
         if (contains_ptr(state->blocks.a[i], s)) {
@@ -1679,6 +3283,7 @@ int block_for_span(span s) {
 }
 
 
+/* #id_for_block */
 span id_for_block(span block) {
     span line = next_line(&block);
     spans tokens = split_whitespace(line);
@@ -1691,11 +3296,14 @@ span id_for_block(span block) {
 }
 
 
+
+/* #current_block_checksum */
 checksum current_block_checksum() {
     return selected_checksum(state->blocks.a[state->curr_block_idx]);
 }
 
 
+/* #set_current_block */
 void set_current_block(int idx) {
     if (idx < 0 || idx >= state->blocks.n) {
         prt("Error: Block index %d out of range.\n", idx);
@@ -1711,6 +3319,7 @@ void set_current_block(int idx) {
 }
 
 
+/* #block_id_jump */
 void block_id_jump() {
     span current_block = state->blocks.a[state->curr_block_idx];
     span id = id_for_block(current_block);
@@ -1729,6 +3338,7 @@ void block_id_jump() {
 }
 
 
+/* #get_revdir */
 span get_revdir() {
     static char buf[2048] = {0};
     span revs = S("/revs");
@@ -1738,7 +3348,11 @@ span get_revdir() {
 }
 
 
+/* #complain_and_exit */
 
+/* #complain_and_prompt */
+
+/* #get_revs */
 void get_revs() {
     span revdir = get_revdir();
     DIR *dir = opendir(s(revdir));
@@ -1808,6 +3422,7 @@ void get_revs() {
 }
 
 
+/* #read_file_into */
 span read_file_into(span filename, rope *r) {
     char buf[PATH_MAX] = {0};
     s_buffer(buf, PATH_MAX, filename);
@@ -1838,6 +3453,7 @@ span read_file_into(span filename, rope *r) {
 }
 
 
+/* #get_revs_2 */
 void get_revs_2() {
     clear_display();
     time_t latest_rev_timestamp;
@@ -1896,6 +3512,9 @@ void get_revs_2() {
 
 
 
+/* #revs_cache_design */
+
+/* #get_revs_cache_get */
 int get_revs_cache_get(span bname, span rev_contents) {
     u8* cmp_end_backup = cmp.end;
     span rev_cache_path = prs("%.*s/cache/v8/revs/%.*s", len(state->cmprdir), state->cmprdir.buf, len(bname), bname.buf);
@@ -1907,6 +3526,7 @@ int get_revs_cache_get(span bname, span rev_contents) {
 }
 
 
+/* #scan_checksum */
 checksum scan_checksum(span input) {
     if (len(input) < 16) {
         prt("Input too short for checksum\n");
@@ -1929,6 +3549,8 @@ checksum scan_checksum(span input) {
 }
 
 
+
+/* #scan_int */
 int scan_int(span* sp) {
     span s = *sp;
     u8* start = s.buf;
@@ -1949,6 +3571,7 @@ int scan_int(span* sp) {
 }
 
 
+/* #parse_int */
 int parse_int(span s) {
     if (empty(s) || !isdigit(*s.buf)) {
         prt("Error: initial characters are not digits\n");
@@ -1959,26 +3582,22 @@ int parse_int(span s) {
 }
 
 
+
+/* #scan_hex */
 int scan_hex(span* s) {
-    span orig = *s;
-    while (s->buf < s->end && 
-           ((*s->buf >= '0' && *s->buf <= '9') || 
-            (*s->buf >= 'a' && *s->buf <= 'f') || 
-            (*s->buf >= 'A' && *s->buf <= 'F'))) {
-        advance1(s);
-    }
-    if (s->buf == orig.buf) {
+    char* start = (char*)s->buf;
+    char* endptr;
+    int result = strtol(start, &endptr, 16);
+    if (endptr == start) {
         prt("Invalid hex input\n");
         flush();
         exit(1);
     }
-    char* endptr;
-    int result = strtol((char*)orig.buf, &endptr, 16);
     s->buf = (u8*)endptr;
     return result;
 }
 
-
+/* #parse_hex */
 int parse_hex(span s) {
     if (empty(s)) {
         prt("Error: Empty span provided to parse_hex\n");
@@ -1996,6 +3615,7 @@ int parse_hex(span s) {
 }
 
 
+/* #parse_revfile_cache */
 #define SECTION_BLOCKS 0
 #define SECTION_SCS 1
 #define SECTION_IDS 2
@@ -2018,7 +3638,7 @@ int parse_revfile_cache(span bname, span rev_cache, span rev_contents) {
     }
   }
 
-  //spans_arena_push();
+  time_t timestamp = parse_rev_fname(bname);
 
   while (!empty(rev_cache)) {
     int section_type, block_number;
@@ -2026,7 +3646,6 @@ int parse_revfile_cache(span bname, span rev_cache, span rev_contents) {
     parse_section_header_line(&failure, &section_type, &block_number, &rev_cache);
     if (section_type < 0) return 0;
     int rev_block_idx = n_existing_revblocks + block_number - 1;
-    time_t timestamp = parse_rev_fname(bname);
     switch (section_type) {
       case SECTION_BLOCKS:
         parse_blocks_lines(&failure, timestamp, n_blocks, rev_contents, &rev_cache);
@@ -2041,11 +3660,10 @@ int parse_revfile_cache(span bname, span rev_cache, span rev_contents) {
     if (failure) return 0;
   }
 
-  //spans_arena_pop();
   return 1;
 }
 
-
+/* #parse_section_header_line */
 void parse_section_header_line(int *failure, int *section_type, int *block_number, span *rev_cache) {
     span line = next_line(rev_cache);
     *failure = 0;
@@ -2069,6 +3687,7 @@ void parse_section_header_line(int *failure, int *section_type, int *block_numbe
 }
 
 
+/* #parse_blocks_lines */
 void parse_blocks_lines(int *failure, time_t timestamp, int n_blocks, span rev_contents, span* rev_cache) {
     span line;
     int lines_handled = 0;
@@ -2118,6 +3737,7 @@ void parse_blocks_lines(int *failure, time_t timestamp, int n_blocks, span rev_c
 }
 
 
+/* #parse_scs_lines */
 void parse_scs_lines(int *failure, int rev_block_idx, span* rev_cache) {
     span copy = *rev_cache;
     int num_lines = 0;
@@ -2139,6 +3759,8 @@ void parse_scs_lines(int *failure, int rev_block_idx, span* rev_cache) {
 }
 
 
+
+/* #parse_ids_lines */
 void parse_ids_lines(int *failure, int rev_block_idx, span* rev_cache) {
     span cache_copy = *rev_cache;
     int id_count = 0;
@@ -2174,6 +3796,9 @@ void parse_ids_lines(int *failure, int rev_block_idx, span* rev_cache) {
 }
 
 
+
+
+/* #get_revs_cache_put */
 void get_revs_cache_put(checksums* working_set, span bname, span content) {
     if (empty(content))
         return;
@@ -2238,6 +3863,8 @@ void get_revs_cache_put(checksums* working_set, span bname, span content) {
 }
 
 
+
+/* #pr_revinfo */
 void pr_checksum(checksum cksum) {
     prt("%016lX\n", cksum.__u);
 }
@@ -2280,6 +3907,8 @@ void pr_revinfo(span language, spans blocks, int prev_n_revblocks, span contents
 }
 
 
+
+/* #prs_checksum */
 span prs_checksum(checksum c) {
   out_sav sav = out2cmp();
   span ret = {cmp.end};
@@ -2290,7 +3919,9 @@ span prs_checksum(checksum c) {
   return ret;
 }
 
+/* #SBV_design */
 
+/* #getkey */
 #define ARROW_U 256
 #define ARROW_D 257
 #define ARROW_R 258
@@ -2343,6 +3974,7 @@ restore:
 }
 
 
+/* #sbv_display */
 void sbv_display(sbv_state* sbvs) {
     char offset[32];
     char timestamp[32];
@@ -2366,6 +3998,8 @@ void sbv_display(sbv_state* sbvs) {
 }
 
 
+
+/* #sbv_populate */
 void sbv_populate(sbv_state* sbvs) {
     int i, max_idx = sbvs->max_index;
     if (sbvs->current_index > max_idx) {
@@ -2416,6 +4050,7 @@ int rev_block_match(sbv_state* sbvs, rev_block* current_revblock) {
 }
 
 
+/* #select_block_version */
 void select_block_version() {
     if (state->curr_block_idx == -1) return;
     get_revs();
@@ -2447,6 +4082,7 @@ void select_block_version() {
 }
 
 
+/* #sorted_line_checksums */
 // fix for clang
 int checksum_cmp(const void* a, const void* b) {
     const checksum* cksum1 = (const checksum*)a;
@@ -2485,6 +4121,7 @@ checksums sorted_line_checksums(span input) {
 }
 
 
+/* #cksums_intersection */
 int cksums_intersection(checksums a, checksums b) {
     int i = 0, j = 0, intersection_count = 0;
 
@@ -2504,6 +4141,7 @@ int cksums_intersection(checksums a, checksums b) {
 }
 
 
+/* #find_blocks_language_c */
 spans find_blocks_language_c(span file) {
     if (empty(file)) {
         // Handle special case for empty file
@@ -2554,6 +4192,7 @@ spans find_blocks_language_c(span file) {
 }
 
 
+/* #find_blocks_language_markdown */
 spans find_blocks_language_markdown(span file) {
     if (empty(file)) {
         spans result = spans_alloc(1);
@@ -2598,6 +4237,7 @@ spans find_blocks_language_markdown(span file) {
 }
 
 
+/* #parse_rev_fname */
 time_t parse_rev_fname(span basename) {
     struct tm tm_info = {0};
     char buf[16] = {0};
@@ -2615,6 +4255,7 @@ time_t parse_rev_fname(span basename) {
 }
 
 
+/* #find_blocks_language_python */
 spans find_blocks_language_python(span file) {
     int block_count = 0;
     span copy = file;
@@ -2679,6 +4320,8 @@ spans find_blocks_language_python(span file) {
 }
 
 
+
+/* #find_blocks_language_none */
 spans find_blocks_language_none(span file) {
     spans blocks = spans_alloc(1);
     spans_push(&blocks, file);
@@ -2686,6 +4329,7 @@ spans find_blocks_language_none(span file) {
 }
 
 
+/* #find_blocks_language */
 spans find_blocks_language(span file_contents, span language) {
     if (span_eq(language, S("C"))) {
         return find_blocks_language_c(file_contents);
@@ -2705,6 +4349,8 @@ spans find_blocks_language(span file_contents, span language) {
 }
 
 
+
+/* #getch */
 char getch(void) {
   char buf = 0;
   struct termios old = {0}, new = {0};
@@ -2722,6 +4368,7 @@ char getch(void) {
 }
 
 
+/* #main_loop */
 void main_loop() {
     state->marked_index = -1;
 
@@ -2739,6 +4386,7 @@ void main_loop() {
 }
 
 
+/* #count_physical_lines */
 span count_physical_lines(span input, int *max_physical_lines) {
     span result = input;
     int line_count = 0;
@@ -2897,6 +4545,7 @@ void print_current_blocks() {
 }
 
 
+/* #render_empty_project_state */
 void render_empty_project_state() {
     int remaining_rows = state->terminal_rows;
     prt("Block -");
@@ -2957,7 +4606,9 @@ void print_multiple_partial_blocks(int start_block, int end_block) {
 }
 
 
+/* #keybinds */
 
+/* #handle_keystroke */
 void handle_keystroke(char input) {
     terpri();
     switch (input) {
@@ -2976,14 +4627,14 @@ void handle_keystroke(char input) {
         case 'e':
             edit_current_block();
             break;
-        case '\'':
-            prompt_palette();
+        // case ''':
+            // prompt_palette();
             break;
         case 'r':
             nl2pl_rewrite();
             break;
-        case 'R':
-            replace_code_clipboard();
+        // case 'R':
+            // replace_code_clipboard();
             break;
         case 'u':
             //rev_decr();
@@ -3035,6 +4686,9 @@ void handle_keystroke(char input) {
 }
 
 
+
+
+/* #keyboard_help */
 void keyboard_help() {
     clear_display();
     prt("Keyboard shortcuts:\n");
@@ -3064,6 +4718,7 @@ void keyboard_help() {
     getch();
 }
 
+/* #handle_jkgG */
 void handle_j() {
     if (state->curr_file_idx == -1) return;
     
@@ -3149,6 +4804,8 @@ void handle_G() {
 }
 
 
+
+/* #first_block_in_file */
 int first_block_in_file(int file_idx) {
     for (int i = 0; i < state->blocks.n; ++i) {
         if (file_for_block(state->blocks.a[i]) == file_idx) {
@@ -3168,6 +4825,7 @@ int last_block_in_file(int file_idx) {
 }
 
 
+/* #start_search */
 void start_search() {
     static char search_buffer[256] = {"/"}; // Static buffer for search, pre-initialized with "/"
     state->search = (span){.buf = (u8*)search_buffer, .end = (u8*)search_buffer + 1}; // Initialize search span to contain just "/"
@@ -3197,6 +4855,7 @@ void start_search() {
 }
 
 
+/* #start_ex */
 void start_ex() {
     static char ex_buf[256] = ":";
     state->ex_command = (span){(u8*)ex_buf, (u8*)ex_buf + 1};
@@ -3231,14 +4890,19 @@ void start_ex() {
 
 
 
+
+/* #extable */
+
+/* #handle_ex_command */
 // stubbed for now (manually)
 void addfile(span s) {}
 void addlib(span s) {}
 
 void handle_ex_command() {
+    /*
     if (starts_with(state->ex_command, S(":bootstrap"))) {
         bootstrap();
-    } else if (starts_with(state->ex_command, S(":addfile"))) {
+    } else*/ if (starts_with(state->ex_command, S(":addfile"))) {
         span file_path = skip_n(state->ex_command, len(S(":addfile ")));
         addfile(file_path);
     } else if (starts_with(state->ex_command, S(":addlib"))) {
@@ -3254,6 +4918,7 @@ void handle_ex_command() {
     state->ex_command = nullspan();
 }
 
+/* #ex_help */
 void ex_help() {
     prt("\n");
     prt(":bootstrap - Run the user-provided bootstrap command, putting the result on the clipboard.\n");
@@ -3267,6 +4932,7 @@ void ex_help() {
 }
 
 
+/* #set_highlight */
 void set_highlight() {
     prt("\033[7m");
 }
@@ -3276,6 +4942,9 @@ void reset_highlight() {
 }
 
 
+
+
+/* #print_menu */
 void print_menu(spans opts, int sel) {
     clear_display();
 
@@ -3315,6 +4984,7 @@ void print_menu(spans opts, int sel) {
 }
 
 
+/* #select_menu */
 int select_menu(spans options, int selected_index) {
     int ch;
     int state = 0;
@@ -3367,6 +5037,7 @@ int select_menu(spans options, int selected_index) {
 }
 
 
+/* #select_model */
 void select_model() {
     spans_arena_push();
     spans models = spans_alloc(20);
@@ -3401,18 +5072,9 @@ void select_model() {
 }
 
 
-void bootstrap() {
-    ensure_conf_var(&state->bootstrap, S("The bootstrap command generates your initial prompt on stdout. See README for details."), nullspan());
-    
-    char buf[2048] = {0};
-    s_buffer(buf, sizeof(buf), state->bootstrap);
-    prt("Running bootstrap command: %s\n", buf);
-    flush();
+/* #bootstrap */
 
-    state->bootstrapprompt = pipe_cmd_cmp(S(buf));
-    send_to_clipboard(state->bootstrapprompt);
-}
-
+/* #perform_search */
 void perform_search() {
     int remaining_lines = state->terminal_rows;
     span search_span = {state->search.buf + 1, state->search.end};
@@ -3466,6 +5128,7 @@ void perform_search() {
     flush();
 }
 
+/* #print_ruler */
 void print_ruler() {
     span current_file_path = (state->curr_file_idx != -1) ? state->files.a[state->curr_file_idx].path : S("-");
     span model = state->model;
@@ -3493,6 +5156,7 @@ void print_ruler() {
 }
 
 
+/* #get_debug_info */
 span get_debug_info() {
     span result = nullspan();
     
@@ -3513,6 +5177,7 @@ span get_debug_info() {
 }
 
 
+/* #print_single_block_with_skipping */
 void print_single_block_with_skipping(int block_index, int skipped_lines) {
     span block = state->blocks.a[block_index];
     int physical_lines = skipped_lines;
@@ -3537,6 +5202,7 @@ void print_single_block_with_skipping(int block_index, int skipped_lines) {
 }
 
 
+/* #print_matching_physical_lines */
 int print_matching_physical_lines(span block, span match) {
 
     int physical_lines_printed = 0;
@@ -3567,6 +5233,7 @@ int print_matching_physical_lines(span block, span match) {
     return physical_lines_printed;
 }
 
+/* #finalize_search */
 void finalize_search() {
     span search_term = skip_n(state->search, 1); // Skip the slash
     int found = -1;
@@ -3583,6 +5250,7 @@ void finalize_search() {
 }
 
 
+/* #search_forward */
 void search_forward() {
     if(empty(state->previous_search)) return;
     span search_term = skip_n(state->previous_search, 1);
@@ -3614,6 +5282,7 @@ void search_backward() {
 }
 
 
+/* #Settings */
 void handle_conf_language(span language) {
     state->current_language = language;
     // Set the language for all previously added files if they have no language set
@@ -3632,6 +5301,7 @@ void handle_conf_file(span file_path) {
 }
 
 
+/* #parse_config */
 void parse_config() {
     span cmp_free_space = cmp_compl();
     span config_content = read_file_S_into_span(state->config_file_path, cmp_free_space);
@@ -3675,6 +5345,7 @@ void parse_config() {
     state->ollama_models = split_commas_ws(state->ollamas);
 }
 
+/* #read_line */
 span read_line(span *buffer, span default_value) {
     assert(len(*buffer) > 0); // Ensure buffer is not empty
     span line = { .buf = buffer->buf, .end = buffer->buf }; // Initialize line span to empty
@@ -3702,6 +5373,7 @@ span read_line(span *buffer, span default_value) {
 }
 
 
+/* #save_conf_files */
 void save_conf_files() {
     span last_written_language = nullspan();
     for (int i = 0; i < state->files.n; i++) {
@@ -3713,6 +5385,7 @@ void save_conf_files() {
     }
 }
 
+/* #save_conf */
 void save_conf() {
     span original_cmp_end = {cmp.end, cmp.end};
     out_sav sav = out2cmp();
@@ -3730,6 +5403,7 @@ void save_conf() {
 }
 
 
+/* #add_projfile(span) */
 int add_projfile(span file_path_span) {
     char file_path[2048] = {0};
     s_buffer(file_path, 2048, file_path_span);
@@ -3749,6 +5423,7 @@ int add_projfile(span file_path_span) {
 }
 
 
+/* #check_dirs */
 void check_dirs() {
     span dirs[] = {
         S("revs/"),
@@ -3770,6 +5445,7 @@ void check_dirs() {
 }
 
 
+/* #check_conf_vars */
 void check_conf_vars() {
     int confChanged = 0;
 
@@ -3788,6 +5464,7 @@ void check_conf_vars() {
 }
 
 
+/* #ensure_conf_var */
 void ensure_conf_var(span* var, span message, span default_value) {
     if (!empty(*var)) return; // If the configuration variable is already set, return immediately
 
@@ -3805,6 +5482,8 @@ void ensure_conf_var(span* var, span message, span default_value) {
 }
 
 
+
+/* #edit_current_block */
 void edit_current_block() {
     if (state->curr_file_idx == -1 && state->curr_block_idx == -1) {
         return;
@@ -3835,6 +5514,8 @@ void edit_current_block() {
 }
 
 
+
+/* #tmp_filename */
 span tmp_filename() {
     time_t now = time(NULL);
     struct tm *tm_struct = localtime(&now);
@@ -3859,6 +5540,7 @@ span tmp_filename() {
 }
 
 
+/* #launch_editor */
 int launch_editor(char* filename) {
     char* editor = getenv("EDITOR");
     if (editor == NULL) {
@@ -3887,6 +5569,9 @@ int launch_editor(char* filename) {
     }
 }
 
+
+
+/* #file_for_block */
 int file_for_block(span block) {
     for (int i = 0; i < state->files.n; ++i) {
         if (contains_ptr(state->files.a[i].contents, block)) {
@@ -3899,6 +5584,7 @@ int file_for_block(span block) {
 }
 
 
+/* #current_block_language */
 span current_block_language() {
    if (state->curr_file_idx == -1) {
        prt("Error: Attempted to get language in empty project state\n");
@@ -3914,6 +5600,7 @@ span current_block_language() {
 }
 
 
+/* #guess_language_from_filename */
 span guess_language_from_filename(span filename) {
    span extension = filename;
    for (u8* p = filename.end - 1; p >= filename.buf; p--) {
@@ -3931,12 +5618,14 @@ span guess_language_from_filename(span filename) {
    return S("C");
 }
 
+/* #language_for_block */
 span language_for_block(span block) {
     int file_index = file_for_block(block);
     return state->files.a[file_index].language;
 }
 
 
+/* #handle_edited_file */
 void handle_edited_file(char *filename) {
    span original_block;
    
@@ -3984,6 +5673,8 @@ void handle_edited_file(char *filename) {
    new_rev(S(filename), state->curr_file_idx);
 }
 
+
+/* #new_rev */
 void new_rev(span tmp_filename, int file_index) {
     span dir = state->cmprdir;
     time_t now = time(NULL);
@@ -3999,6 +5690,8 @@ void new_rev(span tmp_filename, int file_index) {
 }
 
 
+
+/* #update_projfile */
 void update_projfile(int file_index, span tmp_filename, span rev_path) {
     span projfile_path = state->files.a[file_index].path;
     char projfile_path_str[2048];
@@ -4046,6 +5739,7 @@ void update_projfile(int file_index, span tmp_filename, span rev_path) {
 }
 
 
+/* #gpt_message */
 json gpt_message(span role, span message) {
     json resp = json_o();
     json_o_extend(&resp, S("role"), json_s(role));
@@ -4054,6 +5748,8 @@ json gpt_message(span role, span message) {
 }
 
 
+
+/* #send_to_llm */
 void send_to_llm(span prompt, llm_message_handler cb) {
     if (span_eq(state->model, S("clipboard"))) {
         send_to_clipboard(prompt);
@@ -4079,6 +5775,8 @@ void send_to_llm(span prompt, llm_message_handler cb) {
     call_llm(state->model, messages, cb);
 }
 
+
+/* #handle_openai_response */
 void handle_openai_response(span response, llm_message_handler cb) {
     json res_json = json_parse(response);
     if (json_is_null(res_json)) {
@@ -4121,6 +5819,7 @@ void handle_openai_response(span response, llm_message_handler cb) {
 }
 
 
+/* #handle_ollama_response */
 void handle_ollama_response(span response, llm_message_handler cb) {
     json res = json_parse(response);
     if (json_is_null(res)) {
@@ -4149,6 +5848,7 @@ void handle_ollama_response(span response, llm_message_handler cb) {
 }
 
 
+/* #handle_anthropic_response */
 void handle_anthropic_response(span response, llm_message_handler cb) {
     json response_json = json_parse(response);
     if (json_is_null(response_json)) {
@@ -4179,6 +5879,7 @@ void handle_anthropic_response(span response, llm_message_handler cb) {
 }
 
 
+/* #block_comment_part */
 int find_comment_end_c(span block) {
     for (int i = 0; i < len(block) - 1; i++) {
         if (block.buf[i] == '*' && block.buf[i+1] == '/') {
@@ -4223,6 +5924,8 @@ span block_comment_part(span block) {
 }
 
 
+
+/* #block_comment_part_excl */
 span block_comment_part_excl(span block) {
     span language = language_for_block(block);
     span comment = block_comment_part(block);
@@ -4248,6 +5951,8 @@ span block_comment_part_excl(span block) {
 }
 
 
+
+/* #block_code_part */
 span block_code_part(span block) {
     span comment = block_comment_part(block);
     block.buf = comment.end;
@@ -4255,97 +5960,9 @@ span block_code_part(span block) {
 }
 
 
-/*
-I previously had an idea of using the block system itself as a kind of extensible programming system.
+/* #get_palette */
 
-For example, if a block can take other blocks as arguments, and produce further blocks as output, then the block system itself becomes agentic.
-For example, we could have a "code formatting block" which would then be iterating over the other blocks and enforcing a code formatting invariant.
-This could be allowed to consume a certain number of tokens (or really, cents) per day and would presumably be optimized to some standard.
-
-This feels better.
-*/
-
-void prompt_palette() {
-    spans palette = get_palette();
-    int sel = select_menu(palette, -1);
-    if (sel >= 0 && sel < palette.n) {
-        apply_prompt(palette.a[sel]);
-    }
-}
-
-
-/* other palette ideas and snippets follow: */
- /*
-There is a specific error that LLMs often make, where they assign the same name to two variables, or function arguments, or functions or globals that are in scope. Then they try to use the same identifier to refer to two completely separate things in the same scope, which obviously does not work.
-
-Note: it would make a lot of sense to run this (and maybe some similar error checks) only in response to a certain kind of compiler error, or maybe any compiler error.
-
-Examine the following code and reply only with "No" if it does not contain an error of this type, or "Yes: " followed by the identifier.
-
-```c
-spans read_output_headers(span bname) {
-    span filename_template = concat(S("{cmprdir}/outputs/"), bname);
-    span filename = filename_template(filename_template);
-    span file_contents = read_file_into_cmp(filename);
-
-    spans headers = spans_alloc(0);
-
-    while (!empty(file_contents)) {
-        span line = next_line(&amp;file_contents);
-        if (empty(trim(line))) break;
-
-        int colon_idx = find_char(line, ':');
-        if (colon_idx == -1) continue;
-
-        span key = trim(first_n(line, colon_idx));
-        span value = trim(skip_n(line, colon_idx + 1));
-
-        spans_push(&amp;headers, key);
-        spans_push(&amp;headers, value);
-    }
-
-    cmp.end = file_contents.buf; // Reset cmp space to keep headers but give back memory for the body
-
-    return headers;
-}
-```
-*/
- /*
-When we have added a new helper or utility function or library method that might be broadly applicable, we can apply an operation to that block in conjunction with each other block in the project (that has a code part) in turn.
-The prompt would ask whether the function we added (e.g. the recent filename_template function) could be profitably applied to the target block to simplify and improve the code.
-The result would be some number of suggested block that can potentially be simplified, which the user can then review.
-*/
- /* Some examples from llm.c translation from C to English, by way of Claude.
-
-Actually, these are going in a markdown file, since they contain embedded C block comments.
-
-See #llmc_prompts
-*/
-
-spans get_palette() {
-    static char *names[] = {
-        "NL -> PL rewrite",
-        "NL <- PL rewrite",
-        "NL PL agreement",
-        "NL PL agreement to PL patch",
-        "NL PL agreement to NL patch",
-        "block to one-line summary",
-        "NL description to step-by-step algorithm"
-    };
-
-    static span entries[sizeof(names)/sizeof(names[0])];
-
-    static spans result = { .n = sizeof(names)/sizeof(names[0]), .cap = sizeof(names)/sizeof(names[0]), .a = entries };
-
-    for (size_t i = 0; i < result.n; ++i) {
-        entries[i].buf = (u8*)names[i];
-        entries[i].end = entries[i].buf + strlen(names[i]);
-    }
-
-    return result;
-}
-
-
+/* #apply_prompt */
 void apply_prompt(span prompt_name) {
     if (span_eq(prompt_name, S("NL -> PL rewrite"))) {
         nl2pl_rewrite();
@@ -4357,8 +5974,8 @@ void apply_prompt(span prompt_name) {
         agreement_to_pl_diff();
     } else if (span_eq(prompt_name, S("NL PL agreement to NL patch"))) {
         agreement_to_nl_diff();
-    } else if (span_eq(prompt_name, S("block to one-line summary"))) {
-        summarize_block();
+    // } else if (span_eq(prompt_name, S("block to one-line summary"))) {
+        // summarize_block();
     } else if (span_eq(prompt_name, S("NL description to step-by-step algorithm"))) {
         nl2algo();
     } else {
@@ -4369,7 +5986,11 @@ void apply_prompt(span prompt_name) {
 }
 
 
+/* #nl2plrewrite */
 
+/* #prompt_template_design */
+
+/* #hc_prompts */
 // Hardcoded prompt templates
 span pt_nl2pl_rewrite() { return S("```{langtag}\n{context}\n```\n\n(above: references)\n---\n(below: current task)\n\n```{langtag}\n{comment}\n```\n\nWrite the code only for the current task. Reply only with a code block beginning with \"```{langtag}\". Do not include comments.\n"); }
 span pt_agreement() { return S("TODO"); }
@@ -4381,6 +6002,7 @@ span pt_summarize_block() { return S("TODO"); }
 
 
 
+/* #get_prompt_template */
 span get_prompt_template(span name) {
     if (span_eq(name, S("agreement_to_nl_diff"))) return pt_agreement_to_nl_diff();
     if (span_eq(name, S("agreement_to_pl_diff"))) return pt_agreement_to_pl_diff();
@@ -4397,6 +6019,7 @@ span get_prompt_template(span name) {
 }
 
 
+/* #agreement */
 /*output:
 ...text from the LLM...
 */
@@ -4405,6 +6028,7 @@ void agreement() {
 }
 
 
+/* #agreement_to_nl_diff */
 void agreement_to_nl_diff() {
     span prompt_template = get_prompt_template(S("agreement_to_nl_diff"));
     spans template_vars = current_block_template_vars();
@@ -4421,6 +6045,7 @@ void agreement_to_nl_diff() {
     send_to_llm(expanded_template, cb);
 }
 
+/* #output_template_var */
 void output_template_var(spans* ctx, span human_name) {
     span output = lookup_output(human_name);
 
@@ -4431,6 +6056,7 @@ void output_template_var(spans* ctx, span human_name) {
 }
 
 
+/* #lookup_output */
 span lookup_output(span output_of) {
     assert(state->curr_block_idx != -1);
     checksum current_cksum = selected_checksum(state->blocks.a[state->curr_block_idx]);
@@ -4448,6 +6074,7 @@ span lookup_output(span output_of) {
 }
 
 
+/* #expand_template */
 span expand_template(span template, spans vars) {
     out_sav sav = out2cmp();
     span ret = {.buf = cmp.end, .end = cmp.end};
@@ -4465,6 +6092,7 @@ span expand_template(span template, spans vars) {
 }
 
 
+/* #print_template_literal */
 void print_template_literal(span input) {
     while (!empty(input)) {
         if (len(input) > 1 && input.buf[0] == '\\' && (input.buf[1] == '\\' || input.buf[1] == '{')) {
@@ -4479,6 +6107,9 @@ void print_template_literal(span input) {
 
 
 
+/* #gcb */
+
+/* #current_block_template_vars */
 spans current_block_template_vars() {
     spans vars = spans_alloc(8);
     
@@ -4507,6 +6138,7 @@ spans current_block_template_vars() {
 }
 
 
+/* #eval_template_variable */
 void eval_template_variable(span var_name, spans vars) {
     var_name = trim(var_name);
     int found = 0;
@@ -4538,6 +6170,9 @@ void eval_template_variable(span var_name, spans vars) {
 
 
 
+/* #template_language_design */
+
+/* #parse_template */
 spans parse_template(span input) {
     spans result = spans_alloc(10);
     span current_span = { .buf = input.buf, .end = input.buf };
@@ -4578,6 +6213,7 @@ spans parse_template(span input) {
 }
 
 
+/* #print_block */
 void print_comment(int index) {
     if (index < 0 || index >= state->blocks.n) return;
     span block = state->blocks.a[index];
@@ -4608,6 +6244,7 @@ int count_blocks() {
 }
 
 
+/* #content_index */
 void content_index(span search_text) {
     int first_match = 1;
     for (int i = 0; i < state->blocks.n; i++) {
@@ -4622,6 +6259,7 @@ void content_index(span search_text) {
     prt("\n");
 }
 
+/* #block_from_arg */
 int block_from_arg(char* arg) {
     span sarg = S(arg);
     if (!empty(sarg) && isdigit(*sarg.buf)) {
@@ -4633,6 +6271,7 @@ int block_from_arg(char* arg) {
     return block_by_id(sarg);
 }
 
+/* #block_id_arg */
 int block_id_arg(span block_id_or_int) {
     if (!empty(block_id_or_int) && isdigit(*block_id_or_int.buf)) {
         int n = parse_int(block_id_or_int);
@@ -4645,6 +6284,7 @@ int block_id_arg(span block_id_or_int) {
 }
 
 
+/* #handle_run */
 void handle_run(char* run_block_id) {
     int block_idx = block_by_id(S(run_block_id));
     if (block_idx == -1) {
@@ -4674,6 +6314,7 @@ void handle_run(char* run_block_id) {
     exit(WEXITSTATUS(exit_code));
 }
 
+/* #handle_agent_run */
 void handle_agent_run(char* agent_name, char* mode) {
     // Validate and normalize mode
     char mode_lower[16];
@@ -4733,6 +6374,8 @@ void handle_agent_run(char* agent_name, char* mode) {
     exit(WEXITSTATUS(exit_code));
 }
 
+
+/* #handle_agents */
 void handle_agents() {
     // Ensure .cmpr/agents/ directory exists
     system("mkdir -p .cmpr/agents");
@@ -4772,7 +6415,6 @@ void handle_agents() {
             // Check running status
             char pid_path[512];
             char pid_str[32] = "-";
-            int running = 0;
             int pid = 0;
             
             snprintf(pid_path, sizeof(pid_path), ".cmpr/agents/%s/pid", agent_name);
@@ -4783,7 +6425,6 @@ void handle_agents() {
                     char kill_cmd[256];
                     snprintf(kill_cmd, sizeof(kill_cmd), "kill -0 %d 2>/dev/null", pid);
                     if (system(kill_cmd) == 0) {
-                        running = 1;
                         snprintf(pid_str, sizeof(pid_str), "yes (%d)", pid);
                     } else {
                         // Stale PID file, remove it
@@ -4881,6 +6522,8 @@ void handle_agents() {
     flush_exit(0);
 }
 
+
+/* #handle_help_topic */
 void handle_help_topic(char *topic) {
     span s = get_help_text(topic);
     
@@ -4897,6 +6540,7 @@ void handle_help_topic(char *topic) {
     flush_exit(0);
 }
 
+/* #handle_prompt */
 void handle_prompt(int block_idx) {
     state->curr_block_idx = block_idx;
     span op = S("nl2pl_rewrite");
@@ -4906,6 +6550,7 @@ void handle_prompt(int block_idx) {
     prt("%.*s", (int)(expanded_prompt.end - expanded_prompt.buf), expanded_prompt.buf);
 }
 
+/* #handle_checksum */
 void handle_checksum(void) {
     size_t capacity = 1 << 20;
     size_t size = 0;
@@ -4947,6 +6592,9 @@ void handle_checksum(void) {
     free(buffer);
 }
 
+
+
+/* #handle_wants */
 void handle_wants() {
     // Helper function to parse SN line and check if it starts with "We want "
     void check_line(span line) {
@@ -5060,6 +6708,8 @@ void handle_wants() {
 }
 
 
+
+/* #handle_wants_status */
 void handle_wants_status() {
     // Find the wants_status_report block
     int block_idx = block_by_id(S("#wants_status_report"));
@@ -5104,6 +6754,8 @@ void handle_wants_status() {
     flush_exit(WEXITSTATUS(status));
 }
 
+
+/* #handle_agents_wants */
 void handle_agents_wants() {
     // Structure to hold want information
     typedef struct {
@@ -5535,6 +7187,7 @@ void handle_agents_wants() {
     flush();
 }
 
+/* #handle_wants_dashboard */
 void handle_wants_dashboard() {
     const char *html_path = "public_html/wants_dashboard.html";
     struct stat st;
@@ -5611,6 +7264,7 @@ void handle_wants_dashboard() {
     flush();
 }
 
+/* #handle_event_report */
 void handle_event_report() {
     const char *report_path = "public_html/event_activity.html";
     struct stat st;
@@ -5724,6 +7378,8 @@ void handle_export_docs() {
 }
 
 
+
+/* #grep_blocks */
 void grep_blocks(span pattern) {
     regex_t regex;
     char pattern_buf[4096];
@@ -5812,6 +7468,8 @@ void grep_blocks(span pattern) {
     regfree(&regex);
 }
 
+
+/* #after */
 void after(span arg) {
     int block_idx = block_id_arg(arg);
     if (block_idx == -1) {
@@ -5854,6 +7512,9 @@ void after(span arg) {
 }
 
 
+
+
+/* #replace */
 void replace(span arg) {
     int block_idx = block_id_arg(arg);
     if (block_idx == -1) {
@@ -5919,6 +7580,7 @@ void replace(span arg) {
 }
 
 
+/* #replace_comment */
 void replace_comment(span arg) {
     int block_idx = block_id_arg(arg);
     if (block_idx == -1) {
@@ -6076,6 +7738,8 @@ void replace_code(span arg) {
     new_rev(S(""), file_idx);
 }
 
+
+/* #expand_block */
 void expand_block(int idx) {
     if (idx < 0 || idx >= state->blocks.n) {
         prt("Invalid block index: %d\n", idx);
@@ -6090,6 +7754,7 @@ void expand_block(int idx) {
 }
 
 
+/* #block_by_id */
 int block_by_id(span id_no_hash) {
     for (int i = 0; i < state->block_idx.n; ++i) {
         span idx = state->block_idx.a[i];
@@ -6103,6 +7768,9 @@ int block_by_id(span id_no_hash) {
 
 
 
+/* #press_any_key */
+
+/* #ex_expand */
 void ex_expand() {
     span current_block = state->blocks.a[state->curr_block_idx];
     span comment_part = block_comment_part(current_block);
@@ -6118,10 +7786,7 @@ void ex_expand() {
 }
 
 
-
-
-
-
+/* #blockref_id */
 span blockref_id(span ref) {
     advance(&ref, 1);  // Skip '@'
     int colon_pos = find_char(ref, ':');
@@ -6143,6 +7808,7 @@ span blockref_fname(span ref) {
 }
 
 
+/* #language_comment_starter */
 span language_comment_starter(span language) {
     if (span_eq(language, S("C"))) return S("/*");
     if (span_eq(language, S("Python"))) return S("\"\"\"");
@@ -6158,6 +7824,7 @@ span language_comment_ender(span language) {
 }
 
 
+/* #expand_refs_2 */
 span expand_refs_2(span block, span mode) {
     span ret = {cmp.end, cmp.end};
     spans_arena_push();
@@ -6179,6 +7846,7 @@ span expand_refs_2(span block, span mode) {
 }
 
 
+/* #expand_refs_2_rec */
 void expand_refs_2_rec_both(span block, span transform, spans* already, int comment_context, int depth) {
     if (depth > 512) {
         prt("block expansion depth limit (512) exceeded, possible reference cycle?");
@@ -6189,9 +7857,11 @@ void expand_refs_2_rec_both(span block, span transform, spans* already, int comm
 }
 
 
+/* #expand_refs_2_rec_body_pre */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-variable"
 
+/* #expand_refs_2_rec_body */
 void expand_refs_2_rec_body(span block, span transform, spans* already, int comment_context, int depth) {
     if (depth > 512) {
         prt("block expansion depth limit (512) exceeded, possible reference cycle?\n");
@@ -6288,6 +7958,7 @@ void expand_refs_2_rec_body(span block, span transform, spans* already, int comm
     }
 }
 
+/* #expand_refs_2_rec_context */
 void expand_refs_2_rec_context(span block, span transform, spans* already, int comment_context, int depth) {
     if (span_eq(transform, S("code"))) return;
 
@@ -6337,6 +8008,9 @@ void expand_refs_2_rec_context(span block, span transform, spans* already, int c
 
 
 
+/* #chase_ref */
+
+/* #chase_ref_2 */
 span chase_ref_2(span ref_id) {
     int idx = block_by_id(ref_id);
     if (idx == -1) {
@@ -6346,6 +8020,7 @@ span chase_ref_2(span ref_id) {
 }
 
 
+/* #strip_markdown_codeblock */
 span strip_markdown_codeblock(span input) {
     int count = 0;
     span ret = nullspan();
@@ -6371,6 +8046,7 @@ span strip_markdown_codeblock(span input) {
 }
 
 
+/* #send_to_clipboard */
 void send_to_clipboard(span content) {
     ensure_conf_var(&(state->cbcopy), S("The command to pipe data to the clipboard on your system. For Mac try \"pbcopy\", Linux \"xclip -i -selection clipboard\", Windows \"clip.exe\""), S(""));
 
@@ -6391,7 +8067,7 @@ void send_to_clipboard(span content) {
     }
 }
 
-
+/* #normalize_path_for_match */
 span normalize_path_for_match(span path) {
     if (len(path) >= 2 && path.buf[0] == '.' && path.buf[1] == '/') {
         return skip_n(path, 2);
@@ -6400,6 +8076,7 @@ span normalize_path_for_match(span path) {
 }
 
 
+/* #paths_match_for_block_map */
 int paths_match_for_block_map(span a, span b) {
     a = normalize_path_for_match(trim(a));
     b = normalize_path_for_match(trim(b));
@@ -6413,6 +8090,7 @@ int paths_match_for_block_map(span a, span b) {
 }
 
 
+/* #parse_block_map_entry */
 int parse_block_map_entry(span line, span* path, int* start_line, int* end_line, span* block_id) {
     line = trim(line);
     if (empty(line)) return 0;
@@ -6465,6 +8143,8 @@ int parse_block_map_entry(span line, span* path, int* start_line, int* end_line,
 }
 
 
+
+/* #block_ids_for_file_line */
 spans block_ids_for_file_line(span block_map, span file_path, int line_number) {
     if (empty(block_map)) {
         return spans_alloc(0);
@@ -6504,6 +8184,7 @@ spans block_ids_for_file_line(span block_map, span file_path, int line_number) {
 }
 
 
+/* #parse_compiler_error_line */
 int parse_compiler_error_line(span line, span* path, int* line_number) {
     int first_colon = find_char(line, ':');
     if (first_colon == -1) return 0;
@@ -6523,148 +8204,7 @@ int parse_compiler_error_line(span line, span* path, int* line_number) {
 }
 
 
-int block_map_selftest() {
-    int failures = 0;
-
-    #define CHECK(msg, cond) do { \
-        if (!(cond)) { \
-            prt("[selftest] %s\n", msg); \
-            failures++; \
-        } \
-    } while (0)
-
-    span block_map = S(
-        "src/foo.c 1 5 #foo\n"
-        "src/foo.c 10-12 #bar\n"
-        "./src/baz.c:20-22 #baz\n"
-        "/abs/path/qux.c:30 #qux\n"
-    );
-
-    spans ids = block_ids_for_file_line(block_map, S("src/foo.c"), 3);
-    CHECK("expected src/foo.c:3 -> #foo", ids.n == 1 && span_eq(ids.a[0], S("#foo")));
-
-    ids = block_ids_for_file_line(block_map, S("./src/foo.c"), 11);
-    CHECK("expected ./src/foo.c:11 -> #bar", ids.n == 1 && span_eq(ids.a[0], S("#bar")));
-
-    ids = block_ids_for_file_line(block_map, S("/home/user/src/baz.c"), 21);
-    CHECK("expected suffix match for baz.c:21 -> #baz", ids.n == 1 && span_eq(ids.a[0], S("#baz")));
-
-    ids = block_ids_for_file_line(block_map, S("/abs/path/qux.c"), 30);
-    CHECK("expected absolute path + single line range -> #qux", ids.n == 1 && span_eq(ids.a[0], S("#qux")));
-
-    ids = block_ids_for_file_line(block_map, S("src/foo.c"), 7);
-    CHECK("expected no hit outside ranges", ids.n == 0);
-
-    #undef CHECK
-
-    if (failures == 0) {
-        prt("block-map selftest: ok\n");
-    }
-
-    return failures;
-}
-
-void compile() {
-    ensure_conf_var(&state->buildcmd, S("The build command will be run every time you hit 'B' and should build the code you are editing (typically in projfile)"), nullspan());
-
-    char buf[2048] = {0};
-    s_buffer(buf, sizeof(buf), state->buildcmd);
-
-    prt("Running command: %s\n", buf);
-    flush();
-
-    char command[2100] = {0};
-    snprintf(command, sizeof(command), "%s 2>&1", buf);
-
-    span block_map = read_whole_file(S(".cmpr/block-map"));
-    spans related_blocks = spans_alloc(0);
-
-    FILE *pipe = popen(command, "r");
-    if (!pipe) {
-        perror("Failed to run build command");
-        exit(EXIT_FAILURE);
-    }
-
-    char line_buf[4096];
-    while (fgets(line_buf, sizeof(line_buf), pipe)) {
-        prt("%s", line_buf);
-
-        size_t line_len = strlen(line_buf);
-        span line_span = {(u8*)line_buf, (u8*)line_buf + line_len};
-        if (line_len && line_buf[line_len - 1] == '\n') {
-            line_span.end--;
-        }
-
-        span diag_path = nullspan();
-        int diag_line = 0;
-        if (parse_compiler_error_line(line_span, &diag_path, &diag_line)) {
-            spans ids = block_ids_for_file_line(block_map, diag_path, diag_line);
-            if (ids.n > 0) {
-                prt("    Related blocks: ");
-                for (int i = 0; i < ids.n; i++) {
-                    if (index_of(ids.a[i], related_blocks) == -1) {
-                        spans_push(&related_blocks, ids.a[i]);
-                    }
-                    wrs(ids.a[i]);
-                    if (i + 1 < ids.n) {
-                        sp();
-                    }
-                }
-                terpri();
-            }
-        }
-    }
-
-    int status = pclose(pipe);
-
-    if (status != 0) {
-        if (related_blocks.n > 0) {
-            prt("Build failed; related blocks:\n");
-            for (int i = 0; i < related_blocks.n; i++) {
-                prt(" - ");
-                wrs(related_blocks.a[i]);
-                terpri();
-            }
-        } else if (empty(block_map)) {
-            prt("Build failed; no .cmpr/block-map found to map errors to blocks.\n");
-        } else {
-            prt("Build failed; no matching block IDs found for the reported errors.\n");
-        }
-        prt("Press any key to continue...\n");
-        flush();
-        getch();
-    } else {
-        prt("Build succeeded\n");
-        flush();
-        sleep(1); // Give time for the user to read the message
-    }
-}
-
-void replace_code_clipboard() {
-    ensure_conf_var(&state->cbpaste, S("Command to get text from the clipboard on your platform (Mac: \"pbpaste\", Linux: \"xclip -o -selection clipboard\", Windows: TODO: fill this in)"), S("xclip -o -selection clipboard"));
-    span new_content = pipe_cmd_cmp(state->cbpaste);
-    replace_block_code_part(new_content);
-}
-
-
-span pipe_cmd_cmp(span cmd) {
-    char cmd_str[2048];
-    s_buffer(cmd_str, 2048, cmd);
-    FILE *pipe = popen(cmd_str, "r");
-    assert(pipe != NULL);
-
-    size_t space_available = (cmp_space + BUF_SZ) - cmp.end;
-    size_t bytes_read = fread(cmp.end, 1, space_available, pipe);
-    assert(bytes_read <= space_available);
-
-    span result = {cmp.end, cmp.end + bytes_read};
-    cmp.end += bytes_read;
-
-    pclose(pipe);
-    return result;
-}
-
-
+/* #replace_block_code_part */
 void replace_block_code_part(span new_code) {
    new_code = strip_markdown_codeblock(new_code);
 
@@ -6712,51 +8252,20 @@ void replace_block_code_part(span new_code) {
    new_rev(nullspan(), file_idx);
 }
 
+/* #output_design */
 
-void agreement_SAV(span message) {
-    span ret;
-    ret.buf = cmp.end;
-    out_sav sav = out2cmp();
-
-    span block_id = id_for_block(state->blocks.a[state->curr_block_idx]);
-    checksum cksum = selected_checksum(state->blocks.a[state->curr_block_idx]);
-
-    prt("block_id: %.*s\n", len(block_id), block_id.buf);
-    prt("checksum: "); pr_checksum(cksum);
-    prt("output_of: agreement\n\n");
-    wrs(message);
-    if(empty(message) || message.end[-1] != '\n') terpri();
-
-    ret.end = cmp.end;
-    out_rst(sav);
-
-    span cmprdir = S("{cmprdir}/outputs/");
-    span timestamp = S("{timestamp}");
-    span filepath_template = concat(cmprdir, timestamp);
-    span filepath = filename_template(filepath_template);
-
-    write_to_file_span(ret, filepath, 1);
-    cmp.end = ret.buf;
-    //get_outputs();
-}
-
-
+/* #output_save */
 void output_save(span operation, span message) {
-    if (span_eq(operation, S("agreement"))) {
-        agreement_SAV(message);
-    } else if (span_eq(operation, S("agreement_to_nl_diff"))) {
-        proposed_diff_SAV(message);
-    } else {
-        generic_output_save(operation, message);
-    }
+    generic_output_save(operation, message);
 }
 
-
+/* #make_output_saver */
 llm_message_handler make_output_saver(span operation) {
     return partial_sp_sp(operation, output_save);
 }
 
 
+/* #generic_output_save */
 void generic_output_save(span operation, span message) {
     span ret;
     ret.buf = cmp.end;
@@ -6792,38 +8301,13 @@ void generic_output_save(span operation, span message) {
 }
 
 
-void proposed_diff_SAV(span message) {
-    span block = state->blocks.a[state->curr_block_idx];
-    checksum cksum = selected_checksum(block);
-    char *output_of = "agreement_to_nl_diff";
-    char *relationship = "proposed diff";
-
-    span ret;
-    ret.buf = cmp.end;
-
-    out_sav sav = out2cmp();
-    prt("block_id: "); wrs(id_for_block(block)); terpri();
-    prt("checksum: "); pr_checksum(cksum);
-    prt("output_of: %s\n", output_of);
-    prt("relationship: %s\n", relationship);
-    terpri();
-    wrs(message);
-    if (!empty(message) && message.end[-1] != '\n') terpri();
-    ret.end = cmp.end;
-    out_rst(sav);
-
-    span filename = filename_template(S("{cmprdir}/outputs/{timestamp}"));
-    write_to_file_span(ret, filename, 1);
-    cmp.end = ret.buf;
-    get_outputs();
-}
-
-
+/* #span_cmp_wrapper */
 int span_cmp_wrapper(const void *a, const void *b) {
     return span_cmp(*(span *)a, *(span *)b);
 }
 
 
+/* #get_outputs */
 void get_outputs() {
     span outdir = concat(state->cmprdir, S("/outputs"));
     DIR *dir = opendir(s(outdir));
@@ -6858,6 +8342,7 @@ void get_outputs() {
 }
 
 
+/* #dir_listing */
 spans dir_listing(span dirname) {
     spans ret = spans_alloc(16);
     
@@ -6885,6 +8370,8 @@ spans dir_listing(span dirname) {
 }
 
 
+
+/* #read_output_headers */
 spans read_output_headers(span bname) {
     span filename = filename_template(concat(S("{cmprdir}/outputs/"), bname));
     span file_contents = read_file_into_cmp(filename);
@@ -6934,6 +8421,7 @@ span read_output_body(span bname) {
 }
 
 
+/* #replace_block */
 void replace_block(span new_block) {
     span original_block = state->blocks.a[state->curr_block_idx];
     int file_index = state->curr_file_idx;
@@ -6962,6 +8450,7 @@ void replace_block(span new_block) {
 }
 
 
+/* #cmpr_init */
 void cmpr_init() {
     mkdir(".cmpr", 0755);
     mkdir(".cmpr/revs", 0755);
@@ -6975,11 +8464,14 @@ void cmpr_init() {
 }
 
 
+
+/* #simple_message_handler */
 llm_message_handler simple_message_handler(void(*f)(span)) {
     return partial_0_sp(f);
 }
 
 
+/* #nl2pl_rewrite */
 void nl2pl_rewrite() {
     span op = S("nl2pl_rewrite");
     span template = get_prompt_template(op);
@@ -6989,6 +8481,7 @@ void nl2pl_rewrite() {
 }
 
 
+/* #pl2nl_rewrite */
 void pl2nl_rewrite() {
     span template = get_prompt_template(S("pl2nl_rewrite"));
     spans vars = current_block_template_vars();
@@ -6997,6 +8490,8 @@ void pl2nl_rewrite() {
 }
 
 
+
+/* #pl2nl_rewrite_cb */
 void pl2nl_rewrite_cb(span message) {
     span received_comment = strip_markdown_codeblock(message);
     span current_block = state->blocks.a[state->curr_block_idx];
@@ -7022,6 +8517,8 @@ void pl2nl_rewrite_cb(span message) {
 }
 
 
+
+/* #nl2algo */
 void nl2algo() {
     span op = S("nl2algo");
     span template = get_prompt_template(op);
@@ -7032,6 +8529,7 @@ void nl2algo() {
 }
 
 
+/* #agreement_to_pl_diff */
 void agreement_to_pl_diff() {
     span prompt_template = get_prompt_template(S("agreement_to_pl_diff"));
     spans template_vars = current_block_template_vars();
@@ -7048,13 +8546,310 @@ void agreement_to_pl_diff() {
 }
 
 
-void summarize_block() {
-    span op = S("summarize_block");
-    span template = get_prompt_template(op);
-    spans vars = current_block_template_vars();
-    span expanded_template = expand_template(template, vars);
-    llm_message_handler handler = make_output_saver(op);
-    send_to_llm(expanded_template, handler);
+
+/* #summarize_block */
+
+/* #handle_learn */
+void handle_learn(span es1, span es2) {
+    // Alphabetize for consistent filename
+    char es1_str[64] = {0};
+    char es2_str[64] = {0};
+    s_buffer(es1_str, sizeof(es1_str), es1);
+    s_buffer(es2_str, sizeof(es2_str), es2);
+    
+    char *first = es1_str;
+    char *second = es2_str;
+    if (strcmp(es1_str, es2_str) > 0) {
+        first = es2_str;
+        second = es1_str;
+    }
+    
+    // Build pattern filepath
+    char filepath[256];
+    snprintf(filepath, sizeof(filepath), ".cmpr/patterns/%s-%s", first, second);
+    
+    // Build filter paths
+    char es1_path[256], es2_path[256];
+    snprintf(es1_path, sizeof(es1_path), ".cmpr/es/%.*s", len(es1), es1.buf);
+    snprintf(es2_path, sizeof(es2_path), ".cmpr/es/%.*s", len(es2), es2.buf);
+    
+    // Check filters exist
+    if (access(es1_path, X_OK) != 0) {
+        prt("Error: Event space filter not found: %s\n", es1_path);
+        flush_exit(1);
+    }
+    if (access(es2_path, X_OK) != 0) {
+        prt("Error: Event space filter not found: %s\n", es2_path);
+        flush_exit(1);
+    }
+    
+    // Storage for co-occurrence counts
+    #define MAX_PAIRS 10000
+    #define MAX_EVENT_LEN 256
+    static struct { char e1[MAX_EVENT_LEN]; char e2[MAX_EVENT_LEN]; int count; } pairs[MAX_PAIRS];
+    int n_pairs = 0;
+    
+    // Open events directory
+    DIR *dir = opendir(".cmpr/events");
+    if (!dir) {
+        prt("Error: Cannot open .cmpr/events\n");
+        flush_exit(1);
+    }
+    
+    // Collect snapshot filenames
+    char *snapshots[4096];
+    int n = 0;
+    struct dirent *de;
+    while ((de = readdir(dir)) != NULL && n < 4096) {
+        if (de->d_name[0] == '.') continue;
+        snapshots[n++] = strdup(de->d_name);
+    }
+    closedir(dir);
+    
+    // Process each snapshot
+    for (int s = 0; s < n; s++) {
+        char snap_path[512];
+        snprintf(snap_path, sizeof(snap_path), ".cmpr/events/%s", snapshots[s]);
+        
+        // Run through ES1 filter
+        char cmd1[1024];
+        snprintf(cmd1, sizeof(cmd1), "cat '%s' | '%s'", snap_path, es1_path);
+        FILE *fp1 = popen(cmd1, "r");
+        char es1_events[100][MAX_EVENT_LEN];
+        int es1_n = 0;
+        if (fp1) {
+            char buf[4096];
+            while (fgets(buf, sizeof(buf), fp1) && es1_n < 100) {
+                size_t l = strlen(buf);
+                while (l > 0 && (buf[l-1] == '\n' || buf[l-1] == '\r')) buf[--l] = 0;
+                if (l > 0 && buf[0] == '"') {
+                    // Parse SN line: "event" <strength>.
+                    char *period = buf + l - 1;
+                    if (*period != '.') continue;
+                    
+                    char *num_start = period - 1;
+                    while (num_start > buf && *num_start >= '0' && *num_start <= '9') num_start--;
+                    num_start++;
+                    
+                    int strength = atoi(num_start);
+                    if (strength != 255) continue; // Only learn from 255
+                    
+                    char *close_quote = num_start - 1;
+                    while (close_quote > buf && *close_quote == ' ') close_quote--;
+                    if (*close_quote != '"') continue;
+                    
+                    int evlen = close_quote - buf + 1;
+                    if (evlen >= MAX_EVENT_LEN) evlen = MAX_EVENT_LEN - 1;
+                    memcpy(es1_events[es1_n], buf, evlen);
+                    es1_events[es1_n][evlen] = '\0';
+                    es1_n++;
+                }
+            }
+            pclose(fp1);
+        }
+        
+        // Run through ES2 filter
+        char cmd2[1024];
+        snprintf(cmd2, sizeof(cmd2), "cat '%s' | '%s'", snap_path, es2_path);
+        FILE *fp2 = popen(cmd2, "r");
+        char es2_events[100][MAX_EVENT_LEN];
+        int es2_n = 0;
+        if (fp2) {
+            char buf[4096];
+            while (fgets(buf, sizeof(buf), fp2) && es2_n < 100) {
+                size_t l = strlen(buf);
+                while (l > 0 && (buf[l-1] == '\n' || buf[l-1] == '\r')) buf[--l] = 0;
+                if (l > 0 && buf[0] == '"') {
+                    char *period = buf + l - 1;
+                    if (*period != '.') continue;
+                    
+                    char *num_start = period - 1;
+                    while (num_start > buf && *num_start >= '0' && *num_start <= '9') num_start--;
+                    num_start++;
+                    
+                    int strength = atoi(num_start);
+                    if (strength != 255) continue; // Only learn from 255
+                    
+                    char *close_quote = num_start - 1;
+                    while (close_quote > buf && *close_quote == ' ') close_quote--;
+                    if (*close_quote != '"') continue;
+                    
+                    int evlen = close_quote - buf + 1;
+                    if (evlen >= MAX_EVENT_LEN) evlen = MAX_EVENT_LEN - 1;
+                    memcpy(es2_events[es2_n], buf, evlen);
+                    es2_events[es2_n][evlen] = '\0';
+                    es2_n++;
+                }
+            }
+            pclose(fp2);
+        }
+        
+        // Count co-occurrences if both have events
+        if (es1_n > 0 && es2_n > 0) {
+            for (int i = 0; i < es1_n; i++) {
+                for (int j = 0; j < es2_n; j++) {
+                    int found = -1;
+                    for (int k = 0; k < n_pairs; k++) {
+                        if (strcmp(pairs[k].e1, es1_events[i]) == 0 && 
+                            strcmp(pairs[k].e2, es2_events[j]) == 0) {
+                            found = k;
+                            break;
+                        }
+                    }
+                    if (found >= 0) {
+                        pairs[found].count++;
+                    } else if (n_pairs < MAX_PAIRS) {
+                        memcpy(pairs[n_pairs].e1, es1_events[i], MAX_EVENT_LEN);
+                        memcpy(pairs[n_pairs].e2, es2_events[j], MAX_EVENT_LEN);
+                        pairs[n_pairs].count = 1;
+                        n_pairs++;
+                    }
+                }
+            }
+        }
+        
+        free(snapshots[s]);
+    }
+    
+    // Build output content with log-stochastic counts
+    char outbuf[65536];
+    int outlen = 0;
+    for (int i = 0; i < n_pairs; i++) {
+        int log_count = 0;
+        int c = pairs[i].count;
+        while (c > 1) { c >>= 1; log_count++; }
+        
+        outlen += snprintf(outbuf + outlen, sizeof(outbuf) - outlen,
+            "%s %s %d.\n", pairs[i].e1, pairs[i].e2, log_count);
+    }
+    span content = (span){(u8*)outbuf, (u8*)(outbuf + outlen)};
+    
+    // Create directory and write file
+    mkdir_p(S(".cmpr/patterns"));
+    write_to_file_2(content, filepath, 1);
+    
+    // Print output
+    fwrite(outbuf, 1, outlen, stdout);
+    prt("Saved to %s\n", filepath);
+    flush();
 }
 
+/* #handle_log_stochastic_count_joint */
+void handle_log_stochastic_count_joint() {
+    // Read all stdin
+    span input = read_stdin_into_cmp();
+    
+    // Storage for co-occurrence counts
+    #define MAX_PAIRS 10000
+    static struct { span e1; span e2; int count; } pairs[MAX_PAIRS];
+    int n_pairs = 0;
+    
+    // Parse groups
+    span pos = input;
+    while (!empty(pos)) {
+        span line = next_line(&pos);
+        if (empty(line)) continue;  // blank line between groups
+        
+        // If line doesn't start with ", it's a timestamp - process group
+        if (line.buf[0] != '"') {
+            // Collect events for this group
+            span es1_events[100];
+            span es2_events[100];
+            int n_es1 = 0, n_es2 = 0;
+            int in_es2 = 0;
+            span prev_prefix = nullspan();
+            
+            // Collect events until blank line
+            while (!empty(pos)) {
+                line = next_line(&pos);
+                if (empty(line)) break;  // end of group
+                if (line.buf[0] != '"') continue;  // skip non-event lines
+                
+                // Find end of event string - look for last " before strength
+                u8 *end = line.end;
+                while (end > line.buf && *(end-1) != '"') end--;
+                if (end <= line.buf) continue;  // malformed
+                span event_str = (span){line.buf, end};
+                
+                // Extract prefix (up to first colon)
+                span prefix = event_str;
+                for (u8 *c = event_str.buf; c < event_str.end; c++) {
+                    if (*c == ':') { prefix.end = c + 1; break; }
+                }
+                
+                // Detect ES boundary by prefix change
+                if (empty(prev_prefix)) {
+                    prev_prefix = prefix;
+                } else if (!span_eq(prefix, prev_prefix) && !in_es2) {
+                    in_es2 = 1;
+                }
+                
+                if (!in_es2 && n_es1 < 100) {
+                    es1_events[n_es1++] = event_str;
+                } else if (n_es2 < 100) {
+                    es2_events[n_es2++] = event_str;
+                }
+            }
+            
+            // Count co-occurrences for this group
+            for (int i = 0; i < n_es1; i++) {
+                for (int j = 0; j < n_es2; j++) {
+                    // Find or create pair
+                    int found = -1;
+                    for (int k = 0; k < n_pairs; k++) {
+                        if (span_eq(pairs[k].e1, es1_events[i]) && 
+                            span_eq(pairs[k].e2, es2_events[j])) {
+                            found = k;
+                            break;
+                        }
+                    }
+                    if (found >= 0) {
+                        pairs[found].count++;
+                    } else if (n_pairs < MAX_PAIRS) {
+                        pairs[n_pairs].e1 = es1_events[i];
+                        pairs[n_pairs].e2 = es2_events[j];
+                        pairs[n_pairs].count = 1;
+                        n_pairs++;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Output joint events with log count
+    for (int i = 0; i < n_pairs; i++) {
+        int log_count = 0;
+        int c = pairs[i].count;
+        while (c > 1) { c >>= 1; log_count++; }
+        
+        prt("%.*s %.*s %d.\n", 
+            len(pairs[i].e1), pairs[i].e1.buf,
+            len(pairs[i].e2), pairs[i].e2.buf,
+            log_count);
+    }
+    flush();
+}
+
+/* #compile */
+void compile() {
+    ensure_conf_var(&state->buildcmd, S("The build command will be run every time you hit 'B' and should build the code you are editing (typically in projfile)"), nullspan());
+    
+    char buf[2048] = {0};
+    s_buffer(buf, sizeof(buf), state->buildcmd);
+    
+    prt("Running command: %s\n", buf);
+    flush();
+    
+    int status = system(buf);
+    
+    if (status != 0) {
+        prt("Build failed, press any key to continue...\n");
+        flush();
+        getch();
+    } else {
+        prt("Build succeeded\n");
+        flush();
+        sleep(1);
+    }
+}
 

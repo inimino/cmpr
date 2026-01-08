@@ -1,9 +1,5 @@
 /* #INBOX
 
-This is the inbox block. New blocks are added after this block as a staging area.
-
-The purpose of #INBOX is to provide a known location where new blocks can be inserted during development, before we decide on their proper location in the codebase structure.
-
 "We want blocks that appear after #INBOX to be moved to appropriate locations in the codebase based on their content and purpose." 255.
 
 Workflow:
@@ -23,6 +19,2646 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 
 */
 
+
+/* #unified_execution_model
+
+Unified execution model for agents, scripts, and patterns.
+
+All communication within the cmpr system takes place using T.
+
+## Component Types
+
+**Agents** (`.cmpr/agents/`):
+- Trigger on events in T matching a particular ES (e.g., "We want X")
+- Perform actions with side effects
+- Emit results to T (success, or blockers preventing success)
+- Example: "We want the build up to date" → agent runs make → build errors → emits "The build is broken" and "The build error is [...]" to T
+
+**Scripts** (`scripts/`):
+- Like agents but more specialized
+- Only populate an ES in T, no other side effects
+- Exist to put something into T
+
+**Patterns** (`.cmpr/patterns/`):
+- Trigger on certain ESs and populate T based on learned relationships
+- File format: `"event_a" "event_b" N.` where N is log support
+- Filename: `es1-es2` (alphabetized ES names)
+- Presence of file = registration (no separate --LPP command needed)
+
+## Event Spaces
+
+**ES definition**: A string prefix, reified as a filter script in `.cmpr/es/*`
+- Filter interface: stdin = SN lines, stdout = matching lines, exit code from grep
+- Example: `.cmpr/es/agent` contains `grep '^"Agent:'`
+
+## Event Emission Types
+
+**Deterministic** (scripts and agents):
+- Computer programs that emit events with strength 0 or 255 only
+- Either full support (255 bits) or nothing
+
+**Probabilistic** (LPPs - Learned Product Patterns):
+- Generate probabilistic learned patterns
+- Can emit events with intermediate strength values (log support)
+
+## Pattern Processing on --event (IMPLEMENTED)
+
+When `--event "X" --strength S` is called:
+
+1. Add event to T (via event_add_internal)
+2. Save T (via event_save_T)
+3. Check CMPR_PATTERN_DEPTH (skip if >= 1 for now)
+4. Set environment: CMPR_EVENT, CMPR_STRENGTH, CMPR_PATTERN_DEPTH
+5. Call scripts/patterns which:
+   a. For each filter in .cmpr/es/*:
+      - Pipe event through filter
+      - If matches: add to matched_es list
+   b. For each matched ES, for each pattern file involving that ES:
+      - Parse filename to get ES1-ES2
+      - LEARN: If strength=255 AND other side has 255-strength events in T:
+        - For each (this_event, other_event) pair, add to pattern file if new
+        - TODO: implement proper LSI increment
+      - POPULATE: Look up this event in pattern file:
+        - If event matches ES1, emit ES2 events; if matches ES2, emit ES1 events
+        - Emit with strength = stored log support
+        - Skip if event already in T with >= strength (settling model)
+
+## Settling Model
+
+The system converges to a fixed point:
+- Only emit events that extend T (new event OR higher strength)
+- Recursion depth limited to 1 for now (cautious approach)
+- Full recursion (A→B→C chains) structurally supported, enable later
+
+## Remaining Work
+
+"We want full LSI increment (sample n bits, increment only if all 1s)." 255.
+"We want to enable deeper recursion once system is validated." 255.
+
+## Cost Control (Deferred)
+
+Since scripts and agents may call LLMs or be otherwise expensive, we need to control spend:
+- For now, expensive scripts that call big models should sleep for 60 seconds after they do their work
+- Later: track run time, token usage, etc.
+
+## Implementation Files
+
+- cmpr.c #events_functions: event_add() sets env vars and calls scripts/patterns
+- scripts/patterns: ES filtering, learning, population logic
+
+## Current Status (2026-01-08)
+
+Pattern processing on --event is implemented and tested:
+- ES filtering works
+- Pattern population works (settling model)
+- Pattern learning works (simplified - adds entries, full LSI TODO)
+- Recursion depth limited to 1
+
+*/
+/* #claude_experience_report_learn_build_errors_20260105
+
+Session goal: Implement --learn command for pattern learning from snapshot-join output.
+
+## What was accomplished
+
+1. Designed --learn feature with spec in #learn_feature_spec
+2. Created #pattern_learning_hub navigation block
+3. Added reference to hub from #cmpr_events
+4. Implemented CLI wiring:
+   - Added ind_learn to #handle_args_2
+   - Added --learn parsing to #handle_args_3
+   - Added dispatch to #handle_args_4
+5. Created #handle_learn implementation block
+6. Added #handle_learn to cmpr-c-build
+
+## Build failure analysis
+
+Build fails with 8 undefined references. These are pre-existing issues (code calls functions not in build):
+
+| Function | Called from | Line | Block in build? |
+|----------|-------------|------|-----------------|
+| pipe_cmd_cmp | #replace_code_clipboard | 3 | #pipe_cmd_cmp exists but NOT in cmpr-c-build |
+| pipe_cmd_cmp | #handle_keystroke | (via bootstrap) | same |
+| get_palette | #prompt_palette | 2 | #get_palette exists but NOT in cmpr-c-build |
+| block_map_selftest | #handle_args_4 | 262 | #block_map_selftest exists but NOT in cmpr-c-build |
+| proposed_diff_SAV | #output_save | 5 | #proposed_diff_SAV exists but NOT in cmpr-c-build |
+| agreement_SAV | #output_save | 3 | #agreement_SAV exists but NOT in cmpr-c-build |
+| summarize_block | #apply_prompt | 13 | #summarize_block IS in cmpr-c-build - may be empty? |
+| compile | #handle_keystroke | 41 | #compile() exists but NOT in cmpr-c-build |
+
+## Options to fix
+
+For each undefined function, either:
+A. Add the block to cmpr-c-build (if function is needed)
+B. Remove/stub the call in the calling block (if function is deprecated)
+
+## Mistakes made this session
+
+1. When build failed, blindly tried adding missing blocks to cmpr-c-build without asking
+2. Added blocks that were intentionally removed (proposed_diff_SAV, agreement_SAV, etc.)
+3. Did git stash without understanding consequences, caused mess
+4. Should have stopped and asked what to do when encountering pre-existing build errors
+
+## Current state
+
+- Git: Working files restored from stash, clean state
+- cmpr-c-build: Has #handle_learn added (correct), no wrong additions
+- Build: Still fails on pre-existing undefined references (needs your fix)
+
+*/
+/* #learn_feature_spec
+
+## Pattern Learning System
+
+### Overview
+
+Learning converts memory traces (co-occurrence counts from snapshots) into patterns.
+Patterns fire automatically when events occur (via scripts/patterns hook in event_add).
+
+### Storage
+
+Patterns stored in `.cmpr/patterns/es1-es2` (ES names alphabetized).
+
+File format (SN-style):
+```
+"event_a" "event_b" 3.
+"event_a" "event_c" 5.
+"event_d" "event_b" 2.
+```
+Two quoted event strings, then log support (raw log-stochastic count), then period.
+
+### Commands
+
+**--learn**: Read snapshot-join output from stdin, output pattern file
+```
+cmpr --snapshot-join agent status | cmpr --learn > .cmpr/patterns/agent-status
+```
+
+**--archive [cutoff]**: Clear snapshots after learning
+
+### Algorithm
+
+1. Single pass through stdin (snapshot-join output)
+2. Parse groups separated by blank lines
+3. For each group: count co-occurrences of (ES1 event, ES2 event) pairs
+4. Use log-stochastic counting (or classical in parallel for small data)
+5. Output SN-style pattern lines for populated cells
+
+### Automatic Firing
+
+Already implemented hook: event_add() calls system("scripts/patterns").
+Extension needed: scripts/patterns should scan .cmpr/patterns/* files,
+match current T events against stored patterns, add associated events to T.
+
+### Example 1: agent × status
+
+From `cmpr --snapshot-join agent status`:
+- M = 1: "Agent: root_agent"
+- N = 2: "Status: constraint not satisfied", "Status: implementing guided fix"
+- 9 joint observations
+- Matrix: 1×2
+
+### Example 2: improve_meta × BID
+
+From `cmpr --snapshot-join improve_meta BID`:
+- M = 4 (meta status events)
+- N = 174 (distinct block IDs)
+- 248 joint observations
+- Matrix: 4×174
+
+Example data saved: /tmp/example_join_meta_bid.txt
+
+### Log-Stochastic Counting
+
+```
+increment(counter):
+    for i in 0..counter:
+        if PRNG_bit() == 0:
+            return  // no increment
+    counter++  // P(increment) = 1/2^counter
+```
+
+With dataset <10^5, log counts stay in 0..~17 range.
+
+### Next Steps
+
+1. Implement --learn (parse stdin, count co-occurrences, output patterns)
+2. Implement --archive
+3. Extend scripts/patterns to scan pattern files and fire associations
+4. Create .cmpr/patterns/ directory structure
+
+*/
+/* #idea_move
+
+Proposal: Add --move command for block relocation.
+
+## Current State
+
+Moving a block requires three steps:
+1. cmpr --print-block '#block_id' > /tmp/block.txt
+2. echo "" | cmpr --replace '#block_id'
+3. cat /tmp/block.txt | cmpr --after '#target_id'
+
+This is error-prone (temp file management, ordering matters to avoid duplicate IDs) and verbose for a common operation.
+
+## Proposed Syntax
+
+cmpr --move '#source_id' --after '#target_id'
+
+This follows the established pattern of combining long options semantically, as --event and --strength already do.
+
+## Semantics
+
+1. Read the source block content into memory
+2. Delete the source block (replace with empty)
+3. Insert after target block
+
+Atomic: if step 3 fails, step 2 should be rolled back (or the operation should validate target exists before deleting source).
+
+## Alternative: --before
+
+Could also support:
+cmpr --move '#source_id' --before '#target_id'
+
+This would address the missing --before functionality noted in CLAUDE.md, though --before alone (without --move) might be useful too.
+
+## Implementation Notes
+
+The --after flag already exists for inserting new content. The --move variant would:
+- Require exactly one of --after or --before when used with --move
+- Take no stdin (content comes from the source block)
+- Validate both block IDs exist before modifying anything
+
+*/
+/* #claude_experience_report_versioning_rubric_20260103
+
+## Session Goal
+
+Investigate version number situation and create a versioning rubric.
+
+## What Was Done
+
+1. **Discovered version was prematurely at 10** - Makefile had VER=10 but v9 hadn't been properly released
+2. **Read #SN from cmpr2** - User provided SN notation reference for expressing confidence levels
+3. **Created #versioning_rubric** - Block in INBOX with:
+   - Feature weight categories (3/2/2/1/0 points)
+   - Threshold guidance (5-7 consider, 8+ overdue)
+   - Retrospective scoring for v8→v9 and v9→v10
+   - Process notes about updating release-notes.md before bumping VER
+4. **Reverted VER to 9** - Changed Makefile from VER=10 to VER=9
+5. **Updated release-notes.md** - v10 now marked "(planned)" with target features listed
+
+## Key Decisions
+
+- Version bumps justified by accumulated feature weight, not time
+- v9 features (Claude support, palette, undo, j/k order) = 8 points
+- v10 features (agents, events, help topics, navigation) = 8 points, ready when wanted
+- SN notation used in rubric (20 bits for reasonable confidence, 255 for definitional)
+
+## Current State
+
+- `dist/cmpr --version` shows v9
+- v10 is planned, release notes have placeholder
+- #versioning_rubric in INBOX ready to be moved to appropriate location
+
+## Next Steps
+
+- Move #versioning_rubric to permanent location (maybe near #makefile or create a release process hub)
+- When ready for v10: bump VER in Makefile, expand v10 section in release-notes.md
+
+*/
+/* #versioning_rubric
+
+"A version bump is justified when accumulated feature weight reaches a threshold." 255.
+"This rubric uses SN notation to express confidence in the scoring." 255.
+
+## Feature Weight Categories
+
+"A new major subsystem (agents, events, palette) adds 3 points." 20.
+"A new integration (Claude, Ollama, llama.cpp) adds 2 points." 20.
+"A significant UI feature (undo, j/k order, block refs) adds 2 points." 20.
+"A build/infrastructure change (curl binary, bootstrap) adds 1 point." 20.
+"Documentation or cleanup adds 0 points." 20.
+
+## Threshold
+
+"When accumulated points reach 5-7, consider a version bump." 15.
+"When accumulated points reach 8+, a version bump is overdue." 18.
+
+## Current State
+
+v9 (current):
+- Anthropic Claude support: 2
+- Palette system: 3
+- Undo feature: 2
+- j/k order with empty files: 1
+Total: 8 → released
+
+v10 (planned, accumulated so far):
+- Agent system: 3
+- Event system (T/E/S): 3
+- Help topics system: 1
+- Navigation/visibility work: 1
+Total: 8 → ready when we want it
+
+## Process
+
+"Before bumping VER in Makefile, update release-notes.md with full feature descriptions." 255.
+"The version in Makefile is definitional; the release notes document what that version contains." 255.
+
+*/
+/* #claude_experience_report_block_idx_improvement_20260103
+
+Analysis of #block_idx for recursive improvement.
+
+Block reviewed: #block_idx
+
+This is a documentation-only block (no PL part) that explains the block ID indexing strategy.
+
+## Improvement Suggestions
+
+1. **Redundancy with #blocks**: The block duplicates content that also appears in #blocks, specifically the explanation of block IDs and the example:
+
+   From #block_idx:
+   > This is defined as any string starting with '#', up to the next whitespace character, on the top line of a block.
+
+   From #blocks:
+   > The ID of a block is defined as any string starting with '#', up to the next whitespace character, on the top line of a block.
+
+   These are nearly identical. The #block_idx block could reference #blocks instead of restating.
+
+"The block duplicates content from #blocks about ID definition." 2.
+
+2. **Missing reference**: The block mentions `block_for_span` but doesn't include it as an @-ref, so the dependency isn't explicit in the block header.
+
+"The block should add @block_for_span as an explicit reference." 1.
+
+3. **Could be shorter**: Since #blocks already documents the ID definition comprehensively, #block_idx could be shortened to focus on just the indexing strategy (the clever part about using spans that point to actual memory locations).
+
+"The block could be shorter by deferring ID definition to #blocks." 1.
+
+## Rebuttals
+
+1. The redundancy provides standalone readability - someone reading #block_idx doesn't need to chase to #blocks to understand.
+
+"The redundancy aids standalone readability." 1.
+
+2. The block references @blocks which already contains block_for_span info, so explicit @block_for_span may be unnecessary.
+
+"The @blocks ref may be sufficient context." 1.
+
+3. The block is already reasonably short (17 lines of NL); aggressive shortening could harm clarity.
+
+"The block is already appropriately sized." 1.
+
+## Final Assessment
+
+The improvements are real but minor. The block accurately documents the indexing strategy, and the redundancy with #blocks could be intentional for clarity. The missing @block_for_span reference is a valid but minor improvement.
+
+"The block can be improved by adding @block_for_span reference." 1.
+"The block can be improved by removing redundant ID definition." 1.
+"The block cannot be improved because redundancy aids readability." 1.
+"The block cannot be improved because it's already clear and correct." 2.
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 3.
+
+Conclusion: The block is in good shape. The indexing strategy explanation is clear and accurate. Improvements are possible but not high-value enough to prioritize over other work.
+
+*/
+/* #claude_experience_report_index_block_ids_review_20260103
+
+Analysis of #index_block_ids following the improvement prompt template.
+
+The block implements index_block_ids() which builds an index of all block IDs in the codebase by iterating over blocks twice: once to count, once to populate.
+
+**Improvement Suggestions:**
+
+1. Code duplication: The block contains nearly identical logic in both loops (get first line, check for markdown, split whitespace, find #-tokens). This could be factored out.
+
+"The block can be improved by extracting the counting logic into ids_for_block." 2.
+"The block cannot be improved this way because ids_for_block allocates each time, so calling it for every block just to count would be wasteful." 3.
+
+2. The check `line.buf == line.end` tests for empty line, but this is already covered by `line.buf[0]` access - if the line is empty, accessing `[0]` is undefined behavior.
+
+"The block has a bug: if next_line returns an empty span, the continue prevents UB, but this is fragile." 1.
+"The block cannot be improved this way because the check is correct - it continues on empty lines before accessing [0], which is the right pattern." 2.
+
+3. Could use ids_for_block to simplify the inner logic.
+
+"The block can be improved by calling ids_for_block(block) and summing its .n values." 3.
+"The block cannot be improved this way because ids_for_block allocates spans_alloc per call, creating O(n) allocations just to count, which is worse than the current O(1) counting approach." 4.
+
+4. The current implementation is straightforward and correct. It matches the pattern described in #blocks and correctly handles the markdown special case (lines starting with #).
+
+"The block is already well-structured and matches the idioms used elsewhere in the codebase." 3.
+
+**Final Assessment:**
+
+The code is correct and efficient. The two-loop pattern (count then allocate then fill) is necessary because spans_alloc cannot reallocate. The apparent duplication is actually the minimal implementation of this constraint.
+
+The only potential issue is stylistic - the repeated logic - but any refactoring would either sacrifice efficiency (by allocating in the count phase) or add complexity (by introducing a callback or flag parameter).
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+The 4 bits for "cannot improve" reflects: correct logic (1 bit), efficient two-pass pattern (1 bit), handles edge cases properly (1 bit), matches codebase idioms (1 bit).
+
+*/
+/* #claude_experience_report_files_improvement_20260103
+
+Analyzing #files for improve-block routine.
+
+The block #files is an overview/documentation block describing file basics.
+
+Improvement suggestions considered:
+
+"The block could be improved by documenting how to get filenames." 1.
+"The block cannot be improved by documenting filenames because @projfiles:all already references the full projfile definition." 2.
+
+"The block could be improved by listing all projfile struct fields." 1.
+"The block cannot be improved by listing all fields because that would duplicate the referenced block and violate DRY." 3.
+
+"The block could be improved by explaining how files are loaded." 1.
+"The block cannot be improved by explaining loading because it's out of scope for a 'basics' overview." 2.
+
+Final assessment:
+
+The block is appropriately scoped as an overview. It provides:
+- Location of files in state
+- How to access file contents by index
+- How to check for empty files
+- Cross-reference to #jk_order for navigation context
+- Cross-reference to @projfiles:all for struct details
+
+Any additions would make it less of an overview and duplicate information available through the references.
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+Conclusion: The block serves its purpose well as a brief orientation to file handling. No changes recommended.
+
+*/
+/* #claude_experience_report_ingest_review_20260103
+
+Analysis of #ingest for improvement potential using SN notation.
+
+Session goal: Evaluate whether #ingest can be meaningfully improved.
+
+Block examined: #ingest - the orchestration function that calls indexing operations when project data changes.
+
+Improvement candidates evaluated:
+
+1. Error handling
+"The block could add error handling for the called functions." 1.
+"The block does not need error handling because sub-functions handle their own errors or abort on fatal issues." 2.
+
+2. Documentation of inp
+"The block NL could better document what inp is." 1.
+"The block adequately explains inp as 'all the code in the project' which is sufficient." 2.
+
+3. Function naming consistency
+"Function names could be more consistent (all index_ or all find_)." 1.
+"Function names are appropriately descriptive as-is, matching their actual behavior." 2.
+
+4. Code length
+"The block could be shorter." 0.
+"The NL comment is essential per cmpr workflow; PL is already minimal." 255.
+
+Final assessment:
+
+The block is a clean orchestration function. It:
+- Calls four functions in the correct dependency order
+- Has accurate NL documentation
+- Has minimal PL that exactly matches the NL
+- Follows cmpr conventions
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+Conclusion: This is a well-formed block. Moving to next block.
+
+*/
+/* #claude_experience_report_improve_get_code_20260103
+
+Block analyzed: #get_code
+
+Event space analysis for improvement potential:
+
+Improvement suggestions considered:
+
+1. Add error handling for read_file_S_into_span failures
+   "The block could add error handling for read failures." 1.
+   "Error handling is not specified in NL and would add unneeded complexity." 3.
+
+2. Add validation of file paths before reading  
+   "The block could validate paths before reading." 1.
+   "Paths come from validated projfile setup; validation is redundant." 3.
+
+3. Add logging of files being read
+   "The block could add logging of files being read." 1.
+   "Logging is not part of cmpr idiom and would add noise." 2.
+
+Analysis:
+- The PL exactly implements the NL specification
+- Code is minimal (10 lines including braces)
+- cmpr idiom: trust inputs from earlier pipeline stages
+- No bugs observed in current implementation
+- All suggested improvements would add complexity not requested by NL
+
+Final event space:
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+Conclusion: Block is well-formed. NL and PL are synchronized. No actionable improvements.
+
+*/
+/* #claude_experience_report_selected_checksum_20260103
+
+Analysis of #selected_checksum for improvement potential.
+
+Event space population:
+
+"The block can be improved by making the NL shorter." 1.
+"The block cannot be improved by making the NL shorter because the siphash signature documentation is useful context." 2.
+
+"The block can be improved by removing the static key buffer." 0.
+"The block cannot be improved by removing the static key buffer because it's idiomatic C and avoids allocation." 3.
+
+"The block can be improved by adding error handling." 0.
+"The block cannot be improved by adding error handling because siphash doesn't fail with valid inputs." 2.
+
+"The block can be improved by using a different checksum algorithm." 0.
+"The block cannot be improved by using a different algorithm because siphash is the selected algorithm by design." 255.
+
+Summary:
+
+The NL is slightly verbose with the full siphash signature, but this serves as useful documentation for understanding the wrapper. The PL is minimal and correct - 6 lines implementing exactly what the NL describes.
+
+Final assessment:
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+The single bit of support for improvement comes from the possibility of trimming the NL slightly, but the current verbosity serves documentation purposes. The block is essentially at its minimum viable form for its purpose.
+
+*/
+/* #claude_experience_report_find_all_lines_review_20260103
+
+Analysis of #find_all_lines for improvement opportunities.
+
+The block implements a simple two-pass line-finding algorithm:
+1. Count lines by iterating over input
+2. Allocate spans array with exact size
+3. Populate array by iterating again
+
+Improvements considered and evaluated:
+
+1. Single-pass algorithm
+"The block can be improved by using a single-pass algorithm with dynamic resizing." 0.
+"The block cannot be improved by using single-pass because spans_alloc requires count upfront and the two-pass approach is idiomatic." 3.
+
+Rationale: The span library uses arena allocation. spans_alloc requires knowing the count upfront. A dynamic resizing approach would fight the library's design. Two-pass is idiomatic here.
+
+2. Code length reduction
+"The block can be improved by making the code shorter." 0.
+"The block cannot be made shorter without sacrificing clarity." 2.
+
+Rationale: 15 lines total. Clear variable names. No redundant operations. Already minimal.
+
+3. Bug analysis
+"The block contains a bug that can be fixed." 0.
+"The block contains no bugs." 2.
+
+Rationale: Logic is straightforward and correct. next_line handles edge cases. No off-by-one errors.
+
+4. NL/PL alignment
+"The NL comment could be improved." 0.
+"The NL comment accurately describes the implementation." 2.
+
+Rationale: NL explains the two-pass approach, notes the gap between lines (newlines excluded), and matches implementation exactly.
+
+Final assessment:
+"The block can be meaningfully improved by us." 0.
+"The block cannot be meaningfully improved by us." 5.
+
+This block is already as good as we know how to make it within the constraints of the spanio library.
+
+*/
+/* #claude_experience_report_find_all_blocks_improvement_20260103
+
+Analysis of #find_all_blocks for improvement potential.
+
+## Block Under Review
+
+```c
+void find_all_blocks() {
+   state->blocks = spans_alloc(256);
+
+   for (size_t i = 0; i < state->files.n; i++) {
+       if (!empty(state->files.a[i].contents)) {
+           spans file_blocks = find_blocks_language(state->files.a[i].contents, state->files.a[i].language);
+           for (size_t j = 0; j < file_blocks.n; j++) {
+               spans_push(&state->blocks, file_blocks.a[j]);
+           }
+       }
+   }
+
+   if (state->blocks.n == 0) {
+       state->curr_block_idx = -1;
+   } else if (state->curr_block_idx >= (int)state->blocks.n) {
+       state->curr_block_idx = state->blocks.n - 1;
+   }
+}
+```
+
+## Improvement Suggestions
+
+### 1. Inner loop could use spans_extend
+
+The inner loop that pushes blocks one at a time could potentially use a batch operation if spans_extend exists.
+
+"The block can be improved by replacing the inner for-loop with spans_extend." 1.
+"The block cannot be improved this way because spans_extend may not exist or may have different semantics, and the current code is clear and correct." 2.
+
+### 2. Magic number 256
+
+The initial allocation size 256 is a magic number.
+
+"The block can be improved by defining a named constant for initial block allocation size." 1.
+"The block cannot be improved this way because 256 is a reasonable default, the array grows dynamically, and adding a constant adds complexity for minimal benefit in a function called once at startup." 3.
+
+### 3. Missing function declaration in NL
+
+The NL comment lacks the function declaration `void find_all_blocks()`.
+
+"The block can be improved by adding the function declaration to the NL comment." 2.
+"The block cannot be improved this way because the function is internal and takes no parameters, so the signature is trivial." 1.
+
+### 4. Simplification of curr_block_idx handling
+
+The final if/else-if could be combined, but the current form is clearer.
+
+"The block can be improved by simplifying the curr_block_idx adjustment logic." 0.
+"The block cannot be improved this way because the current explicit handling is clear and matches the NL description." 3.
+
+## Summary of Event Space
+
+"The block can be improved by adding the function declaration to the NL comment." 2.
+"The block cannot be improved by replacing the inner for-loop with spans_extend." 2.
+"The block cannot be improved by defining a named constant for 256." 3.
+"The block cannot be improved by simplifying curr_block_idx logic." 3.
+
+## Final Assessment
+
+The code is concise, matches the NL specification closely, and has no obvious bugs. The only concrete improvement is adding the function declaration to the NL, which is a documentation/convention fix rather than a code improvement.
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 3.
+
+*/
+/* #claude_experience_report_jk_improvement_20260103
+
+Analysis of #jk_implementation block for improvement using the SN improvement protocol.
+
+The block is a pure NL specification describing j/k/g/G navigation behavior. Its PL implementation lives in #handle_jkgG.
+
+=== Proposed Improvements ===
+
+1. The NL could be slightly shorter by removing parenthetical clarifications:
+
+Current: "(If there isn't one, we just return.)"
+Proposed: Remove - already implied by "if there is one"
+
+"The block can be improved by removing redundant parenthetical 'If there isn't one'." 1.
+"The block cannot be improved this way because the parenthetical adds clarity for implementers." 2.
+
+2. The check described using .buf/.end comparison could be clearer:
+
+Current: "(We can check for this by looking at whether the contents of the next file is empty, and its .buf is equal to .end of the current block.)"
+Issue: The .buf == .end check is an implementation detail that doesn't belong in NL spec.
+
+"The block can be improved by removing implementation details from NL." 2.
+"The block cannot be improved this way because the detail helps nl2pl generate correct code." 3.
+
+3. The specification is well-structured and complete. It covers:
+- Empty project case
+- Empty file state (block_idx == -1)
+- Normal state transitions
+- Edge cases (first/last block)
+- g/G variants
+- Pagination reset
+
+"The block's overall structure is correct and complete." 5.
+"The block's overall structure has problems." 0.
+
+4. Consistency with implementation: The #handle_jkgG implementation matches the specification closely. The code correctly:
+- Handles empty file states
+- Navigates between files
+- Resets scrolled_lines on navigation
+
+"The specification accurately describes the implementation." 4.
+"The specification and implementation are misaligned." 0.
+
+5. One minor issue: The NL mentions "state->blocks.n - 1" which is PL leaking into NL.
+
+Current: "If we're already at the maximal block in the direction we're going (i.e. either 0 or state->blocks.n - 1)"
+Better: "If we're already at the first or last block overall"
+
+"The block can be improved by removing PL syntax from NL." 2.
+"The block cannot be improved this way because the PL reference is parenthetical and adds precision." 1.
+
+=== Final Assessment ===
+
+The block is a well-written NL specification. The minor improvements possible (removing PL syntax, trimming parentheticals) are stylistic rather than substantive. The specification correctly describes complex state machine behavior and its implementation in #handle_jkgG is faithful to it.
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 4.
+
+*/
+/* #claude_experience_report_inp_sanity_checks_review_20260103
+
+Review of #inp_sanity_checks for the improve-block workflow.
+
+**Proposed Changes:**
+
+1. **Error message prefix mismatch (HIGH PRIORITY)**
+
+The NL spec explicitly states:
+> All messages should begin with "file/block consistency error: "
+
+But the PL uses messages like:
+- "inp should be empty when there are no blocks."
+- "The first block should start at the beginning of inp."
+
+These should be:
+- "file/block consistency error: Input space should be empty if there are no blocks."
+- "file/block consistency error: The first block should start at the beginning of inp."
+
+And so on for all 10 error messages.
+
+"The block can be improved by making error messages match the documented spec." 4.
+"The block cannot be improved this way because the messages are close enough." 1.
+
+2. **First block emptiness check**
+
+The loop checking for empty blocks starts at i=1, so the first block is never checked for emptiness.
+
+"The block can be improved by adding an emptiness check for the first block." 3.
+"The block cannot be improved this way because an empty first block would cause tiling to fail anyway (blocks must tile inp, so if first block is empty but starts at inp.buf, the second block would also need to start at inp.buf, failing the contiguity check)." 3.
+
+3. **Using complain_and_exit reference**
+
+The block has @complain_and_exit but uses prt+flush_exit directly.
+
+"The block can be improved by using complain_and_exit." 2.
+"The block cannot be improved this way because the current pattern may be intentional." 2.
+
+**Final Support:**
+
+The error message mismatch is a clear NL/PL inconsistency that should be fixed.
+
+"The block can be meaningfully improved by us." 4.
+"The block cannot be meaningfully improved by us." 1.
+
+*/
+/* #claude_experience_report_print_files_blocks_20260103
+
+Analysis of #print_files_blocks for improvement potential.
+
+**Block under review:** #print_files_blocks
+
+**Observations:**
+
+1. The code matches the NL specification exactly.
+2. Output format is clear and consistent.
+3. Uses existing helper functions appropriately (first_block_in_file, last_block_in_file, ids_for_block).
+
+**Improvement candidates considered:**
+
+"The block could show all block IDs instead of just the first." 1.
+"Showing only the first ID is correct because it matches the NL spec and keeps output clean for parsing." 2.
+
+"The empty file continue could be moved before printing 'file:'." 1.
+"Current behavior is correct: showing empty files exists is useful for project inventory." 2.
+
+"The block could add block count per file." 1.
+"Adding features not in the NL spec is scope creep; the current output suffices." 2.
+
+**Final assessment:**
+
+The block is concise (20 lines of code), matches its NL specification, and follows existing patterns. The implementation has no bugs and no unnecessary complexity. Any "improvements" would be feature additions not requested in the spec.
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 3.
+
+*/
+/* #claude_experience_report_print_physical_lines_20260103
+
+Analysis of #print_physical_lines for improvement opportunities.
+
+Event space:
+"The block can be meaningfully improved by us." 3.
+"The block cannot be meaningfully improved by us." 1.
+
+Proposed improvement 1: Fix undefined behavior in partial line loop
+
+Lines 193-196 iterate with `i < lines_to_print * state->terminal_cols`, but when printing a long line that exceeds remaining physical lines, `i` can exceed `line_length`. When this happens, `(line_length - i)` becomes negative, and passing a negative precision to `%.*s` is undefined behavior per C standard.
+
+Fix: Change line 193 to:
+`for (int i = 0; i < lines_to_print * state->terminal_cols && i < line_length; i += state->terminal_cols) {`
+
+"The block can be improved by adding i < line_length guard to prevent UB." 3.
+"The block cannot be improved this way because chars_to_print handles it." 0.
+
+Rebuttal considered: One might think `chars_to_print` handles this since it would compute 0 or negative. But negative precision in printf is UB, not a safe no-op. The guard is necessary.
+
+Proposed improvement 2: Use empty(line) for consistency
+
+Line 172 uses `line.end == line.buf` but the outer while uses `empty(block)`. Minor consistency improvement.
+
+"The block can be improved by using empty(line) for consistency." 1.
+"The block cannot be improved this way as both forms are equivalent." 1.
+
+Conclusion: The UB fix is worthwhile. The empty() change is optional but nice.
+
+*/
+/* #claude_experience_report_improve_block_help_text_nl2pl_20260103
+
+Analysis of #help_text_nl2pl for improvement potential.
+
+Event space population:
+
+"The block could be improved by expanding the --expand cross-reference with a brief description." 1.
+"The block should not be changed because cross-references to other help topics are intentionally brief." 2.
+
+"The block could be improved by making line 172 more formal." 1.
+"The block should not be changed because the casual tone is consistent with the codebase style." 2.
+
+"The block could mention @-refs for LLM context." 1.
+"The block should not mention @-refs because that's covered elsewhere and would expand scope." 3.
+
+Final assessment:
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+Reasoning: The help text is well-structured with clear sections (command reference, workflow example, configuration, principles). It covers the essential information without bloat. The three potential improvements identified are all marginal - in each case the argument for leaving it unchanged is stronger than the argument for changing it.
+
+The casual "build or test or whatever" on line 172 matches the codebase's voice. The --expand cross-reference follows the pattern of brief mentions. And @-refs are architectural context that belongs in a separate topic.
+
+No changes recommended.
+*/
+/* #claude_experience_report_handle_snapshot_join_20260103
+
+Analysis of #handle_snapshot_join for improvement potential.
+
+**Proposed Improvements:**
+
+1. Replace bubble sort with qsort
+   - Current: O(n²) bubble sort for snapshot ordering
+   - Change first line: `for (int i = 0; i < n - 1; i++) {`
+   - To: use `qsort(snapshots, n, sizeof(char*), cmp_reverse);`
+   - Support: Cleaner, standard, faster for large n
+
+"The block can be improved by using qsort instead of bubble sort." 2.
+"The block cannot be improved by using qsort because bubble sort is adequate for typical snapshot counts and the code is manually maintained for simplicity." 3.
+
+2. Escape shell metacharacters in popen commands
+   - Current: `snprintf(cmd1, sizeof(cmd1), "cat '%s' | '%s'", snap_path, es1_path);`
+   - Risk: Single quotes in paths would break command
+   - Change: Use proper escaping or fork/exec directly
+
+"The block can be improved by escaping shell metacharacters in path arguments." 3.
+"The block cannot be improved this way because snapshot filenames are cmpr-generated timestamps containing only digits and dashes, and es filter names are user-controlled config." 4.
+
+3. Handle popen failure explicitly
+   - Current: `if (fp1) { ... }` silently skips on failure
+   - Could add error reporting
+
+"The block can be improved by reporting popen failures." 1.
+"The block cannot be improved this way because silent skip is reasonable behavior and avoids noisy output." 3.
+
+4. Use dynamic allocation instead of fixed arrays
+   - Current: `char *snapshots[4096];` and `char *es1_lines[1024];`
+   - Risk: Silent truncation at limits
+
+"The block can be improved by using dynamic allocation." 1.
+"The block cannot be improved this way because fixed limits are practical and the code is manually maintained for simplicity." 4.
+
+**Summary:**
+
+The block is marked "Manually maintained" which signals intentional simplicity. All proposed improvements add complexity for marginal benefit. The code handles its primary use case well: joining event spaces across snapshots.
+
+The shell injection concern is theoretical - cmpr controls snapshot naming (timestamps), and es filter names come from user configuration. The bubble sort handles typical snapshot counts fine.
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 5.
+
+The block is adequate as-is. Minor improvements exist but don't justify the complexity cost in a manually-maintained block.
+
+*/
+/* #claude_experience_report_handle_args_4_review_20260103
+
+Analysis of #handle_args_4 for potential improvements using SN notation.
+
+**Block Context:**
+This is the terminal dispatch block for CLI argument handling. It handles ~25 different command flags, validates mutual exclusivity, and dispatches to appropriate handlers.
+
+**Improvement Analysis:**
+
+1. **Duplicated block lookup pattern**
+The pattern `int idx = block_from_arg(...); if (idx < 0 || idx >= state->blocks.n) {...}` appears 7 times.
+
+"The block can be improved by extracting duplicate block-lookup-and-validate pattern into a helper function." 3.
+"The block cannot be improved by extracting the duplicate pattern because the repetition is clear and a helper would obscure the control flow." 2.
+
+2. **Stale comment on line 199**
+`//get_code();` is commented out with no explanation.
+
+"The block can be improved by removing the stale commented-out get_code() call." 2.
+"The block cannot be improved by removing the comment because it serves as documentation of a design decision." 1.
+
+3. **Block length**
+At ~290 lines, this is substantial. However, it's a terminal dispatch block.
+
+"The block can be improved by splitting it into smaller blocks." 1.
+"The block cannot be improved by splitting because it is a terminal dispatch block where all cases belong together." 3.
+
+**Final Assessment:**
+
+The strongest improvement candidate is extracting the repeated block-lookup pattern (3 bits support). However, this is a code quality matter, not a bug fix or feature. The code correctly implements what the NL describes.
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 3.
+
+*/
+/* #claude_experience_report_handle_args_3_analysis_20260103
+
+Analysis of #handle_args_3 for improvement opportunities.
+
+## Block Under Review
+
+The block implements argument parsing for cmpr CLI flags.
+
+## Proposed Improvements
+
+### 1. Duplicated error handling pattern
+
+The pattern `if (i + 1 >= argc) { prt("Missing <X> argument for --Y\n"); flush_exit(1); }` appears 25+ times.
+
+Could extract to a helper macro or inline function.
+
+**Rebuttal**: The pattern is mechanically consistent and explicit. A macro might obscure the flow for new readers. The repetition is the simplest possible implementation.
+
+"The block can be improved by extracting the missing-argument check to a macro." 2.
+"The block should not extract the check because explicitness aids comprehension." 3.
+
+### 2. strcmp cascades
+
+Linear search through all flags via strcmp chain. Could use a table-driven approach.
+
+**Rebuttal**: The current approach compiles to efficient code via compiler optimization. Table-driven approach adds complexity for ~40 flags. This is not a hot path.
+
+"The block can be improved by using a table-driven flag parser." 1.
+"The block should keep the strcmp cascade because it's simple and fast enough." 4.
+
+### 3. Single-letter flag inconsistency
+
+`-h` for help isn't implemented, only `--help`.
+
+**Rebuttal**: This is a deliberate design choice - cmpr uses long flags exclusively. Adding short flags would require documenting them too.
+
+"The block can be improved by adding short flag aliases." 1.
+"The block should not add short flags to keep the interface minimal." 3.
+
+### 4. File argument handling at the end
+
+The else clause at line 316 handles non-flag arguments (file arguments). This is correct but only handles one file.
+
+**Rebuttal**: Single file argument is the intended design. Multiple file support would require different semantics.
+
+"The block can be improved by supporting multiple file arguments." 0.
+"The block correctly handles single file argument as designed." 4.
+
+### 5. No validation of flag combinations
+
+Conflicting flags like `--print-block` and `--replace` together aren't checked here.
+
+**Rebuttal**: Flag conflict checking belongs in a separate validation phase, not in parsing. Mixing concerns would complicate the block.
+
+"The block can be improved by adding flag conflict detection." 1.
+"Flag conflict detection belongs elsewhere, not in the parsing loop." 4.
+
+## Summary
+
+The block is a straightforward, manually-maintained argument parser. Its verbosity is a feature, not a bug - each flag's handling is self-contained and greppable. The code is already as simple as it can be while remaining correct and explicit.
+
+Main concerns (macro extraction, table-driven parsing) would add complexity without proportional benefit for a ~40-flag parser that runs once per invocation.
+
+## Final Assessment
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 5.
+
+*/
+/* #claude_experience_report_handle_args_review_20260103
+
+Analysis of #handle_args block for improvement opportunities.
+
+The block under review:
+
+```
+/* #handle_args_old @argtable @gcb
+
+In handle_args we handle any command-line arguments.
+
+void handle_args(int argc, char **argv);
+
+Below we implement void handle_args(int argc, char **argv);
+
+Here, the first line just opens the function:
+
+Manually maintained.
+
+
+void handle_args(int argc, char **argv) {
+*/
+
+/* #handle_args_next
+
+**Improvement suggestions:**
+
+1. "The NL comment could remove the redundant phrase 'Below we implement void handle_args(int argc, char **argv);' since the declaration line already provides this." 2.
+
+Rebuttal: The repetition serves as documentation pattern consistency with other blocks. The "Below we implement" phrase signals intent. 1.
+
+2. "The NL comment could add a reference to #handle_args_2 to clarify the multi-block structure." 3.
+
+Rebuttal: The @argtable @gcb refs already provide context. The next block naturally follows. 1.
+
+3. "The PL part is a single opening brace line which seems minimal." 1.
+
+Rebuttal: This is correct - the block is marked "Manually maintained" and serves as a function header. The actual implementation continues in #handle_args_2 and beyond. The minimalism is intentional and correct. 3.
+
+**Final arguments:**
+
+The block is extremely minimal by design. It's a function opener that delegates to subsequent blocks. The "Manually maintained" marker is appropriate because this is just `void handle_args(int argc, char **argv) {` - there's nothing for nl2pl to generate.
+
+The only substantive improvement would be clarifying the multi-block structure in the NL, but this is a minor documentation concern rather than a functional improvement.
+
+**Final support:**
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 4.
+
+The block is minimal, correct, and appropriately structured. Minor NL clarifications are possible but not impactful.
+
+*/
+
+/* #handle_args
+
+In handle_args we handle any command-line arguments.
+
+void handle_args(int argc, char **argv);
+
+Here, the first line just opens the function, but see #handle_args_2 ff. for the rest of the C function (across 4 blocks).
+
+Manually maintained.
+
+*/
+
+void handle_args(int argc, char **argv) {
+/* #claude_experience_report_print_config_review_20260103
+
+Experience report: Block improvement review for #print_config
+
+Session goal: Evaluate #print_config for potential improvements using SN reasoning.
+
+Block reviewed: #print_config (debugging helper, prints config values via X macro)
+
+Analysis performed:
+
+Improvement suggestions considered:
+1. "The block could add error checking for null pointers." 1.
+   Rebuttal: X macro operates on state->name spans, not nullable pointers. CONFIG_FIELDS guarantees existence. 2.
+
+2. "The block could be shorter by removing the function wrapper." 0.
+   Rebuttal: Function is appropriate abstraction for reusable debugging helper. 3.
+
+3. "The block could have a more descriptive NL comment." 1.
+   Rebuttal: Comment accurately describes purpose; more would be redundant. 2.
+
+4. "The block's prt format could use PRIspan or similar." 1.
+   Rebuttal: %.*s with len() and .buf is idiomatic spanio pattern in this codebase. 2.
+
+Conclusion:
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+The block is already minimal, idiomatic, bug-free, and its NL accurately describes its PL.
+No changes recommended.
+
+Next steps: Continue to #print_bootstrap per the workflow.
+
+*/
+/* #claude_experience_report_call_anthropic_curl_review_20260103
+
+Experience report: Review of #call_anthropic_curl block
+
+Session goal: Evaluate #call_anthropic_curl for potential improvements using SN methodology.
+
+## Analysis Summary
+
+Reviewed the curl-based Anthropic API call implementation. The block correctly:
+- Checks for API key presence
+- Constructs a curl command with proper headers
+- Handles success/error cases by reading response files
+
+## Proposed Improvements Considered
+
+1. **Filename quoting for shell safety** (3 bits support, 1 bit against)
+   - Filenames interpolated without quotes could break on special characters
+   - Mitigated by callers using controlled temp paths
+
+2. **API key escaping** (1 bit support, 2 bits against)
+   - API keys are conventionally alphanumeric, low risk
+
+3. **Stderr redirection syntax** (0 bits support, 2 bits against)
+   - Current --stderr usage is correct for curl
+
+4. **Code length** (0 bits for reduction, 2 bits appropriate)
+   - ~30 lines is right-sized for the task
+
+## Final Assessment
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 3.
+
+The block is functional, matches its specification, and has no bugs. The shell quoting concern is valid but minor given controlled usage context.
+
+## What Works
+- Clean NL/PL correspondence
+- Proper error handling structure
+- Correct use of prs() for command construction
+
+## Next Steps
+- If filename safety becomes a concern, add quotes around %.*s for file paths
+- Otherwise, block is production-ready
+
+*/
+/* #claude_experience_report_call_gpt_curl_20260103
+
+Analysis of #call_gpt_curl for potential improvements.
+
+**Proposed Improvement 1: Buffer size hardcoded**
+The command buffer is 1024 bytes, which could overflow with long paths or API keys.
+"The block can be improved by using dynamic buffer sizing or a larger buffer." 2.
+
+Rebuttal: In practice, paths and keys are short. The typical command is ~400 bytes. 1024 is 2.5x headroom.
+"The block cannot be improved by dynamic buffers because the current size is adequate for realistic inputs." 1.
+
+**Proposed Improvement 2: Missing null-termination check on response**
+read_file_into_cmp might return empty on file read failure, but we set success=1 before checking.
+
+Actually, looking closer: we set success=1 initially, then check `result != 0` and update. This is correct - curl exit code determines success, not file read. The response could be empty on success (unlikely but valid).
+"The block cannot be improved by adding response checks because curl exit code is the correct success indicator." 2.
+
+**Proposed Improvement 3: Command injection vulnerability**
+If any span (paths, api_key) contains shell metacharacters, the command could be exploited.
+"The block can be improved by escaping shell metacharacters in spans." 3.
+
+Rebuttal: The req/resp/err are temporary file paths generated internally. The api_key comes from configuration. These are trusted inputs in practice.
+"The block cannot be improved by adding escaping because inputs are trusted internal values." 2.
+
+**Proposed Improvement 4: Code length**
+The code is already minimal - 32 lines of PL for a network call with error handling. The NL is comprehensive at 40+ lines. No obvious way to shorten without losing clarity.
+"The block cannot be improved by shortening because it is already minimal for its functionality." 3.
+
+**Final Assessment**
+
+The block is well-structured. The NL is detailed and the PL follows it precisely. The main theoretical improvement (shell escaping) is mitigated by trusted inputs. The buffer size concern is minor given realistic usage.
+
+Summary of all SN lines:
+
+"The block can be improved by using dynamic buffer sizing or a larger buffer." 2.
+"The block cannot be improved by dynamic buffers because the current size is adequate for realistic inputs." 1.
+"The block cannot be improved by adding response checks because curl exit code is the correct success indicator." 2.
+"The block can be improved by escaping shell metacharacters in spans." 3.
+"The block cannot be improved by adding escaping because inputs are trusted internal values." 2.
+"The block cannot be improved by shortening because it is already minimal for its functionality." 3.
+
+Final event space:
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 4.
+
+*/
+/* #claude_experience_report_assoc_spans_improvement_20260103
+
+Improvement analysis for #assoc_spans block.
+
+**Block under review:** #assoc_spans - documentation for assoc list pattern using spans
+
+**Improvement suggestions:**
+
+1. Typo: "intepretation" → "interpretation" on line 4
+   - Clear mechanical fix, no ambiguity
+
+2. The block is NL-only (documentation/overview), no PL to shorten or fix bugs in
+
+3. Could mention that lookup is O(n) linear scan, but this is implied by "examine... until we find a match" - adding it would be redundant verbosity
+
+**Rebuttals:**
+
+1. The typo fix is valid - it's a clear error
+2. Adding O(n) complexity note would add words without adding information - the algorithm description already makes this clear
+3. The prose is already concise and complete - it explains what assoc spans are, how to use them, and documents the lookup function
+
+**Final assessment:**
+
+"The block can be improved by fixing 'intepretation' → 'interpretation' on line 4." 3.
+"The typo fix is trivial and mechanical." 2.
+"The block cannot be shortened because it is already minimal NL-only documentation." 2.
+"The block has no PL code to optimize." 2.
+
+"The block can be meaningfully improved by us." 3.
+"The block cannot be meaningfully improved by us." 1.
+
+**Recommendation:** Fix the typo. One-line change, clear improvement.
+
+*/
+/* #claude_experience_report_filename_template_review_20260103
+
+Analysis of #filename_template for improvement potential.
+
+The block #filename_template is a thin wrapper that:
+1. Calls filename_variables() to get the variable dictionary
+2. Passes it to expand_template() with the template
+
+Proposed improvements and rebuttals:
+
+---
+
+Improvement 1: The NL comment is verbose and includes design discussion that could be moved elsewhere.
+
+"The NL comment could be shortened by removing design rationale." 1.
+
+Rebuttal: The design rationale (inlining patterns, cmp space management) documents important usage patterns and optimization strategies. This is reference documentation for future work.
+
+"The design rationale should stay because it documents optimization patterns." 2.
+
+---
+
+Improvement 2: The function could be inlined at call sites since it's trivial.
+
+"The function could be inlined at call sites." 1.
+
+Rebuttal: The function provides a named abstraction that hides the filename_variables() call. This is cleaner than repeating expand_template(template, filename_variables()) everywhere.
+
+"The wrapper abstraction is valuable for call site clarity." 2.
+
+---
+
+Improvement 3: The PL code is already minimal (3 lines for declaration and body).
+
+"The PL code cannot be made shorter." 3.
+
+There is no shorter way to write a function that calls two functions and returns the result.
+
+---
+
+Improvement 4: Could add caching of filename_variables() result.
+
+"The function could cache filename_variables() for performance." 1.
+
+Rebuttal: The NL explicitly states timestamp is "consistent per main loop iteration", implying variables may change between iterations. Caching would break this semantic.
+
+"Caching would violate the per-iteration consistency requirement." 3.
+
+---
+
+Improvement 5: Error handling for invalid templates?
+
+"Error handling could be added for invalid templates." 1.
+
+Rebuttal: The template language design shows escaping rules are simple. expand_template handles the parsing. Adding error handling here would duplicate logic.
+
+"Error handling belongs in expand_template, not the wrapper." 2.
+
+---
+
+Final assessment:
+
+The block is well-designed:
+- Clean separation: variables in one function, expansion in another
+- Minimal implementation that does exactly what's needed
+- Thorough NL documentation including optimization patterns
+- No bugs to fix, no features missing for its purpose
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+The function is essentially optimal for its purpose. It's a clean wrapper providing a convenient API.
+
+*/
+/* #claude_experience_report_improve_block_20260103
+
+Analyzed #read_anthropic_key for improvement potential.
+
+Block assessment:
+- Correctly implements parallel pattern to #read_openai_key
+- NL accurately describes the transformation rule
+- PL matches the specification exactly
+- No bugs, no unnecessary complexity
+
+SN analysis:
+"The block follows the documented pattern exactly." 3.
+"The block has no obvious bugs." 2.
+"The block cannot be made shorter without losing clarity." 2.
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 5.
+
+Conclusion: Block is at optimal form for its purpose.
+*/
+/* #claude_experience_report_improve_block_read_openai_key_20260103
+
+Experience report: Block improvement analysis for #read_openai_key
+
+Session goal: Analyze #read_openai_key for potential improvements using the SN-based improvement protocol.
+
+Block analyzed: #read_openai_key
+Function: void read_openai_key()
+Purpose: Reads OpenAI API key from ~/.cmpr/openai-key if it exists
+
+Improvement suggestions considered:
+
+1. "The PATH_MAX buffer could overflow if HOME is very long" 1.
+   Rebuttal: PATH_MAX is defined specifically for this purpose; snprintf truncates safely; this is not a real concern.
+   "The PATH_MAX buffer cannot overflow because snprintf limits output" 3.
+
+2. "The code could provide better error messages" 1.
+   Rebuttal: Silent failure is intentional per the NL - user may not use OpenAI at all.
+   "Silent failure is correct behavior as specified in NL" 3.
+
+3. "The code could cache the stat result" 0.
+   Rebuttal: This function runs once at startup; no performance concern.
+   "No caching needed for one-time startup function" 2.
+
+Final assessment:
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+Rationale: The NL precisely describes the implementation. The PL correctly implements the NL. Error handling matches the design intent (silent when file missing, fail on read error). The trim() correctly handles key formatting. No bugs, no unnecessary complexity, no missing features.
+
+Next steps: Proceed to #read_anthropic_key per the T state.
+
+*/
+/* #claude_experience_report_read_block_analysis_20260103
+
+Experience report: Analyzing #read_ block for improvement
+
+Session goal: Apply #improve_block_prompt to #read_ block
+
+Analysis of #read_ block:
+
+The NL describes operations in a different order than the PL executes them, and mentions operations that don't appear in the code.
+
+**Improvement suggestions:**
+
+1. NL mentions "We call find_cmprdir" twice - once at the start and once in the middle.
+   The code doesn't call find_cmprdir at all; it must be called elsewhere or is stale documentation.
+   "The NL mentions find_cmprdir but the PL doesn't call it." 3.
+   "The NL is correct and find_cmprdir is called inside handle_args." 2.
+
+2. NL mentions "We projfiles_alloc the files array on the state" but no such call appears in PL.
+   "The NL mentions projfiles_alloc but the PL doesn't call it." 3.
+   "The projfiles_alloc is done inside get_code or handle_args." 2.
+
+3. NL mentions "We set config_file_path on the state" but this doesn't appear in PL.
+   "The NL mentions setting config_file_path but PL doesn't show it." 3.
+   "The config_file_path is set inside handle_args." 2.
+
+4. The NL ordering is: find_cmprdir -> projfiles_alloc -> clock_gettime -> handle_args -> check_conf_vars -> find_cmprdir(again?) -> config_file_path -> check_dirs -> event_load_T -> get_code
+   The PL ordering is: clock_gettime -> handle_args -> check_conf_vars -> check_dirs -> event_load_T -> get_code
+   "The NL describes operations in a confusing order that doesn't match PL." 4.
+   "The NL order is intentionally describing dependencies not execution order." 1.
+
+**Rebuttals:**
+
+The NL might be describing what happens CONCEPTUALLY across multiple functions, not just what appears literally in read_(). The calls to find_cmprdir, projfiles_alloc, and config_file_path setting might happen inside handle_args or other called functions.
+
+However, if the NL is for THIS function specifically, it should describe what THIS function does, not what sub-functions do internally.
+
+**Final arguments:**
+
+The NL is ~25 lines describing operations. The PL is 6 lines of code (5 function calls + clock_gettime). There's significant mismatch:
+- NL mentions find_cmprdir twice, PL calls it zero times
+- NL mentions projfiles_alloc, PL doesn't call it
+- NL mentions config_file_path, PL doesn't set it
+- NL ordering differs from PL execution order
+
+Either:
+(a) NL needs trimming to match what read_() actually does, OR
+(b) PL needs expanding to include the missing calls
+
+Given that the PL works (presumably), the NL should be simplified to match reality.
+
+**Proposed improvement:**
+
+Remove the stale paragraphs about find_cmprdir, projfiles_alloc, and config_file_path from NL. They describe behavior that either doesn't exist or happens elsewhere.
+
+**Summary in SN:**
+
+"The NL describes find_cmprdir calls that don't exist in PL." 3.
+"The NL describes projfiles_alloc that doesn't exist in PL." 3.
+"The NL describes config_file_path setting that doesn't exist in PL." 3.
+"The NL ordering is confusing relative to actual execution order." 4.
+"The NL might correctly describe behavior in sub-functions." 2.
+"The block can be meaningfully improved by us." 5.
+"The block cannot be meaningfully improved by us." 1.
+
+Next steps: If the decision is to improve, the NL should be shortened to match the actual PL, removing references to find_cmprdir, projfiles_alloc, and config_file_path (or moved to the functions where they actually occur).
+
+*/
+/* #claude_experience_report_init_review_20260103
+
+Reviewed #init block for potential improvements.
+
+**Improvement Suggestions:**
+
+1. **Missing error checking for arena allocations**
+   Current: `projfiles_arena_alloc(1UL<<14);` with no return value check
+   Proposed: Could add validation that allocations succeeded
+   
+   "The block could add error checking for arena allocations." 2.
+   "Error checking is unnecessary because the program should crash on allocation failure anyway." 3.
+
+2. **Magic numbers could be named constants**
+   Current: `1UL<<30`, `1UL<<20`, `1024`, `256`
+   The NL comment documents these sizes, so the code is self-documenting via the NL/PL pairing.
+   
+   "The block could use named constants instead of magic numbers." 1.
+   "Named constants are unnecessary because NL already documents the values." 4.
+
+3. **Inconsistent initialization pattern**
+   `state->files.n = 0;` and `state->events.n = 0;` are set explicitly, but if the alloc functions already zero-initialize, this is redundant.
+   
+   "The explicit .n = 0 assignments might be redundant." 1.
+   "Explicit zero-init is defensive and documents intent." 3.
+
+4. **The block does what it says**
+   The NL accurately describes what the PL does. Arena sizes match the documented values. The function calls match the documented sequence.
+
+**Final Assessment:**
+
+The block is well-structured. The NL comment is detailed and accurate. The PL implements exactly what the NL describes. The only potential improvements are stylistic (constants, error checking) which would add complexity without clear benefit in this context.
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 5.
+
+*/
+/* #claude_experience_report_main_block_improvement_20260103
+
+Analysis of #main block for improvement opportunities.
+
+## Block Under Review
+
+#main - The main() function entry point for cmpr.
+
+## Improvement Suggestions
+
+### Suggestion 1: Remove unreachable return statement
+
+The NL says "the line after main_loop() is unreachable" and mentions indicating this to the compiler, but the PL has `return 0;` anyway without any `__builtin_unreachable()` or similar.
+
+"The block can be improved by removing `return 0;` and adding `__builtin_unreachable();` to match the NL description." 2.
+
+Rebuttal: The `return 0;` is harmless and prevents compiler warnings about missing return. The compiler likely optimizes it away. The NL could just be updated to match what's actually there.
+
+"The block cannot be improved this way because `return 0` is conventional, harmless, and the NL comment is merely descriptive of intent not prescriptive of exact mechanism." 3.
+
+### Suggestion 2: The code is already minimal and clear
+
+The function does exactly what main() should do: initialize state, call init, read, and loop. There's nothing to add or remove that would make it better.
+
+"The block is already at minimal length for its purpose." 3.
+"No bugs are apparent in this code." 3.
+
+### Suggestion 3: NL/PL Alignment
+
+The NL mentions "indicate to the compiler that the line after main_loop() is unreachable" but the PL doesn't actually do this - it just has return 0. This is a minor NL/PL mismatch.
+
+"The NL could be updated to remove the compiler hint language since the PL just uses return 0." 1.
+"The block cannot be improved by changing PL because return 0 is idiomatic." 2.
+
+## Final Assessment
+
+The #main block is essentially correct, minimal, and clear. The only real issue is a minor NL/PL mismatch about the unreachable annotation - but fixing this would be changing the NL to match the (correct) PL, not the other way around.
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+Conclusion: The block is already in good shape. The one minor improvement would be updating the NL to remove the mention of indicating unreachability to the compiler, since the PL just uses a conventional `return 0`. This is a documentation polish, not a meaningful code improvement.
+
+*/
+/* #claude_experience_report_set_default_clipboard_20260103
+
+Block review: #set_default_clipboard_commands
+
+Improvement proposals:
+
+1. The NL comment is empty - the block has only PL code with no documentation.
+   - This violates the NL-first principle where NL is source of truth
+   - The NL should describe what the functions do and include function declarations
+
+"The block can be improved by adding an NL comment documenting the three functions." 3.
+"The block cannot be improved this way because it's low-priority infrastructure code." 1.
+
+2. The WSL and Windows branches set identical clipboard commands (clip.exe, powershell Get-Clipboard).
+   - Could combine: `if (is_wsl() || strcmp(os, "Windows") == 0)`
+
+"The block can be improved by consolidating duplicate WSL/Windows branches." 2.
+"The block cannot be improved this way because explicit branches are clearer." 2.
+
+3. Missing function declarations in NL (detect_os, is_wsl, set_default_clipboard_commands).
+   - Per CLAUDE.md, every C function must have declaration in NL for fdecls.h extraction
+
+"The block can be improved by adding function declarations to NL." 3.
+"The block cannot be improved this way because declarations can be inferred." 0.
+
+4. The detect_os() function is only used for strcmp comparisons.
+   - Could use enum instead of strings for type safety
+   - However, strings are readable and the performance cost is negligible
+
+"The block can be improved by using an enum for OS detection." 1.
+"The block cannot be improved this way because string comparisons are clear and this is init code." 3.
+
+Summary:
+
+"The block can be improved by adding NL documentation with function declarations." 3.
+"The block can be improved by consolidating WSL/Windows branches." 2.
+"The block can be improved by using enum for OS." 1.
+"The block cannot be improved by enum because strings are clearer for init code." 3.
+
+Final:
+
+"The block can be meaningfully improved by us." 4.
+"The block cannot be meaningfully improved by us." 1.
+
+Primary action: Add NL comment with function declarations describing clipboard command detection logic.
+
+*/
+/* #claude_experience_report_ingest_functions_review_20260103
+
+Analysis of #ingest_functions for the improve-block system.
+
+The block is an overview/index block declaring functions related to code ingestion and block finding.
+
+== Proposed Improvements ==
+
+1. The comment mentions "find_all_blocks" in `find_all_lines` description but find_all_blocks() is not declared in this block.
+
+"The block can be improved by adding find_all_blocks() declaration for completeness." 2.
+"The block cannot be improved this way because find_all_blocks is in a separate block (#find_all_blocks) and not every function needs to be listed here - only the top-level API." 3.
+
+2. The NL comment says "get_code handles everything" but actually get_code calls ingest() which does the downstream work.
+
+"The block can be improved by clarifying that get_code reads files then delegates to ingest()." 1.
+"The block cannot be improved this way because the current wording is approximately correct and the details are in #get_code." 2.
+
+3. Missing @-reference to related blocks.
+
+"The block can be improved by adding @find_all_blocks or @parsing_io_overview reference." 1.
+"The block cannot be improved this way because this is an overview block and adding refs would create circular dependencies." 2.
+
+4. The declarations have inline comments that are redundant with the NL.
+
+"The block can be improved by removing redundant inline comments on function declarations." 1.
+"The block cannot be improved this way because the inline comments serve as quick reference without reading full NL." 3.
+
+5. inp_sanity_checks() is called by ingest (per #ingest) but not declared here.
+
+"The block can be improved by adding inp_sanity_checks() declaration." 1.
+"The block cannot be improved this way because inp_sanity_checks is an internal helper, not part of the ingest API." 2.
+
+== Summary ==
+
+The block is a well-structured overview of ingestion functions. Most proposed improvements are minor documentation tweaks that would add marginal value at best. The current form is clear and serves its purpose as an index.
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 4.
+
+Reasoning: The strongest argument for improvement (adding find_all_blocks declaration) was rebutted by recognizing that this overview intentionally curates which functions are listed. The inline comments provide value as quick reference. The NL description is adequate even if slightly imprecise. No bugs or missing features were identified.
+
+*/
+/* #claude_experience_report_event_parse_sn_20260103
+
+Analysis of #event_parse_sn for improvement.
+
+The block implements SN line parsing. Looking at the code:
+
+**Improvement Suggestions:**
+
+1. **Empty event string handling**: The code doesn't check if event_str is empty before calling event_add_internal. If a line is `"" 255.`, it would add an empty event.
+
+"The block can be improved by adding empty string validation before event_add_internal." 2.
+"The block cannot be improved by adding empty string validation because empty events may be valid in SN." 1.
+
+2. **Strength overflow**: The strength parsing doesn't check for overflow. If someone writes `"foo" 99999.`, it would overflow an unsigned char.
+
+"The block can be improved by capping strength at 255." 2.
+"The block cannot be improved by capping strength because malformed input is caller's problem." 1.
+
+3. **Line continuation**: The code handles each line independently. SN spec says interior quotes aren't escaped, so multi-line events aren't possible anyway. This is correct.
+
+"The block cannot be improved by adding multi-line support because SN doesn't support it." 3.
+
+4. **The event_add_internal call**: The code correctly passes the event string span and strength. The bounds are correctly calculated (line.buf to p, where p points to the closing quote).
+
+5. **Clearing events.n = 0**: This resets events at the start, which means calling event_parse_sn twice replaces rather than appends. This matches the --T0 semantics.
+
+"The block cannot be improved by changing reset behavior because it matches T semantics." 2.
+
+**Final Assessment:**
+
+The code is concise, handles the SN format correctly per spec, and uses spanio idioms properly. The potential improvements (empty check, overflow) are edge cases that arguably belong to input validation elsewhere.
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 4.
+
+Conclusion: The block is solid. Minor edge case hardening possible but not compelling.
+
+*/
+/* #claude_experience_report_events_functions_review_20260103
+
+Analysis of #events_functions for improvement opportunities.
+
+## Block Overview
+
+The block implements the event system operations for T (transient memory): load, save, add, memorize, recall, query, and print.
+
+## Improvement Suggestions
+
+### 1. Potential bug in event_recall: Memory management
+
+The function saves `query_events = state->events` but `query_events.a` still points to the same array. If `event_parse_content` reallocates the events array, `query_events.a` could become a dangling pointer.
+
+"The block can be improved by copying query events to a separate buffer before parsing snapshots." 3.
+"The block cannot be improved this way because state->events.a is stable memory and event_parse_content uses event_add_internal which doesn't free the old array." 2.
+
+### 2. wrs_esc for output vs SN spec
+
+The block uses `wrs_esc` when saving events, but the SN spec says interior quotes are NOT escaped. If wrs_esc escapes quotes, saved events may not parse correctly on reload.
+
+"The block can be improved by not escaping interior quotes to match SN spec." 4.
+"The block cannot be improved this way because wrs_esc may not escape quotes, or the escaping is intentional for robustness." 1.
+
+### 3. event_add calls system("scripts/patterns")
+
+This call is unusual - it's a side effect that runs an external script on every event add. If the script doesn't exist, it fails silently.
+
+"The block can be improved by removing or documenting the system() call in event_add." 2.
+"The block cannot be improved this way because the scripts/patterns call may be intentional infrastructure for pattern matching." 2.
+
+### 4. Missing error handling
+
+Several functions don't report errors clearly:
+- `read_whole_file` returns empty span for both "doesn't exist" and "read error"
+- No validation that parsed strength is actually 0-255
+
+"The block can be improved by adding validation for strength values and better error reporting." 2.
+"The block cannot be improved this way because simpler code is better and edge cases are rare." 2.
+
+### 5. Block structure
+
+The block contains many functions with extensive code. Per CLAUDE.md, blocks with many functions should be refactored into overview + individual blocks. The block NL even acknowledges this with its TODO.
+
+"The block can be improved by splitting into individual function blocks as the TODO suggests." 3.
+"The block cannot be improved this way because the current monolithic structure works and refactoring has cost." 1.
+
+### 6. Code duplication
+
+`event_save_T` and `event_memorize` have nearly identical serialization loops. This could be factored out.
+
+"The block can be improved by extracting a shared event serialization helper." 2.
+"The block cannot be improved this way because the duplication is small and explicit code is clearer than abstraction." 2.
+
+## Summary
+
+The most actionable improvements are:
+
+1. Fix wrs_esc to match SN spec (4 bits for, 1 against)
+2. Split block per TODO (3 bits for, 1 against)  
+3. Memory safety in event_recall (3 bits for, 2 against)
+
+"The block can be meaningfully improved by us." 4.
+"The block cannot be meaningfully improved by us." 1.
+
+*/
+/* #claude_experience_report_events_types_review_20260103
+
+Experience report: Review of #events_types block
+
+Session goal: Analyze #events_types for potential improvements using the improve-block workflow.
+
+Block analyzed: #events_types
+Purpose: Event storage system types (event_entry struct + MAKE_ARENA)
+
+Improvement suggestions considered:
+
+1. Named constant for arena capacity (256)
+   - Proposal: Define EVENT_ARENA_CAPACITY or similar
+   - Rebuttal: 256 is self-documenting (max strength value, reasonable event limit)
+   - The MAKE_ARENA(type, name, capacity) idiom is clear
+   - Support for improvement: 1 bit
+   - Support against: 2 bits
+
+2. Hash table for deduplication
+   - The NL explicitly defers this: "We can optimize later with a hash table if needed"
+   - This is good engineering practice - no premature optimization
+   - Support for improvement: 0 bits
+   - Support against: 3 bits
+
+3. Block structure
+   - Already minimal and focused
+   - NL explains the design clearly
+   - PL is just the struct and MAKE_ARENA - can't be shorter
+
+SN Summary:
+
+"The block can be improved by defining a named constant for the 256 arena capacity." 1.
+"The block cannot be improved by defining a named constant because 256 is obvious and the idiom is clear." 2.
+"The block can be improved by implementing hash table for deduplication." 0.
+"The block cannot be improved by implementing hash table because NL explicitly defers this optimization." 3.
+
+Final assessment:
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 3.
+
+Conclusion: The block is well-written. No changes recommended.
+
+*/
+/* #claude_experience_report_projfiles_review_20260103
+
+Reviewed #projfiles for improvement potential.
+
+The block defines the projfile struct (path, language, contents, cksum) and uses MAKE_ARENA to create a projfiles arena.
+
+Considered improvements:
+1. Documenting MAKE_ARENA output - rejected (DRY violation)
+2. Renaming cksum to checksum - rejected (conventional short form, already documented)
+3. Documenting the 256 stack size - rejected (reasonable default, no special significance)
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+Conclusion: Block is minimal, correct, and well-documented. No changes needed.
+
+*/
+/* #claude_experience_report_checksum_setup_review_20260103
+
+Session: Reviewing #checksum_setup for improvement potential.
+
+Block analyzed: #checksum_setup
+Purpose: Defines checksum type and arena-allocated array.
+
+Improvement analysis using SN framework:
+
+Suggestion 1: Change __u to non-reserved identifier
+- Double underscore prefix is technically reserved in C
+- Rebuttal: Only matters in library headers, not implementation files
+- Support: 1 bit for, 2 bits against
+
+Suggestion 2: Add documentation about SipHash usage
+- Rebuttal: @checksums reference provides context already
+- Support: minimal
+
+Suggestion 3: Name the 256 stack size constant
+- Rebuttal: Matches existing patterns (projfiles uses same style)
+- Support: minimal
+
+Final assessment:
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 3.
+
+Conclusion: Block is appropriately minimal for a type definition. Pedantic improvements don't justify changes. Moving to next block (#projfiles).
+
+*/
+/* #claude_experience_report_config_fields_20260103
+
+Analysis of #config_fields block for improvement potential.
+
+Block examined: #config_fields
+Purpose: Defines CONFIG_FIELDS X-macro listing all config settings
+
+Observations:
+- X-macro pattern is standard and correctly implemented
+- All 9 config fields documented in NL comment
+- NL and PL are synchronized (same field order)
+- Each field has clear purpose description
+
+Improvement analysis per SN format:
+
+"The block provides complete documentation for each config field." 2.
+"The X-macro definition is minimal and correct." 2.
+"No bugs are apparent in this simple macro definition." 2.
+"The block could potentially have missing config fields, but this cannot be verified without codebase search." 1.
+
+Final assessment:
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+Conclusion: This is a well-structured, minimal block. The X-macro pattern is standard C, the documentation is clear, and no obvious improvements exist. The slight uncertainty (1 bit for improvability) comes from the possibility of missing config fields that might exist elsewhere in the codebase but aren't listed here.
+
+*/
+/* #claude_experience_report_inp_compl_review_20260103
+
+Block review for #inp_compl following the #improve_block_prompt protocol.
+
+Block contents: Three functions (inp_compl, cmp_compl, out_compl) that return complement spans for their respective buffer spaces.
+
+=== Improvement Suggestions ===
+
+"The block could be improved by unifying the three functions into a single parameterized function." 1.
+
+Proposed: A single function taking (span* current, char* space_base) could replace all three.
+
+=== Rebuttals ===
+
+"The unification would not improve the block because call sites would become more verbose." 2.
+"The current structure is idiomatic for this codebase's span library pattern." 2.
+"Each function is only 5 lines; abstraction overhead would not reduce total code." 1.
+"The symmetry between the three functions makes verification trivial." 1.
+
+=== Final Arguments ===
+
+The block is minimal, correct, and follows established patterns. The NL accurately describes the PL. No bugs exist. The only possible "improvement" (unification) would actually make the code harder to use without meaningful reduction in size.
+
+=== Final Support ===
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 6.
+
+*/
+/* #claude_experience_report_jsonparser_review_20260103
+
+Block reviewed: #jsonparser
+
+## Analysis
+
+The block is an NL-only documentation block describing the JSON parser's zero-copy design philosophy. It explains:
+1. Parser returns parsed json wrapping the input span (no allocation)
+2. Parsed .s values are subsets of input (contains_ptr relationship)
+3. No memory allocation during parsing
+4. Manual json object construction, avoiding constructors that point to static strings
+
+## Improvement Suggestions
+
+"The block could be improved by listing child implementation blocks (e.g., #json_parse, #json_parse_prefix, #json_s2s)." 2.
+The #spanio_extended_hub already references #jsonparser as "JSON parser implementation", but #jsonparser itself doesn't list its child blocks. However, checking the structure: #json_design, #json, #json_parse etc. are siblings under the hub, not children of #jsonparser.
+
+"The block cannot be improved by adding child blocks because the hub already organizes the JSON blocks as siblings." 3.
+The current organization places #jsonparser as one of several JSON-related blocks under #spanio_extended_hub. Making it an intermediate hub would be redundant.
+
+"The block could be improved by adding an @-ref to #json or #json_design for context." 1.
+This would help readers navigate to related implementation details.
+
+"The block cannot be improved by adding refs because it serves as standalone design documentation." 2.
+The block's purpose is to document a design principle, not to serve as a navigation hub. The hub already provides navigation.
+
+"The block could be made shorter." 0.
+The block is already concise (4 sentences). The repetition of "This means" adds emphasis but could arguably be trimmed.
+
+"The block cannot be made shorter without losing clarity." 2.
+Each sentence adds distinct information: return value wrapping, contains_ptr relationship, no-allocation benefit, and manual construction rationale.
+
+## Final Assessment
+
+The block is well-written design documentation. It clearly explains the zero-copy parsing philosophy. The only potential improvement would be adding a single @-ref to #json_design or #json, but this is minor since the hub already provides navigation context.
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 3.
+
+The block serves its purpose well as standalone design documentation. Minor tweaks possible but not necessary.
+
+*/
+/* #claude_experience_report_json_parse_number_review_20260103
+
+Analysis of #json_parse_prefix_number for potential improvements using SN notation.
+
+**Block under review:** #json_parse_prefix_number
+**Purpose:** Parse JSON number prefix, returning nulljson() on failure or json with parsed number on success.
+
+---
+
+**Improvement 1: Inconsistent advance pattern**
+
+The function mixes `input->buf++` (lines 172, 177) with `advance1(input)` calls. While functionally equivalent, this inconsistency is a code smell.
+
+"The block can be improved by making the advance pattern consistent throughout." 2.
+"The block cannot be improved by making the advance pattern consistent because both patterns work correctly." 1.
+
+---
+
+**Improvement 2: Missing bounds checking**
+
+No checks for `input->buf < input->end` before dereferencing. Could read past buffer end on exhausted input.
+
+"The block can be improved by adding bounds checking before dereferencing input->buf." 3.
+"The block cannot be improved by adding bounds checking because the caller may guarantee valid input bounds." 1.
+
+---
+
+**Improvement 3: Leading zeros accepted**
+
+JSON spec forbids leading zeros (e.g., `007` is invalid, only `0` or `0.xxx` allowed). This code accepts them.
+
+"The block can be improved by rejecting leading zeros per JSON spec." 2.
+"The block cannot be improved by rejecting leading zeros because this is intentional lenient parsing." 1.
+
+---
+
+**Final assessment:**
+
+"The block can be improved by making the advance pattern consistent (input->buf++ vs advance1)." 2.
+"The block can be improved by adding bounds checking before dereferencing." 3.
+"The block can be improved by rejecting leading zeros per JSON spec." 2.
+"The block cannot be improved because it works correctly for well-formed input." 1.
+
+"The block can be meaningfully improved by us." 4.
+"The block cannot be meaningfully improved by us." 1.
+
+*/
+/* #claude_experience_report_json_parse_prefix_string_20260103
+
+Improvement analysis for #json_parse_prefix_string.
+
+## Proposed Improvements
+
+### 1. The return span includes initial quote but start is set after it
+
+Current code:
+```
+advance1(input);
+span start = *input;
+...
+return make_json((span){start.buf - 1, input->buf});
+```
+
+The `start.buf - 1` is intentional to include the opening quote. This is correct but slightly confusing. Could set `span start = *input` before the first advance1.
+
+"The block can be improved by setting start before advancing past the opening quote, making start.buf - 1 unnecessary." 1.
+"The block cannot be improved this way because the current code is correct and the arithmetic is trivial." 2.
+
+### 2. No validation that the returned span is non-empty
+
+After successfully parsing, we return a span but don't validate it. However, a valid JSON string must have at least `""` (2 chars), which is guaranteed by the parsing logic.
+
+"The block can be improved by adding an assertion that the span is at least 2 chars." 0.
+"The block cannot be improved this way because the parsing logic already guarantees this." 3.
+
+### 3. The NL mentions ret.s.end but code uses make_json
+
+The NL says "If we return successfully ret.s.end and input->buf will be equal at the end" but the code doesn't use a variable named `ret`. This is a minor NL/PL mismatch.
+
+"The block can be improved by updating the NL to not reference a non-existent variable name." 2.
+"The block cannot be improved this way because the intent is clear from context." 1.
+
+## Summary
+
+The code is correct and handles all JSON string escape sequences properly. The only real improvement is a minor NL clarification.
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 4.
+
+The block is nearly optimal. The code correctly validates all escape sequences, handles edge cases (empty input, unterminated strings, invalid escapes), and returns a span covering the entire string including quotes. The minor NL wording issue about `ret.s.end` is the only substantive improvement available.
+
+*/
+/* #claude_experience_report_json_s2s_review_20260103
+
+Analysis of #json_s2s block for improvement opportunities.
+
+Improvement proposals:
+
+1. Buffer overflow in write_utf8_from_hex
+
+"The block can be improved: write_utf8_from_hex writes up to 4 bytes without checking against max." 3.
+"The block cannot be improved this way: caller is responsible for ensuring buffer has adequate space." 1.
+
+The current overflow check in the loop checks `buf >= max` before each character, but write_utf8_from_hex can write up to 4 bytes. A UTF-8 sequence for a 3-byte character (0x800-0xFFFF) could overflow if only 1-2 bytes remain.
+
+Proposed fix: Change `if (buf >= max)` to `if (buf + 4 > max)` to ensure room for worst-case UTF-8 encoding.
+
+2. Missing UTF-16 surrogate pair handling
+
+"The block can be improved: JSON \uXXXX sequences for surrogate pairs are not combined." 2.
+"The block cannot be improved this way: BMP-only input is acceptable for current use cases." 2.
+
+JSON encodes codepoints above 0xFFFF as surrogate pairs: `\uD83D\uDE00` for U+1F600. Current code would output two invalid 3-byte sequences instead of one valid 4-byte sequence.
+
+3. Unreachable code path
+
+"The block can be improved: the codepoint >= 0x10000 branch in write_utf8_from_hex is unreachable." 1.
+"The block cannot be improved this way: defensive code is fine and prepares for surrogate handling." 3.
+
+Without surrogate pair combination, maximum codepoint from 4 hex digits is 0xFFFF.
+
+Final assessment:
+
+"The block can be meaningfully improved by us." 3.
+"The block cannot be meaningfully improved by us." 2.
+
+The buffer overflow issue is the strongest argument for improvement. Surrogate pair handling would be nice but depends on use case requirements.
+
+*/
+/* #claude_experience_report_json_parse_prefix_20260103
+
+Analysis of #json_parse_prefix for improvement opportunities.
+
+**The Block**
+
+This is a JSON prefix parser that consumes JSON from a span, modifying the input to leave unconsumed bytes.
+
+**Improvement Suggestions**
+
+1. **Empty input handling**: The function dereferences `*input->buf` without checking if the span is empty first. If `input->buf == input->end`, this is undefined behavior.
+
+"The block can be improved by adding empty span check before dereferencing." 3.
+"The block cannot be improved this way because the caller guarantees non-empty input." 1.
+
+2. **Commented skip_whitespace**: Line 193 has `//skip_whitespace(input);` commented out, but the NL says "First we strip any whitespace". Either the NL is wrong or the code is.
+
+"The block can be improved by uncommenting skip_whitespace or updating the NL." 4.
+"The block cannot be improved this way because the comment is intentional documentation." 0.
+
+3. **Empty object/array handling**: When parsing `{}` or `[]`, the loop condition `while (*input->buf != '}')` will correctly exit immediately, but only after skip_whitespace. This is fine.
+
+"The block handles empty objects/arrays correctly." 2.
+
+4. **Trailing comma tolerance**: The code accepts trailing commas in objects and arrays (e.g., `[1,2,]`), which is not valid JSON per RFC 8259.
+
+"The block can be improved by rejecting trailing commas for strict JSON compliance." 2.
+"The block cannot be improved this way because lenient parsing is intentional." 2.
+
+5. **The NL mentions consume_prefix for true/false/null but the code calls json_parse_prefix_littok**: This is a minor NL/PL mismatch - the implementation detail differs from the description.
+
+"The block can be improved by updating NL to mention json_parse_prefix_littok." 1.
+"The block cannot be improved this way because the NL describes intent, not exact function names." 2.
+
+**Summary**
+
+The commented-out skip_whitespace is the strongest signal something needs fixing - either the code or the NL is wrong, and this is a definite inconsistency.
+
+The empty input check is a real safety concern unless there's a documented caller contract.
+
+"The block can be meaningfully improved by us." 4.
+"The block cannot be meaningfully improved by us." 1.
+
+*/
+/* #claude_experience_report_json_parse_review_20260103
+
+Analysis of #json_parse for the improve-block workflow.
+
+Block reviewed: #json_parse
+Next block: #json_parse_prefix
+
+Improvement consideration:
+The function could add early return after json_parse_prefix if it returns nulljson(), avoiding the trailing whitespace check on parse failure. However this adds code length for negligible benefit (error paths are rare).
+
+SN Analysis:
+
+"The block can be improved by adding early return on parse failure before trailing whitespace check." 1.
+"Adding early return is unnecessary micro-optimization that increases code length." 2.
+"The NL comment accurately describes the function behavior." 3.
+"The PL implementation is correct and minimal." 3.
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+Conclusion: Block is already well-formed. NL and PL are in sync. No changes recommended.
+
+*/
+/* #claude_experience_report_json_review_20260103
+
+Review of #json block for improvement opportunities.
+
+=== Improvement Suggestions ===
+
+1. Missing break statements in json_s switch (CRITICAL BUG):
+
+Current code at lines 216-240:
+```c
+switch (*p) {
+  case '\b':
+    prt("\\b");
+  case '\f':
+    prt("\\f");
+  case '\n':
+    prt("\\n");
+    break;
+```
+
+The cases for \b and \f fall through! A backspace character would print \b\f\n.
+Similarly, \r falls through to \t which falls through to ".
+
+"The block can be improved by adding missing break statements in json_s switch." 5.
+"The block cannot be improved by adding break statements because fall-through is intentional." 0.
+
+2. json_key returns nulljson() incorrectly for valid objects:
+
+At line 381:
+```c
+if (*(o.s.buf++) != ',') return nulljson();
+```
+
+After the last key-value pair, there's no comma - there's a `}`. This causes the function to return null even for valid objects when the searched key is not present. The loop condition checks for `}` but the comma check happens first after each value.
+
+"The block can be improved by fixing json_key end-of-object detection." 3.
+"The block cannot be improved because the current behavior is intentional." 1.
+
+3. Memory management in json_o_extend:
+
+Uses malloc without checking for allocation failure. This is a pattern inconsistency with the rest of the codebase which tends to use arena allocation.
+
+"The block can be improved by using arena allocation in json_o_extend." 2.
+"The block cannot be improved because malloc is acceptable here." 2.
+
+=== Summary ===
+
+"The block can be improved by adding missing break statements in json_s switch." 5.
+"The block cannot be improved by adding break statements because fall-through is intentional." 0.
+"The block can be improved by fixing json_key end-of-object detection." 3.
+"The block cannot be improved because the current behavior is intentional." 1.
+"The block can be improved by using arena allocation in json_o_extend." 2.
+"The block cannot be improved because malloc is acceptable here." 2.
+
+"The block can be meaningfully improved by us." 5.
+"The block cannot be meaningfully improved by us." 1.
+
+*/
+/* #claude_experience_report_first_generic_array_20260103
+
+Analysis of #first_generic_array_is_spans for improvement opportunities.
+
+Event space: can this block be meaningfully improved?
+
+PROPOSED IMPROVEMENTS:
+
+1. Dead code: commented-out lines
+Lines `//int idx = 0;` and `//ret.a[idx++] = trim(s);` are dead code from a previous implementation. These can be removed.
+
+"The block can be improved by removing dead commented code." 2.
+"The block cannot be improved by removing dead commented code because comments document evolution." 1.
+
+2. Forward declarations with no implementation
+`spanspan` and `is_one_of` are declared but not defined in this block. If they're defined elsewhere, the declarations should be with their definitions. If orphaned, they should be removed.
+
+"The block can be improved by relocating or removing orphan declarations." 1.
+"The block cannot be improved by relocating declarations because they may be needed for compilation order." 2.
+
+3. bool_neq is XOR
+`bool_neq(a, b)` is logically equivalent to `a ^ b` or `a != b` for boolean inputs. The implementation uses `(a || b) && !(a && b)` which is less clear than `a != b`.
+
+"The block can be improved by simplifying bool_neq to return a != b." 2.
+"The block cannot be improved by simplifying bool_neq because the explicit logic is intentional for clarity or non-boolean inputs." 1.
+
+4. split_whitespace uses manual idx tracking
+Unlike split_commas_ws which uses spans_push, split_whitespace manually tracks idx and sets ret.n at the end. Inconsistent style.
+
+"The block can be improved by using spans_push in split_whitespace for consistency." 1.
+"The block cannot be improved by changing split_whitespace because manual indexing is faster and the count is pre-known." 2.
+
+5. Block cohesion
+This block contains: MAKE_ARENA macro, nullspan, bool_neq, split_commas_ws, split_whitespace, and forward declarations. These are loosely related (all use span/spans) but bool_neq doesn't relate to the "first generic array" theme in the NL.
+
+"The block can be improved by splitting into cohesive sub-blocks." 1.
+"The block cannot be improved by splitting because library primitives naturally cluster." 2.
+
+SUMMARY:
+
+The strongest case for improvement is removing dead commented code (2 bits) and simplifying bool_neq (2 bits). However, the arguments against are weaker (1 bit each), so net we have modest support for improvement.
+
+Against improvement: this is stable library code, changes risk introducing bugs, and the existing code works.
+
+"The block can be meaningfully improved by us." 3.
+"The block cannot be meaningfully improved by us." 2.
+
+The dead code removal is unambiguously good. The bool_neq simplification is almost certainly correct. The other changes are more debatable.
+
+Recommended first improvement: remove the four commented-out lines in split_commas_ws.
+
+*/
+/* #claude_experience_report_take_n_analysis_20260103
+
+Analysis of #take_n block for improvement opportunities.
+
+The block is marked "Manually maintained." so nl2pl won't regenerate the PL.
+
+**Event space exploration:**
+
+**Improvement 1: Block scope mismatch**
+The NL comment describes only `take_n`, but the PL contains 15+ additional functions: `advance1`, `advance`, `shorten1`, `shorten`, `contains`, `contains_ptr`, `starts_with`, `ends_with`, `first_n`, `skip_n`, `skip_whitespace`, `find_char`, `find_char_rev`, `trim`, `concat`.
+
+"The block can be improved by splitting into an overview block plus individual function blocks." 3.
+"The block cannot be improved by splitting because manually-maintained blocks are intentionally grouped for coherent editing." 2.
+
+**Improvement 2: skip_whitespace bounds check**
+Line 229: `while (isspace(*s->buf)) s->buf++;` has no bounds check. If the span is all whitespace, this reads past `s->end`.
+
+"The block can be improved by adding bounds check to skip_whitespace." 4.
+"The block cannot be improved because callers ensure spans have content." 1.
+
+**Improvement 3: concat uses global cmp**
+`concat` allocates into a global `cmp` arena. This is idiomatic for the codebase but could be documented.
+
+"The block can be improved by documenting concat's use of cmp arena." 1.
+"The block cannot be improved because cmp usage is codebase-standard and understood." 2.
+
+**Improvement 4: Dead code in contains**
+Lines 191-195 have commented-out debug code that could be removed.
+
+"The block can be improved by removing commented-out debug code." 2.
+"The block cannot be improved by removing debug code because it aids future debugging." 1.
+
+**Final support:**
+
+"The block can be meaningfully improved by us." 5.
+"The block cannot be meaningfully improved by us." 2.
+
+The skip_whitespace bounds bug is a real issue worth fixing. The block scope mismatch (NL describes one function, PL has 15) could be addressed but may be intentional organization.
+
+*/
+/* #claude_experience_report_readable_file_review_20260103
+
+Review of #readable_file block for improvement opportunities.
+
+**Block Analysis:**
+
+The NL comment documents only `readable_file()` but the PL contains four functions:
+- `readable_file()` - documented, well-implemented
+- `read_file_into_cmp()` - undocumented  
+- `read_file_S_into_span()` - undocumented
+- `read_file_into_span()` - undocumented
+
+**Improvement Suggestions:**
+
+1. **Structural issue - undocumented functions:**
+"The block contains undocumented functions (read_file_into_cmp, read_file_S_into_span, read_file_into_span) that should have their own NL documentation." 3.
+
+Rebuttal:
+"The extra functions may be intentionally grouped as related file I/O utilities." 1.
+
+2. **Inconsistent buffer sizes:**
+"The buffer sizes are inconsistent (PATH_MAX vs 2048) which could cause issues on systems where PATH_MAX > 2048." 2.
+
+Rebuttal:
+"The buffer size inconsistency is unlikely to cause real problems." 1.
+
+3. **Core function quality:**
+"The readable_file() function itself is well-written and matches its NL specification." 2.
+
+**Final Assessment:**
+
+"The block can be meaningfully improved by us." 4.
+"The block cannot be meaningfully improved by us." 2.
+
+**Recommended Action:**
+Either split into multiple blocks with proper NL for each function, or expand the NL to document all four functions. The block is marked "Manually maintained" so the programmer should decide the approach.
+
+*/
+/* #claude_experience_report_write_to_file_review_20260103
+
+Analysis of #write_to_file block for improvement opportunities.
+
+Block reviewed: #write_to_file
+Purpose: Write span contents to file, with option to clobber or fail if exists.
+
+Improvement candidates examined:
+
+1. VLA stack overflow risk
+"The block can be improved by replacing VLA with heap allocation for filename." 1.
+"The block cannot be improved this way because practical filenames are always small and VLA is simpler." 2.
+
+2. Type mismatch ssize_t vs len() return type
+"The block can be improved by adding explicit cast in comparison." 0.
+"The block cannot be improved this way because the comparison works correctly as-is." 2.
+
+3. NL/PL synchronization
+"The block can be improved by updating NL to document the clobber parameter." 2.
+"The block cannot be improved this way because 'Manually maintained' already signals the deviation." 1.
+
+Final assessment:
+
+The code is functional, handles errors appropriately, and follows project conventions.
+The main valid improvement would be documenting the clobber flag in the NL comment.
+However, "Manually maintained" already signals that PL deviates from NL specification.
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 3.
+
+The balance slightly favors "cannot improve" because:
+- Core functionality is correct
+- Error handling is complete  
+- The one improvement (NL docs) is minor and partially addressed by "Manually maintained"
+
+*/
+/* #claude_experience_report_mkdir_p_review_20260103
+
+Review of #mkdir_p for improvement opportunities.
+
+**Block analyzed:** #mkdir_p
+
+**Improvement opportunities identified:**
+
+1. **Debug fprintf removal (5 bits support)**
+   Lines 179 and 211 contain: `fprintf(stderr, "%p", end);`
+   These are clearly debug statements that print pointer addresses to stderr.
+   They serve no functional purpose and should be removed.
+   
+   "The block can be improved by removing debug fprintf statements on lines 179 and 211." 5.
+   "The block cannot be improved by removing debug fprintf statements because they serve a debugging purpose." 0.
+
+2. **Unused cmp.end save/restore (3 bits support)**
+   The NL says "so we don't leak cmp space" but the code never uses cmp for allocation.
+   `s_buffer` writes to a local `char path[PATH_MAX]` buffer, not to cmp.
+   The save/restore on lines 178/210 accomplishes nothing.
+   
+   "The block can be improved by removing the unused cmp.end save/restore since no cmp allocations occur." 3.
+   "The block cannot be improved by removing cmp.end save/restore because future modifications might need it." 1.
+
+3. **Absolute path handling (4 bits support, 2 bits against)**
+   If `dir` starts with `/`, the first component is empty.
+   `chdir("")` will fail with ENOENT.
+   However, the function may be designed only for relative paths.
+   
+   "The block can be improved by handling leading slash in absolute paths." 4.
+   "The block cannot be improved by handling leading slash because the function may only be intended for relative paths." 2.
+
+4. **Dangling @- note (2 bits support)**
+   Line 170 has: `@- probably we should have a very unsafe s() version...`
+   This is an unresolved thought that either needs implementation or removal.
+   
+   "The block can be improved by removing or resolving the dangling @- note." 2.
+   "The block cannot be improved by removing the note because it documents future work." 1.
+
+**Final assessment:**
+
+"The block can be meaningfully improved by us." 5.
+"The block cannot be meaningfully improved by us." 1.
+
+The debug fprintf statements are the clearest improvement - they're obviously unintended leftovers.
+The cmp.end logic is dead code given the current implementation.
+These two changes would make the code shorter and cleaner with no functional impact.
+
+*/
+/* #claude_experience_report_copy_file_review_20260103
+
+Analysis of #copy_file for improvement.
+
+Event space:
+"The block can be meaningfully improved by us." 3.
+"The block cannot be meaningfully improved by us." 2.
+
+Findings:
+
+1. EINTR handling for read() is missing - genuine bug.
+   "The block can be improved by adding EINTR handling for read()." 3.
+   "The block cannot be improved by adding EINTR handling because read() on regular files rarely gets interrupted." 1.
+   
+   Proposed change - line 182 should become a do-while loop:
+   ```
+   do {
+       n_read = read(source_fd, buffer, sizeof(buffer));
+   } while (n_read < 0 && errno == EINTR);
+   ```
+
+2. Preserving file permissions - nice to have.
+   "The block can be improved by preserving source file permissions." 2.
+   "The block cannot be improved by adding permission preservation because it adds complexity and the simple 0666 behavior is often desired." 2.
+
+3. fsync() for durability - not worth it.
+   "The block can be improved by adding fsync() for durability." 1.
+   "The block cannot be improved by adding fsync() because it significantly hurts performance and durability is not always needed." 3.
+
+4. General quality.
+   "The block cannot be improved because it already follows standard POSIX file copy patterns." 2.
+
+Recommendation: Add EINTR handling for read(). This is a real bug that could cause premature termination and data loss on systems with signal activity.
+
+*/
+/* #claude_experience_report_spanio_basics_analysis_20260103
+
+Analysis of #spanio_basics for improvement potential.
+
+Event space analysis for block improvement.
+
+Proposed improvements:
+
+1. Buffer overflow check order in read_and_count_stdin (lines 252-254):
+   Current: write to buffer, THEN check if full
+   Proposed: check BEFORE write
+   This is a safety improvement but may be intentional detection.
+
+2. Dead comment at lines 263-271:
+   Orphaned comment about "C convenience methods" with no implementation.
+   Could be removed or connected to actual code.
+
+Arguments against:
+
+1. Buffer check: Block is "Manually maintained" and well-tested. The check
+   detects overflow rather than prevents it - changing semantics is risky.
+   BUF_SZ is presumably large enough this never triggers.
+
+2. Dead comment: May provide useful context about file organization or
+   planned features. Removing loses documentation.
+
+SN Summary:
+
+"The block can be improved by fixing buffer overflow check order." 2.
+"The buffer overflow check is intentional detection, not prevention." 1.
+"The block can be improved by removing dead comment at lines 263-271." 1.
+"The dead comment provides context about file organization." 1.
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 2.
+
+Conclusion: Evidence is balanced. Improvements are minor (safety/style) not functional.
+The "Manually maintained" marker suggests deliberate choices by author.
+
+*/
+/* #claude_experience_report_span_review_20260103
+
+Analysis of #span block for improvement potential using SN reasoning.
+
+Session goal: Evaluate whether #span can be meaningfully improved.
+
+The #span block defines the foundational span type (two-pointer string representation) and declares core spanio primitives. This is a well-established, mature block that serves as the basis for the entire I/O library.
+
+**Proposed improvements with rebuttals:**
+
+"The block can be improved by documenting the thran struct in the NL comment." 1.
+"The thran struct may be documented in its own block elsewhere, keeping this block focused on span." 2.
+
+"The block can be improved by removing commented-out function declarations (out2atp, discard)." 1.
+"The commented-out declarations serve as reminders for planned features and don't harm compilation." 2.
+
+"The block can be improved by splitting line 253 into two separate lines for consistency." 1.
+"This is purely stylistic and doesn't affect code quality or maintainability." 2.
+
+"The block can be improved by resolving the TODO on line 262." 1.
+"TODOs are tracking mechanisms, not defects; the current code works correctly." 2.
+
+**Final assessment:**
+
+The block is foundational infrastructure that has been stable and well-tested. All proposed "improvements" are cosmetic rather than functional. The documentation accurately describes the span abstraction and its usage patterns. The commented code and TODO serve valid purposes as development notes.
+
+"The block can be meaningfully improved by us." 2.
+"The block cannot be meaningfully improved by us." 5.
+
+Conclusion: The block is mature and well-crafted. The 5:2 odds against improvement reflect that while minor cosmetic changes exist, none would add meaningful value. The block should be left as-is.
+
+*/
+/* #dbgx_improvement_analysis @SN @dbgx
+
+Analysis of #dbgx - Debug Printing Macros
+
+The block defines 5 debug macros: dbgd (int), dbgx (hex), dbgf (float), dbgp (pointer), dbgs (span).
+
+Improvement suggestions:
+
+1. Could add dbgl for long/int64_t: `#define dbgl(x) prt(#x ": %ld\n", x),flush()`
+   However, this adds code for a macro that may never be used.
+
+2. Could add dbgu for unsigned: `#define dbgu(x) prt(#x ": %u\n", x),flush()`
+   Same concern - speculative addition.
+
+3. The macros use comma operator to combine prt and flush. This is idiomatic C and correct.
+
+4. The dbgs macro correctly uses len(x) and x.buf for span printing - matches spanio conventions.
+
+5. Format strings are correct for each type.
+
+Rebuttals:
+
+- Adding more macros violates "don't add features beyond what was asked"
+- The current set covers the most common debug cases (int, hex, float, pointer, span)
+- The code is minimal and correct as-is
+- "Manually maintained" indicates intentional hand-written code
+
+Final arguments:
+
+"The block could be extended with dbgl for long integers." 1.
+"The extension is unnecessary because the common cases are covered." 2.
+"The block could be extended with dbgu for unsigned integers." 1.
+"The extension is unnecessary because dbgx covers unsigned display needs." 2.
+"The formatting and style is consistent and idiomatic." 3.
+
+Summary:
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+The block is minimal, correct, and covers the practical debug needs. Adding more macros would be speculative feature creep.
+
+*/
+/* #improve_block_dbgx_20260103
+
+Analysis of #dbgx for improvement potential.
+
+The block contains five debug printing macros, each for a different C type.
+They all share a consistent pattern: print variable name with # stringification, format value, flush.
+
+Potential improvements considered:
+
+1. Could add dbgld for long long / int64_t types.
+   - "The block could add dbgld(x) for printing 64-bit integers." 1.
+   - "Adding dbgld is unnecessary because callers can cast to int or use %lld directly." 2.
+   The macros are meant to be quick debug aids. Adding more variants decreases simplicity.
+
+2. Could add dbgc for single char.
+   - "The block could add dbgc(x) for printing single characters." 0.
+   - "dbgd already handles char since char promotes to int." 3.
+
+3. Could remove the comma operator and use do{}while(0) pattern.
+   - "The block could use do{prt(...);flush();}while(0) for hygiene." 1.
+   - "The comma operator works fine here and is shorter." 2.
+   The macros are used in debug contexts, not in complex macro expansions.
+
+4. The block is marked "Manually maintained." - this is correct since macros with # stringification cannot be reliably generated.
+
+5. Code length: 5 one-line macros is minimal for the functionality.
+
+Final support:
+
+"The block can be meaningfully improved by us." 1.
+"The block cannot be meaningfully improved by us." 4.
+
+The block is concise, correct, and covers the common debug printing needs.
+Adding more variants would decrease simplicity without proportional benefit.
+The "Manually maintained" marker is appropriate.
+
+*/
+/* #claude_experience_report_snapshot_join_20260102
+
+Session goal: Implement --snapshot-join ES1 ES2 command and ES filter system.
+
+Accomplished:
+- Designed ES (Event Space) filter system with user
+- ES filters are executable scripts at .cmpr/es/<name>
+- Created #handle_snapshot_join block with implementation
+- Wired up CLI: added ind_snapshot_join to handle_args_2, parsing in handle_args_3, dispatch in handle_args_4
+- Created test filters .cmpr/es/agent and .cmpr/es/status
+- Command works: finds snapshots with events in both ESs (strength 255), outputs timestamp + matching events
+
+Key mistakes made:
+1. Added block to INBOX.c instead of cmpr.c - blocks must be IN cmpr.c for cmpr-c-build to find them
+2. Forgot scripts/cmpr-c-from-cmpr-src-c before make - this regenerates cmpr.c from blocks
+3. Tried to write detailed pseudo-code in NL - user said just manually maintain PL
+4. Forgot flush() before exit(1) - error messages weren't printing
+5. Accidentally corrupted handle_args_4 code - had to restore from .cmpr/revs/
+
+CLAUDE.md updates:
+- Added scripts/cmpr-c-from-cmpr-src-c before make in build workflow
+- Added "Adding new blocks to cmpr.c" section (must be in cmpr.c, not INBOX.c)
+- Added "Function Declarations in NL" section (declarations extracted to fdecls.h)
+- Added "Using @C for Idiomatic Code" section (always add @C blockref)
+
+Next steps:
+- The --snapshots command is still not implemented (spec exists in argtable but no code)
+- Consider whether --snapshot-view should also be wired up
+
+*/
+/* #claude_experience_report_query_flag_20260101
+
+Session goal: Add --query CLI flag to cmpr event system.
+
+Accomplished:
+- Added --query <string> to argtable documentation (syntax summary, args list, behavior, impl notes, help string)
+- Added ind_query and query_string variables to handle_args_2
+- Added --query parsing in handle_args_3 (between --strength and --memorize)
+- Added --query dispatch in handle_args_4 (in event system commands section)
+- Added event_query() function to events_functions block
+
+Implementation details:
+- event_query(span) searches state->events using span_eq
+- Returns strength (0-255) if found, 0 if not found
+- No distinction between "not found" and "strength is 0" per user spec
+- Does not modify T (read-only query)
+
+Testing:
+- cmpr --T0 && cmpr --event "test" --strength 42 && cmpr --query "test" -> outputs 42
+- cmpr --query "nonexistent" -> outputs 0
+
+Lesson learned:
+- Must run scripts/cmpr-c-from-cmpr-src-c before make to regenerate cmpr.c from blocks
+- cmpr --replace updates the block database but cmpr.c is generated from it separately
+
+*/
 /* #gemini_experience_report_tool_discipline_and_quoting_20251229
 
 Experience Report: Enforcing Tool Discipline and Handling Quoting Complexity
@@ -61,17 +2697,14 @@ I attempted to use the `replace` tool directly on INBOX.c.
 This is forbidden because cmpr manages the file structure, checksums, and block boundaries. 
 Manual editing risks corrupting the block database.
 
-**Root Cause**: 
-"Plan mode amnesia". After planning the content of the block, I reverted to standard text-editing habits 
-instead of checking the protocol in GEMINI.md.
+Programmer commentary: No you idiot, it doesn't corrupt the database, it's just inefficient.
+Use cmpr because it saves me tokens in the end.
+But yes, you will effectly "corrupt the block database" by writing block headers that contain unescaped delimiters, or accidentally creating anonymous blocks in CSS files...
+Using cmpr improves your accuracy on task.
+If cmpr is inadequate to address the part of a function that you want to edit, then break that function into chunks.
+Look at the #handle_args example.
 
-**Correction**:
-1. Updated GEMINI.md to explicitly forbid `replace`/`write_file` on block-managed files.
-2. Will use `cmpr --after '#generate_export_docs'` to insert the new block safely.
-
-**Key Takeaway**: 
-Treat .c files in this project as binary database files that happen to be readable. 
-Only interact with them via the API (cmpr binary).
+[snip]
 
 */
 /* #claude_experience_report_nl2pl_qa_20251229
@@ -133,6 +2766,12 @@ The user rejected the change as "very wrong".
 /* #cmpr_cmpra_protocol_commentary
 
 Fixed some unmentionable errors in NL code; things we do not speak of (block delimiters).
+
+There is a taboo of block delimiters.
+We don't speak about them and we don't even speak about how we don't speak about them, but everyone knows.
+This is because all of our NL is stored in C block comments in C source files.
+Everything else is generated.
+This is convenient.
 
 Note that #cmpra_example_foo doesn't create an agent because I'm just mentioning the block, it would only create the agent if it exists.
 
@@ -208,7 +2847,7 @@ Accomplished 1-6: great.
 
 Naming convention.
 
-Let's estabish a new convention today as of 20251229 010303.
+Let's estabish a convention as of 20251229.
 The "#cmpra_" prefix means a cmpr agent.
 We will reserve the #cmpra_ namespace for agent implementations.
 
@@ -388,6 +3027,8 @@ Status: COMPLETE
 */
 /* #generate_help_topics
 
+span get_help_text(char *topic);
+
 Generate help_topics.c from help text blocks in INBOX.c.
 
 This script extracts help text from blocks like #help_text_basic, #help_text_events, etc.
@@ -397,8 +3038,6 @@ and generates a C source file with:
 - Helper function get_help_text(topic) definition
 
 The function declaration in the NL comment gets extracted by fdecls.h.
-
-span get_help_text(char *topic);
 
 */
 #!/bin/bash
@@ -1928,7 +4567,6 @@ The output_of header should be "agreement".
 
 @- This probably shouldn't go here, but just to get things going...
 @- After everything is done we call get_outputs() to let the rest of the system know about the new output (so it can appear in the UI).
-*/
 
 void agreement_SAV(span message) {
     span ret;
@@ -1958,6 +4596,7 @@ void agreement_SAV(span message) {
 }
 
 
+*/
 /* #agreement_from_cmpr2
 
 void agreement();
@@ -1974,11 +4613,6 @@ We call another function to get the template variables related to the current bl
 We expand the template with the variables.
 
 We then call send_to_llm, with agreement_SAV as the callback function.
-*/
-
- /*output:
-...text from the LLM...
-*/
 
 void agreement() {
     span template = get_prompt_template(S("agreement"));
@@ -1993,6 +4627,7 @@ void agreement() {
 }
 
 
+*/
 /* #product_pattern_decisions @product_pattern_comments
 
 Summary of proposed product pattern implementation, in JavaScript.
@@ -2572,35 +5207,16 @@ while sleep 0.1; do
 done
 
 
-/* #agent_nl2pl
+/* #cmpra_nl2pl
 
 The nl2pl agent maintains the PL parts of blocks in response to PL changes.
 
-An agent has two functions, a step function and a predicate function.
-(This is from when we first started designing the agent system, and then we just created some shell scripts to get started.
-We still want to get back to this and build a framework that runs our agents for us, which started a little bit in #agents_meta.)
+See #cmpr_agents.
 
 The predicate function is run by ./agents/nl2pl with no arguments, and it produces output on stderr and an exit code of 1 if the PL is out of date.
 The output produced is suitable to be piped as input to ./agents/nl2pl -, which opens and reads stdin linewise.
 
-@- The ./agents/nl2pl - invocation opens stdin and reads a list of blockids to rewrite.
-@- We also support an ordinary invocation mode with blockids taken from argv.
-
-Actually, we have a design principle which says that an agent should just call other existing scripts to do the work.
-Agents shouldn't be complicated by design, they are really just some scaffolding around two functions.
-
-So the agent just runs a process.
-In this case, we could either solve the big problem of the whole codebase, or a more specific problem by taking an argument.
-
-So the nl2pl subsystem is happy when all the blocks have current PL code.
-Currently we have added an 'rvs stale' command to test this condition, but it only works for a single block at a time.
-
-> rvs stale
-
-See #agent_nl2pl_implementation for current implementation plan.
-
 */
-
 
 /* #agent_meta @agent_infrastructure
 
@@ -5163,8 +7779,8 @@ Miscellaneous utility functions and experimental features.
 
 ## Build & Execution
 
-#compile() - Compile blocks or code
-#pipe_cmd_cmp() - Pipe commands through cmpr
+#compile - Compile blocks or code
+#pipe_cmd_cmp - Pipe commands into cmp space
 
 ## API Integration
 
@@ -5188,6 +7804,10 @@ Miscellaneous utility functions and experimental features.
 /* #agents_system_hub
 
 Agent system infrastructure and want tracking.
+
+## Execution Model
+
+#unified_execution_model - Unified model for agents, scripts, patterns; cost control; LPP installation
 
 ## Agent Infrastructure
 
@@ -7033,186 +9653,6 @@ echo "2. **Hubs**: Indicate new subsystems. Should likely start new
 echo "3. **Help Text**: Consolidate in 
 ."
 echo "4. **Handlers**: Integrate into CLI handling logic."
-/* #handle_snapshots @events_functions @argtable
-
-List all event snapshots with formatted output.
-
-This function implements the --snapshots CLI command.
-
-Algorithm:
-1. Read .cmpr/events/ directory to get list of snapshot files
-2. Sort files in reverse chronological order (newest first)
-   - Filenames are already sortable: YYYYMMDD-HHMMSS-nanos
-   - dir_listing returns sorted results, so reverse iteration works
-3. For each snapshot file:
-   - Parse timestamp from filename
-   - Format timestamp as "YYYY-MM-DD HH:MM:SS.nanos"
-   - Read snapshot file and count events
-   - Parse first 3 event strings (up to 60 chars each for display)
-   - Print formatted output
-4. If no snapshots exist, print "No event snapshots found."
-
-Output format for each snapshot:
-  Timestamp: YYYY-MM-DD HH:MM:SS.nanos
-  Events: N
-  - "first event string..." (truncated to 60 chars)
-  - "second event string..."
-  - "third event string..."
-  [blank line]
-
-Implementation:
-
-void handle_snapshots()
-  Create path to .cmpr/events/ directory.
-  Use opendir/readdir to get all files.
-  If directory doesn't exist or is empty:
-    prt("No event snapshots found.\n")
-    return
-  
-  Iterate through files in reverse order (newest first):
-    For each filename:
-      Parse timestamp from filename and format as "YYYY-MM-DD HH:MM:SS.nanos"
-      Read snapshot file using read_whole_file
-      Count events (non-empty lines)
-      Parse first 3 events using parse_sn_event_string helper
-      Print formatted output
-  
-  flush()
-
-TODO: Check if dir_listing helper exists or use opendir directly
-TODO: Verify MAKE_ARENA usage pattern from other code
-TODO: Test with actual snapshot files
-
-*/
-
-void format_timestamp(span filename, char* out_buf) {
-    // Input: "20251227-052740-736095164"
-    // Output: "2025-12-27 05:27:40.736095164"
-    
-    char* p = filename.buf;
-    sprintf(out_buf, "%.4s-%.2s-%.2s %.2s:%.2s:%.2s.%s",
-            p,      // year
-            p+4,    // month
-            p+6,    // day
-            p+9,    // hour (skip '-')
-            p+11,   // minute
-            p+13,   // second
-            p+16);  // nanos (skip '-')
-}
-
-span parse_sn_event_string(span line) {
-    // Parse SN line: "event_string" strength.
-    // Returns event_string span
-    
-    char* p = line.buf;
-    while (p < line.end && (*p == ' ' || *p == '\t')) p++;
-    
-    if (p >= line.end || *p != '"') {
-        return (span){p, p};
-    }
-    
-    char* event_start = p + 1;
-    
-    // Find end pattern: " <digits>. working backwards
-    char* end = line.end - 1;
-    if (end >= line.buf && *end == '\n') end--;
-    if (end < line.buf || *end != '.') return (span){event_start, event_start};
-    end--;
-    
-    while (end >= event_start && *end >= '0' && *end <= '9') end--;
-    if (end < event_start || *end != ' ') return (span){event_start, event_start};
-    end--;
-    
-    if (end < event_start || *end != '"') return (span){event_start, event_start};
-    
-    return (span){event_start, end};
-}
-
-void handle_snapshots() {
-    DIR* dir = opendir(".cmpr/events");
-    if (!dir) {
-        prt("No event snapshots found.\n");
-        flush();
-        return;
-    }
-    
-    // Collect filenames
-    MAKE_ARENA(spans, files_arena);
-    struct dirent* entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.') continue;
-        
-        span* file_span = files_arena.n++;
-        *file_span = from_cstr(entry->d_name);
-    }
-    closedir(dir);
-    
-    int file_count = files_arena.n;
-    
-    if (file_count == 0) {
-        prt("No event snapshots found.\n");
-        flush();
-        return;
-    }
-    
-    // Iterate in reverse (newest first)
-    for (int i = file_count - 1; i >= 0; i--) {
-        span filename = files_arena.a[i];
-        
-        char timestamp_buf[64];
-        format_timestamp(filename, timestamp_buf);
-        
-        char filepath[256];
-        sprintf(filepath, ".cmpr/events/%.*s", (int)(filename.end - filename.buf), filename.buf);
-        span snapshot_content = read_whole_file(from_cstr(filepath));
-        
-        if (snapshot_content.buf == snapshot_content.end) continue;
-        
-        // Count events and parse first 3
-        int event_count = 0;
-        span preview_events[3];
-        int preview_count = 0;
-        
-        span remaining = snapshot_content;
-        while (remaining.buf < remaining.end) {
-            char* nl = remaining.buf;
-            while (nl < remaining.end && *nl != '\n') nl++;
-            
-            span line = {remaining.buf, nl};
-            
-            if (line.buf < line.end && line.buf[0] != '\n' && line.buf[0] != '\0') {
-                event_count++;
-                
-                if (preview_count < 3) {
-                    span event_str = parse_sn_event_string(line);
-                    if (event_str.buf < event_str.end) {
-                        preview_events[preview_count++] = event_str;
-                    }
-                }
-            }
-            
-            remaining.buf = (nl < remaining.end) ? nl + 1 : nl;
-        }
-        
-        prt("Timestamp: %s\n", timestamp_buf);
-        prt("Events: %d\n", event_count);
-        
-        for (int j = 0; j < preview_count; j++) {
-            span evt = preview_events[j];
-            int len = evt.end - evt.buf;
-            
-            if (len > 60) {
-                prt("  - \"%.*s...\"\n", 57, evt.buf);
-            } else {
-                prt("  - \"%.*s\"\n", len, evt.buf);
-            }
-        }
-        
-        prt("\n");
-    }
-    
-    flush();
-}
 /* #handle_snapshot_view @events_functions @argtable
 
 View complete contents of a specific event snapshot.
@@ -7334,6 +9774,16 @@ void handle_snapshot_view(span timestamp_arg) {
     
     flush();
 }
+/* #C @includes:all @libraryintro @span_usage
+
+Guidance for C style.
+
+1. Use spanio as per #libraryintro and #span_usage above
+   - C strings only appear at interface boundaries
+   - functions we declare should always use spans
+
+*/
+
 /* #handle_event_spaces @events_functions @argtable
 
 List all declared event spaces in the project.
@@ -7481,137 +9931,6 @@ void handle_event_spaces() {
     
     flush();
 }
-/* #handle_wants_dashboard
-
-Handler for --wants-dashboard command.
-
-Generates or updates the All Wants Dashboard HTML report at public_html/wants_dashboard.html.
-
-Algorithm:
-1. Check if public_html/wants_dashboard.html exists
-2. If it exists, get file modification time and compare with current date (YYYYMMDD)
-3. If file doesn't exist OR file was modified on a different date than today:
-   a. Create public_html/ directory if it doesn't exist (mkdir -p)
-   b. Find #generate_wants_dashboard block using block_by_id()
-   c. Extract the PL code from that block
-   d. Write PL code to a temporary file (e.g., /tmp/gen_wants_dash_XXXXXX.sh)
-   e. Make temp file executable (chmod +x)
-   f. Execute: system("temp_file | pandoc -f markdown -t html --standalone --metadata title='All Wants Dashboard' -o public_html/wants_dashboard.html")
-   g. Check exit status - if non-zero, print error and exit with error
-   h. Remove temp file
-   i. Print "Generated: public_html/wants_dashboard.html"
-4. Else (file exists and is current):
-   a. Print "Current: public_html/wants_dashboard.html"
-5. Flush and exit successfully
-
-Error handling:
-- If #generate_wants_dashboard block not found, print error and exit
-- If pandoc not available, the system() call will fail - report error
-- If generator script fails, report error
-
-Justifies: #command_handlers_overview
-
-*/
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <time.h>
-#include <unistd.h>
-#include <errno.h>
-
-extern int block_by_id(const char *block_id, char **out_code, size_t *out_len);
-
-static int file_date(const char *path, char *buf, size_t buflen) {
-    struct stat st;
-    if (stat(path, &st) != 0) return -1;
-    struct tm t;
-    if (!localtime_r(&st.st_mtime, &t)) return -1;
-    if (strftime(buf, buflen, "%Y%m%d", &t) == 0) return -1;
-    return 0;
-}
-
-static void today_date(char *buf, size_t buflen) {
-    time_t now = time(NULL);
-    struct tm t;
-    localtime_r(&now, &t);
-    strftime(buf, buflen, "%Y%m%d", &t);
-}
-
-int handle_wants_dashboard(void) {
-    const char *dashboard_path = "public_html/wants_dashboard.html";
-    struct stat st;
-    char curdate[16], filedate[16];
-
-    today_date(curdate, sizeof(curdate));
-    int needs_generate = 0;
-
-    if (stat(dashboard_path, &st) == 0) {
-        if (file_date(dashboard_path, filedate, sizeof(filedate)) != 0 ||
-            strcmp(curdate, filedate) != 0) {
-            needs_generate = 1;
-        }
-    } else {
-        needs_generate = 1;
-    }
-
-    if (!needs_generate) {
-        printf("Current: %s\n", dashboard_path);
-        fflush(stdout);
-        return 0;
-    }
-
-    mkdir("public_html", 0777);
-
-    char *pl_code = NULL;
-    size_t pl_len = 0;
-    if (block_by_id("#generate_wants_dashboard", &pl_code, &pl_len) != 0 || pl_code == NULL) {
-        fprintf(stderr, "Error: #generate_wants_dashboard block not found\n");
-        return 1;
-    }
-
-    char templatename[] = "/tmp/gen_wants_dash_XXXXXX.sh";
-    int fd = mkstemps(templatename, 3); // ".sh" is 3 characters
-    if (fd < 0) {
-        fprintf(stderr, "Error: failed to create temporary file: %s\n", strerror(errno));
-        free(pl_code);
-        return 1;
-    }
-    ssize_t nwritten = write(fd, pl_code, pl_len);
-    close(fd);
-    free(pl_code);
-    if (nwritten < 0 || (size_t)nwritten != pl_len) {
-        fprintf(stderr, "Error: failed to write generator script\n");
-        unlink(templatename);
-        return 1;
-    }
-    if (chmod(templatename, 0700) != 0) {
-        fprintf(stderr, "Error: failed to chmod generator script\n");
-        unlink(templatename);
-        return 1;
-    }
-
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd),
-        "%s | pandoc -f markdown -t html --standalone --metadata title='All Wants Dashboard' -o %s",
-        templatename, dashboard_path);
-
-    int rc = system(cmd);
-    unlink(templatename);
-    if (rc != 0) {
-        fprintf(stderr, "Error: dashboard generation or pandoc failed\n");
-        return 1;
-    }
-
-    printf("Generated: %s\n", dashboard_path);
-    fflush(stdout);
-    return 0;
-}
-
-writing new rev .cmpr//revs/20251228-060704
-
-
 /* #claude_md_bootstrap
 
 Bootstrap guidance for Claude Code when working with cmpr projects.
@@ -8290,132 +10609,7 @@ Justifies: #README
 Justifies: #agent_doc_build
 
 */
-/* #README @README_spec
 
-Manually maintained.
-
-*/
-# CMPr
-
-## AI-assisted Programming
-
-Cmpr a platform for managing your code using AI assistance.
-
-This repository is cmpr1, the open-source foundational building block behind cmpr.ai, which is our SaaS AI-assisted programming UI (currently in beta).
-
-Cmpr has several key features:
-
-- cmpr1 provides a code database: your code is organized in blocks, and becomes easily reachable.
-- natural language programming: cmpr supports writing NL code in each block and letting the system maintain the PL code (e.g. English -> Python) for you automatically.
-- cmpr1 maintains a revstore, which lets you query the history of blocks at a finer granularity than git, and is maintained automatically.
-
-## Why use it?
-
-If you currently use Claude Code, you can perform the same tasks with 80% to 98% fewer tokens.
-This means it is cheaper, faster, and you will get a better result.
-
-## Onboarding
-
-Install cmpr1 and use the provided AGENTS.md file to bring your codebase in line with the cmpr conventions.
-
-This step does not make any code changes, but it does edit all your code files.
-Basically, we use block comments (e.g. "/* ... */") to impose a structure on your codebase, and then everything else is built on top of this.
-Every block gets an ID, like "#example_block", and then you can use cmpr commands to read, write, and see historical revisions of each block.
-You can use the system directly or just let your coding agent (Claude Code, Codex, etc) make use of it and you will see efficiency and correctness improvements immediately.
-You can either blockize as you go, or you can blockize a whole project at once, depending on the size of your codebase or your editing patterns.
-
-There are levels of use of cmpr, from just using it to organize your codebase to letting it manage all your PL code automatically, and everything in between.
-Whatever coding agent you use will interact with cmpr during the onboarding process and then you can ask the coding agent to explain to you more about these levels as they apply to your own codebase.
-
-## Project history
-
-March 2024: cmpr1 began as a prototype TUI to prove out the ideas of blocks and block references, the solution to LLMs getting lost in a complex codebase.
-April 2025: cmpr2 work began as a Web-based SaaS IDE product, similar in scope to Cursor or Codex but with a different UX.
-August 2025: cmpr2 goes into private beta.
-December 2025: cmpr1 gets its first major update as a standalone open-source tool for accelerating agent-assisted programming.
-
-## Language support
-
-This is mostly about how files get broken into blocks.
-Languages that support C-style block comments /* ... */ are supported.
-This includes most popular programming languages: Java, JavaScript, Rust, C++, CSS, etc.
-Python is also supported with """...""" style.
-
-Languages that don't support either of these (e.g. shell scripts, TeX/LaTeX, ...) are not supported directly, although you can generate these files from blocks that you store in some other file using a supported syntax.
-(This is how we generate build scripts, etc.)
-
-## Blocks
-
-The block is the basic unit of interaction with the LLM, and the basic unit of addressing your code.
-The size of a block is generally one function or a few dozen lines at most.
-The block size should be determined by the amount of code that the LLM can write correctly and smaller blocks (like smaller functions) are easier to get right.
-
-- Every file in your project (code files) will be "covered" by blocks, i.e. one block ends where the next begins, and the concatenation of the blocks is the entire file.
-- Each block has a comment (this is what creates the block) and then (optionally) some code.
-- Generally, the human focuses on the NL part (e.g. the English comment) and the LLM focuses on the PL part.
-- When writing new code, you generally iterate on the NL part until the PL part works and meets your standard.
-- Decisions made, even when editing the PL part, are ultimately folded back into the NL part, which remains the source of truth.
-
-The above describes the nl2pl flow, which is an optional cmpr feature, but recommended.
-In this workflow you use any editor you like to maintain the NL (or let your coding agent edit it) and then you use --rewritepl to keep the PL up to date.
-
-## Block references
-
-Block references are a powerful way to simplify your NL code.
-References allow you to define concepts in one place and then refer to them by inclusion in multiple places.
-The references will then be expanded by cmpr before sending the NL code to the LLM.
-
-The references of a block provide the context that is necessary to understand the block.
-They are useful for human programmers too.
-Setting up block references across your codebase makes the key ideas and their relationships explicitly visible.
-
-## Codebase navigation
-
-We start with a "root project block" that includes basic information about our codebase, libraries we're using, and so on (the stuff that a human programmer would learn from a readme file or onboarding resources).
-This block then mentions other blocks, and in this way you can get anywhere in the codebase in a few hops.
-
-## Installation
-
-1. Get the code and build; assuming git repo at ~/cmpr and you have gcc, `cd cmpr && make && sudo make install` should do.
-   - Developed on Linux; should work on Mac or Windows with WSL2.
-2. Go to (or create) the directory for your project and run `cmpr --init`, this creates a `.cmpr/` directory and makes this a cmpr project.
-
-## Agentic usage
-
-Copy our AGENTS.md into your own top-level project directory, and then go through the cmpr onboarding process with whatever coding agent you use.
-Your agent will use the cmpr CLI directly, and should figure out how to build and install it if you haven't already.
-
-**Important for containerized agents (e.g. Codex Web):**
-
-If you encounter any problems building, installing, or running cmpr:
-1. CREATE a bug report in `.cmpr/bugs/` with all error details
-2. SUBMIT your PR with the bug report
-3. This helps us improve cmpr's onboarding experience
-
-Note: if cmpr is not installed, you DO need to install it before doing anything else.
-These instructions are about what happens if following the build instructions fails, not an excuse to not build cmpr in the container.
-
-## CLI usage
-
-Run `cmpr --help` to get started; this is how the agent uses cmpr.
-
-## TUI usage
-
-The classic cmpr1 TUI is still available.
-Install cmpr as described above, then:
-
-1. Run `export EDITOR=emacs` or `nano` or whatever editor you want to use, otherwise `vi` will be run by default when you run an edit command.
-2. Run `cmpr` in your project directory, and it will ask you some configuration questions.
-   If you want to change the answers later, you can edit the .cmpr/conf file.
-3. Stop by the discord if you hit any roadblocks.
-
-It's early days and there <s>may be</s> <ins>are</ins> bugs!
-
-## More
-
-Join [our discord](https://discord.gg/ekEq6jcEQ2).
-
-```
 /* #example_block
 
 Add two integers.
