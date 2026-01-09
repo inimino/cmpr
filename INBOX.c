@@ -20,6 +20,530 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 */
 
 
+/* #claude_experience_report_bts_factorization_20260108
+
+Experience report: BTS factorization and first-seen patterns (2026-01-08)
+
+## Session Goal
+
+Implement BID → BTS (block timestamp) derivation using the event/snapshot system.
+
+## Key Insights Reached
+
+### 1. Universal Bidirectional Indexer
+
+A snapshot with co-occurring events IS an index row. `--recall` on any event retrieves the full joint. No separate index files needed - the snapshot structure collapses the factorization.
+
+Documented in #bid_bts_factorization.
+
+### 2. Principle: Real-time First, Backfill Same
+
+Solve the instantaneous case; backfill is identical except timestamp source. Don't build special backfill logic.
+
+### 3. BTS as First-Seen Time
+
+BTS = the revts when a block checksum first appeared.
+
+The solution: when we see a blkcks for the first time, throw a "first-seen" event in T. The LPP on (BLKCKS, BTS) with surprise-low handler induces the first-seen property automatically.
+
+The factorization: BID * REVTS * BLKCKS * BTS
+
+Where BTS is defined as the revts of the checksum's first appearance.
+
+### 4. Joint Arrows
+
+BTS only "ticks" when both the checksum AND timestamp change together. This is a joint arrow: (ts, e_a, e_b) → (ts', e_a', e_b') where all three changed.
+
+Temporal patterns require including "was" alongside "is" to create blur across time dimension.
+
+### 5. Data Science Mindset
+
+Don't try to compute derived values upfront. Treat it as joining data into a temporary table for analysis. The pattern system handles the rest.
+
+## What Exists Now
+
+- #bid_bts_factorization - theory of factorizations and universal indexer
+- #bid_bts_factorization_commentary - programmer's deeper analysis
+- #surprise_low_framework - output neurons, LPP as trigger site
+- #revstore_scan_design - backfill approach (may be overcomplicated)
+- scripts/checksum - output neuron for BID → blkcks
+- scripts/patterns - ES filtering, LSI learning, population (from earlier session)
+
+## Scripts Created (Untested)
+
+- scripts/read-rev-order - linked list for rev iteration
+- scripts/next-rev - reads next rev from linked list
+- scripts/backfill-revstore - probably wrong approach, too complex
+
+## What Was NOT Done
+
+Did not implement the actual backfill. Realized the approach was getting too complex. The right answer is simpler: just do real-time tracking, let BTS emerge from first-seen events.
+
+## Key Remaining Work
+
+1. Implement first-seen handler for blkcks → BTS
+2. Hook it into the pattern system's surprise-low mechanism
+3. Test with real block changes
+
+## Navigation
+
+#block_basics → #bid_bts_factorization → #bid_bts_factorization_commentary → this report
+
+*/
+/* #block_basics @ES_names
+
+## Block Event Spaces
+
+The total block event space consists of five atomic ESs (from #ES_names):
+- **BC** (block content) - variable length, never in T directly
+- **BS** (block summary) - variable length, never in T directly  
+- **BID** (block id) - `"The blockid is: #foo" 255.`
+- **BIX** (block index) - `"The block idx is: N" 255.` (or use Next/Prev links)
+- **BTS** (block revtime) - `"The block revtime is: TS" 255.`
+
+For BC/BS: call scripts that invoke `cmpr --print-block` etc.
+For BIX: prefer "Next block:" / "Previous block:" links over sequence integers.
+For checksum: `scripts/checksum` computes blkcks from BID.
+
+## BID → BTS Problem
+
+Given a BID in T, how do we derive BTS?
+
+In cmpr2: via EM (event memory) + indices (blkcks-id, blkcks-revcks, cks-rev).
+In cmpr1: via co-occurrence snapshots. See #bid_bts_factorization.
+
+The snapshot-based approach: snapshot timestamp IS the BTS.
+A product pattern is a universal bidirectional indexer.
+
+## Surprise-Low Mechanism
+
+When an ES is under-supported, fire the output neuron (script) to compute it.
+See #surprise_low_framework for the full pattern.
+
+## Backfilling
+
+To populate historical BID→BTS, scan the revstore and create backdated snapshots.
+See #revstore_scan_design for the approach using linked snapshot iteration.
+
+## Related
+
+#ES_names - canonical ES definitions
+#bid_bts_factorization - factorization analysis  
+#surprise_low_framework - output neurons and LPP triggers
+#revstore_scan_design - backfill via linked snapshots
+scripts/checksum - BID → blkcks output neuron
+scripts/read-block-order - creates linked snapshot lists
+
+*/
+/* #bid_bts_factorization_commentary
+
+## BID -> BTS as a Factorization Problem
+
+BID is the block id event space.
+
+It includes all the strings matching /#[A-Za-z0-9_-]+/ as a regex, or more practically, within a project it is just the set of all blockids that exist or are mentioned in the codebase.
+
+We can have information in the brain about blocks, like whether it exists or we plan to add it, or we deleted it, or it needs to be rewritten from scratch, as well as a bunch of more prosaic information like the current checksum or when the content most recently changed.
+
+This is the value that we are interested in here, because it should drive a lot of work through the rest of the system, like nl2pl.
+
+So the practical question is: how do we find out when a block changed content?
+Ideally, we would have the entire history, but we want the most recent change first, and then the ability to get the other ones if we need them.
+
+% indexing, as building a table index, is division
+
+We can factor it:
+
+BID * BLKCKS * BLKREVTS
+
+Ah, so... what happened was that I realized, we have to take the time into T when we know that the block has changed, and then memorize something.
+But the problem is that then we are recalling it and it's an undifferentiated TS value, so, I mean, we could then sort them and take the earliest one, but we want to just be able to get the answer associatively.
+So, we obviously have to read the time into a variable that has a different name, so "The block checksum first seen time is: ..." but then this is exactly the definition that we already have for what BTS is, the block timestamp being the first time that this block was seen with its current contents.
+(This is different from the time of the most recent change, since it may have changed and changed back.)
+
+So essentially we can have BTS take care of itself:
+
+We establish BTS, we give it a surprise-low handler that uses TS, which we must also have then, and just creates BTS on the first time that we see every block checksum.
+In other words, the LPP on BLKCKS and BTS and the surprise-low handler (event constructor) induces BTS having the first-seen-time properties that we want, as long as we always --recall before doing a query on the LPP...
+We can assume that we have REVTS.
+
+So then we have:
+
+BID * REVTS * BLKCKS * BTS
+
+And the point is that BTS is defined as the revts of the time that the checksum first appears.
+
+Also, another factorization E into I and O:
+
+BID * REVTS * BLKCKS * BTS
+(        I         ) * (O)
+
+Right, so the blkcks is always input because it's always from an actual read.
+The revts will come from maybe... maybe cmpr provides whatever of this is more convenient than working through it here.
+
+Really revts and these things should be owned by cmpr, the code database.
+
+*/
+/* #bid_bts_factorization @block_basics @cmpr_events @ES_names
+
+## BID → BTS as a Factorization Problem
+
+Given a block id (BID), we want to derive its revision timestamp (BTS).
+This is a pattern completion problem: we have one event and want another.
+
+In UM terms, a factorization is a path through intermediate event spaces.
+Several factorizations of BID → BTS are possible:
+
+### Factorization 1: Direct (hypothetical)
+```
+BID → BTS
+```
+A single learned pattern mapping block ids directly to timestamps.
+This would require storing (blockid, timestamp) pairs explicitly.
+
+### Factorization 2: Via block checksum (cmpr2 approach)
+```
+BID → blkcks → revcks → BTS
+```
+- blkcks-id index: BID → blkcks
+- blkcks-revcks index: blkcks → revcks  
+- cks-rev index: revcks → timestamp
+Requires maintaining three separate TSV index files.
+
+### Factorization 3: Via co-occurrence snapshots (cmpr1 approach)
+```
+BID → snapshot → BTS
+```
+Where the snapshot contains all co-occurring events and its filename IS the timestamp.
+
+This is the universal bidirectional indexer: a snapshot of co-occurring events
+IS an index row, and --recall can query on ANY event in the snapshot.
+
+One snapshot containing:
+```
+"The block id is: #foo" 255.
+"The blkcks is: abc123" 255.
+"The revcks is: xyz789" 255.
+```
+
+...simultaneously provides:
+- BID → blkcks (recall on BID, read blkcks)
+- blkcks → BID (recall on blkcks, read BID)
+- BID → BTS (recall on BID, timestamp is filename)
+- blkcks → BTS (recall on blkcks, earliest timestamp wins)
+- blkcks → revcks (recall on blkcks, read revcks)
+- revcks → blkcks (recall on revcks, read all blkcks)
+
+The product pattern is a universal bidirectional indexer because:
+1. It stores event co-occurrences (the joint distribution)
+2. Querying on any marginal retrieves the full joint
+3. Timestamps are natural keys (filename = rev timestamp)
+
+### Why Factorization 3 is preferred
+
+Factorization 2 (cmpr2) requires:
+- Multiple index files with different schemas
+- Separate build/update logic for each
+- Join logic to traverse the factorization
+
+Factorization 3 (snapshots) requires:
+- One representation (event snapshots)
+- One query mechanism (--recall)
+- Timestamps are implicit in filenames
+
+The factorization is still BID → blkcks → revcks → BTS conceptually,
+but the implementation collapses it into the snapshot structure.
+
+## Implementation
+
+See #revstore_to_snapshots for the backfill script that creates
+backdated snapshots from the existing revstore.
+
+*/
+/* #surprise_low_framework @block_basics @bid_bts_factorization @cmpr_events
+
+## Surprise-Low: Exception Handlers for Event Spaces
+
+An event space (ES) has an expected support level. When under-supported, that's a **surprise-low** condition.
+
+For blocks in scope:
+- blkcks should always be computable
+- block length should always be set
+- If missing → surprise-low → fire the handler
+
+Two surprise conditions:
+1. **Under-supported**: ES has no 255 event when it should. Run the output neuron.
+2. **Over-supported**: Multiple mutually exclusive events have 255. Broken invariant.
+
+## Output Neurons
+
+An output neuron is a script that populates an ES when surprise-low fires.
+
+Input neurons read FROM T:
+- scripts/blockid → reads BID from T
+
+Output neurons write TO T:
+- scripts/checksum → computes blkcks, writes to T
+
+Pattern: `BID in T → scripts/checksum → blkcks in T`
+
+## LPP as Trigger Site
+
+The LPP (learned product pattern) is where surprise-low fires:
+
+1. ES1 has 255: `"The blockid is: #foo" 255.`
+2. LPP(ES1, ES2) tries to derive ES2
+3. No pattern for this e_1 → surprise-low
+4. Fire output neuron → compute and add to T
+5. LPP learns the association (via memorized snapshot)
+
+The output neuron provides "justified true belief" - computed from source, not asserted.
+
+## Current Output Neurons
+
+scripts/checksum: BID → blkcks (implements "The blkcks is: X")
+scripts/next-block: reads linked list order from snapshots
+
+## Related
+
+#bid_bts_factorization - BID→BTS via snapshot timestamps
+#revstore_to_snapshots - backfill script (needs update)
+scripts/read-block-order - creates linked snapshot lists for iteration
+
+*/
+/* #revstore_scan_design @surprise_low_framework @bid_bts_factorization
+
+## Revstore Scanning via Linked Snapshots
+
+To backfill BID→BTS for all historical blocks, we scan the revstore.
+We use the same linked-list pattern as scripts/read-block-order.
+
+### Phase 1: Build rev order
+
+```
+ls .cmpr/revs/ | scripts/read-rev-order
+```
+
+Creates snapshots linking: `"The revts is: $prev"` → `"The next rev is: $curr"`
+
+### Phase 2: For each rev, build block order
+
+```
+cmpr --files-blocks .cmpr/revs/$rev | scripts/read-block-order
+```
+
+Creates snapshots linking blocks within that rev.
+
+### Phase 3: Iterate and populate
+
+For each (rev, block) pair:
+1. Set BID in T
+2. Run scripts/checksum (output neuron for blkcks)
+3. Memorize with rev's timestamp (backdated)
+
+### Key Insight
+
+The backfill pre-populates what LPPs would compute on-demand.
+After backfill, --recall with any BID finds historical occurrences.
+Snapshot timestamps ARE the BTS.
+
+### Scripts Needed
+
+scripts/read-rev-order - like read-block-order but for rev timestamps
+scripts/next-rev - like next-block but reads "The next rev is:"
+scripts/backfill-revstore - orchestrates the full scan
+
+### Backdating
+
+The trick is writing snapshots with the rev's timestamp, not current time.
+This creates the memory trace as if we'd been running all along.
+
+*/
+/* #revstore_to_snapshots @bid_bts_factorization
+
+Backfill script: scan revstore and create backdated event snapshots.
+
+One forward pass creates the universal bidirectional index for all historical blocks.
+
+Usage:
+  cmpr --print-code '#revstore_to_snapshots' | bash
+
+For each file revision, for each block in that revision, we create a snapshot
+with the revision's timestamp. The snapshot contains the block's event tuple.
+
+After running, --recall with any BID will find all historical occurrences,
+and the snapshot timestamps give the BTS directly.
+
+*/
+
+#!/bin/bash
+set -e
+
+REVS_DIR=".cmpr/revs"
+EVENTS_DIR=".cmpr/events"
+
+mkdir -p "$EVENTS_DIR"
+
+# Counter for generating unique nanosecond suffixes within same rev
+block_counter=0
+
+for rev_file in "$REVS_DIR"/*; do
+    [[ -f "$rev_file" ]] || continue
+    
+    rev_basename=$(basename "$rev_file")
+    
+    # Skip if not matching YYYYMMDD-HHMMSS pattern
+    [[ "$rev_basename" =~ ^[0-9]{8}-[0-9]{6}$ ]] || continue
+    
+    # Get file checksum
+    revcks=$(cmpr --checksum < "$rev_file")
+    
+    # Get the file path from the rev (first line after block marker, or filename hint)
+    # For now we'll leave file path out - can add later if needed
+    
+    # Blockize and process each block
+    # We use cmpr to parse blocks from the revision
+    block_counter=0
+    
+    # Read the file and extract blocks
+    # A block starts with /* # or """ # and ends with */ or """
+    
+    # Simple approach: use cmpr --files-blocks on a temp copy
+    # But that requires the file to be in the project...
+    
+    # Instead, extract block IDs and content directly
+    # For C files: /* #blockid ... */
+    # For Python: """ #blockid ... """
+    
+    while IFS= read -r line; do
+        # Look for block ID pattern
+        if [[ "$line" =~ ^\\/\\*[[:space:]]*(\#[a-zA-Z_][a-zA-Z0-9_]*) ]] || \
+           [[ "$line" =~ ^\"\"\"[[:space:]]*(\#[a-zA-Z_][a-zA-Z0-9_]*) ]]; then
+            bid="${BASH_REMATCH[1]}"
+            
+            # For now, create snapshot with just BID and revcks
+            # Full block checksum would require extracting block content
+            
+            # Generate unique timestamp: rev_ts + nanoseconds from counter
+            snapshot_ts="${rev_basename}-$(printf '%09d' $block_counter)"
+            snapshot_file="$EVENTS_DIR/$snapshot_ts"
+            
+            # Only create if doesn't exist (idempotent)
+            if [[ ! -f "$snapshot_file" ]]; then
+                cat > "$snapshot_file" << EOF
+"The block id is: $bid" 255.
+"The revcks is: $revcks" 255.
+EOF
+            fi
+            
+            ((block_counter++)) || true
+        fi
+    done < "$rev_file"
+    
+    echo "Processed $rev_basename: $block_counter blocks"
+done
+
+echo "Done. Created snapshots in $EVENTS_DIR"
+/* #claude_experience_report_pattern_system_20260108
+
+Experience report: Pattern system implementation (2026-01-08)
+
+## Session Goal
+
+Implement automatic pattern processing on --event, including:
+- ES filtering
+- LPP (Learned Product Pattern) learning via LSI
+- Pattern population with settling model
+
+Programmer commentary: nice work.
+
+## What Was Accomplished
+
+### 1. Design Documentation (#unified_execution_model)
+
+Created comprehensive design block covering:
+- Component types (agents, scripts, patterns)
+- Event spaces as prefix filters in .cmpr/es/*
+- Pattern file format and registration (presence = registration)
+- Full pattern processing flow
+
+Programmer note: we'll want to review this, xref with CMP, extend
+
+### 2. C Code Changes (#events_functions)
+
+Modified event_add() to:
+- Set CMPR_EVENT, CMPR_STRENGTH environment variables
+- Manage CMPR_PATTERN_DEPTH for recursion control (max depth 1)
+- Call scripts/patterns after saving T
+- Reset depth after script returns
+
+Programmer's commentary: I wanted to review this code when I saw it flying past but yeah it's whatever, we'll focus on the applications before getting into the weeds here. Sure this can be optimized.
+
+Did not review past this; lgtm shipit.
+---
+
+### 3. scripts/patterns Implementation
+
+Complete pattern processing script:
+- ES filtering: runs event through all .cmpr/es/* filters
+- Learning: when both sides have 255-strength events, does LSI update
+- Population: looks up event in pattern files, emits associated events
+- Settling model: only emits if it extends T (new event or higher strength)
+
+### 4. LSI (Log-Stochastic Increment)
+
+Fully implemented probabilistic counting:
+- lsi_should_increment(n): returns true with probability 1/2^n
+- Uses /dev/urandom for randomness (fast, non-blocking)
+- Samples 32 bits, checks if low n bits all 1
+- Tested: n=0 always increments, n=1 ~50%, n=3 ~12.5%
+
+## What Works
+
+1. Adding "Agent: root_agent" 255 automatically populates status events from agent-status pattern
+2. Joint events (both sides 255) trigger LSI learning
+3. Re-adding events doesn't re-emit (settling model works)
+4. Recursion depth limiting prevents infinite loops
+5. Pattern counts increment probabilistically over repeated observations
+
+## Test Results
+
+```
+# Population test
+cmpr --T0
+cmpr --event "Agent: root_agent" --strength 255
+cmpr --T
+# Output: "Agent: root_agent" 255.
+#         "Status: constraint not satisfied" 3.
+#         "Status: implementing guided fix" 1.
+
+# Learning test (6 observations)
+# Pattern count went 0→1→3 (probabilistically correct)
+```
+
+## Known Issues / Remaining Work
+
+1. Recursion depth hardcoded to 1 - increase once validated
+2. Pattern file updates not atomic (uses grep -v + append)
+3. No cost control yet (deferred - use sleep for expensive ops)
+
+## Key Files Modified
+
+- cmpr.c (via #events_functions block)
+- scripts/patterns (new implementation)
+- #unified_execution_model (design documentation)
+
+## Navigation
+
+This work is reachable via: #root → #agents_system_hub → #unified_execution_model
+
+## Next Steps
+
+- Enable deeper recursion once system behavior is understood
+- Consider atomic pattern file updates
+- Build agents that use this infrastructure
+
+*/
 /* #unified_execution_model
 
 Unified execution model for agents, scripts, and patterns.
@@ -32,87 +556,73 @@ All communication within the cmpr system takes place using T.
 - Trigger on events in T matching a particular ES (e.g., "We want X")
 - Perform actions with side effects
 - Emit results to T (success, or blockers preventing success)
-- Example: "We want the build up to date" → agent runs make → build errors → emits "The build is broken" and "The build error is [...]" to T
 
 **Scripts** (`scripts/`):
 - Like agents but more specialized
 - Only populate an ES in T, no other side effects
-- Exist to put something into T
 
 **Patterns** (`.cmpr/patterns/`):
 - Trigger on certain ESs and populate T based on learned relationships
-- File format: `"event_a" "event_b" N.` where N is log support
+- File format: `"event_a" "event_b" N.` where N is log support (bits)
 - Filename: `es1-es2` (alphabetized ES names)
-- Presence of file = registration (no separate --LPP command needed)
+- Presence of file = registration
 
 ## Event Spaces
 
 **ES definition**: A string prefix, reified as a filter script in `.cmpr/es/*`
-- Filter interface: stdin = SN lines, stdout = matching lines, exit code from grep
+- Filter interface: stdin = SN lines, stdout = matching lines
 - Example: `.cmpr/es/agent` contains `grep '^"Agent:'`
-
-## Event Emission Types
-
-**Deterministic** (scripts and agents):
-- Computer programs that emit events with strength 0 or 255 only
-- Either full support (255 bits) or nothing
-
-**Probabilistic** (LPPs - Learned Product Patterns):
-- Generate probabilistic learned patterns
-- Can emit events with intermediate strength values (log support)
 
 ## Pattern Processing on --event (IMPLEMENTED)
 
 When `--event "X" --strength S` is called:
 
-1. Add event to T (via event_add_internal)
-2. Save T (via event_save_T)
-3. Check CMPR_PATTERN_DEPTH (skip if >= 1 for now)
-4. Set environment: CMPR_EVENT, CMPR_STRENGTH, CMPR_PATTERN_DEPTH
-5. Call scripts/patterns which:
-   a. For each filter in .cmpr/es/*:
-      - Pipe event through filter
-      - If matches: add to matched_es list
-   b. For each matched ES, for each pattern file involving that ES:
-      - Parse filename to get ES1-ES2
-      - LEARN: If strength=255 AND other side has 255-strength events in T:
-        - For each (this_event, other_event) pair, add to pattern file if new
-        - TODO: implement proper LSI increment
-      - POPULATE: Look up this event in pattern file:
-        - If event matches ES1, emit ES2 events; if matches ES2, emit ES1 events
-        - Emit with strength = stored log support
-        - Skip if event already in T with >= strength (settling model)
+1. Add event to T, save T
+2. Check CMPR_PATTERN_DEPTH (skip if >= 1)
+3. Set environment: CMPR_EVENT, CMPR_STRENGTH, CMPR_PATTERN_DEPTH
+4. Call scripts/patterns:
+   - ES filtering: run event through .cmpr/es/* filters
+   - For each matched ES and pattern file:
+     - **LEARN**: If strength=255 and other side has 255 events in T:
+       - For each pair, do LSI update (increment with prob 1/2^n)
+     - **POPULATE**: Look up event, emit associated events
+       - Skip if already in T with >= strength (settling model)
+
+## Log-Stochastic Increment (LSI)
+
+Sufficient statistic for joint distribution. Count N represents ~log2 of observations.
+- On each observation, increment with probability 1/2^N
+- N=0 always increments, N=1 increments 50%, N=2 increments 25%, etc.
+- After K observations, E[2^N] ≈ K
+
+Implementation: sample 32 bits from /dev/urandom, check if low N bits all 1.
 
 ## Settling Model
 
-The system converges to a fixed point:
-- Only emit events that extend T (new event OR higher strength)
-- Recursion depth limited to 1 for now (cautious approach)
-- Full recursion (A→B→C chains) structurally supported, enable later
+System converges to fixed point:
+- Only emit events that extend T (new or higher strength)
+- Recursion depth limited to 1 (enable deeper later)
 
 ## Remaining Work
 
-"We want full LSI increment (sample n bits, increment only if all 1s)." 255.
 "We want to enable deeper recursion once system is validated." 255.
 
 ## Cost Control (Deferred)
 
-Since scripts and agents may call LLMs or be otherwise expensive, we need to control spend:
-- For now, expensive scripts that call big models should sleep for 60 seconds after they do their work
-- Later: track run time, token usage, etc.
+Expensive scripts should sleep after work. Later: track tokens/cost.
 
 ## Implementation Files
 
-- cmpr.c #events_functions: event_add() sets env vars and calls scripts/patterns
-- scripts/patterns: ES filtering, learning, population logic
+- cmpr.c #events_functions: event_add() sets env vars, calls scripts/patterns
+- scripts/patterns: ES filtering, LSI learning, population
 
-## Current Status (2026-01-08)
+## Status (2026-01-08)
 
-Pattern processing on --event is implemented and tested:
-- ES filtering works
-- Pattern population works (settling model)
-- Pattern learning works (simplified - adds entries, full LSI TODO)
-- Recursion depth limited to 1
+Fully implemented:
+- ES filtering
+- Pattern population (settling model)  
+- LSI learning (full probabilistic counting)
+- Recursion depth limiting
 
 */
 /* #claude_experience_report_learn_build_errors_20260105
