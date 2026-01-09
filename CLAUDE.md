@@ -580,6 +580,22 @@ After exiting planning mode or when context-switching, it's easy to forget cmpr 
 - ❌ Grepping or filtering `make` output → ✅ Read it directly - it's a serious build system, not npm
 - ❌ Creating blocks without knowing final location → ✅ Use `cmpr --after '#INBOX'` and move later
 
+**Recovering a Deleted Block from Revisions**:
+
+If you accidentally delete or corrupt a block, find it in recent revisions:
+```bash
+b='#block_id'
+find .cmpr/revs -type f | sort | tail -n32 | while read rev; do
+  cmpr --print-block "$b" "$rev" >/dev/null 2>&1 && printf "%s contains %s\n" "$rev" "$b"
+done
+```
+
+Once you find a revision containing the block, extract and restore it:
+```bash
+cmpr --print-block '#block_id' .cmpr/revs/YYYYMMDD-HHMMSS > /tmp/block.txt
+cat /tmp/block.txt | cmpr --after '#some_existing_block'
+```
+
 **CRITICAL: Navigation Structure**
 
 Every block MUST be reachable from #root in ≤2 hops. This is a core want maintained by the root agent.

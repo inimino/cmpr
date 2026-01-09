@@ -20,6 +20,276 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 */
 
 
+/* #wants_triage_agent
+
+Agent that triages all wants by checking recall for prior context.
+
+For each want:
+1. Use the want text as a query to --recall
+2. If recall finds a snapshot, we have prior state
+3. Report what we know about each want
+
+This gives us a starting point for understanding which wants have been worked on.
+
+Output: For each want, reports whether we have prior context and what state it's in.
+
+Usage: cmpr --print-code '#wants_triage_agent' | bash
+
+Manually maintained.
+
+*/
+#!/bin/bash
+set -euo pipefail
+
+echo "=== Wants Triage Agent ===" >&2
+echo >&2
+
+# Get all wants
+wants=$(dist/cmpr --wants)
+
+# Track results
+total=0
+found=0
+not_found=0
+
+while IFS= read -r want_line; do
+    # Skip empty lines
+    [ -z "$want_line" ] && continue
+    
+    # Extract just the event string (everything before the strength)
+    # Format is: "want text" 255.
+    want_text=$(echo "$want_line" | sed 's/ [0-9]*\.$//')
+    
+    total=$((total + 1))
+    
+    echo "Checking: $want_text" >&2
+    
+    # Clear T
+    dist/cmpr --T0 2>/dev/null || true
+    
+    # Add want as query
+    dist/cmpr --event "$want_text" --strength 255 2>/dev/null || true
+    
+    # Try recall
+    if dist/cmpr --recall 2>/dev/null; then
+        found=$((found + 1))
+        echo "  ✓ Found prior context" >&2
+        # Show what we found
+        dist/cmpr --T 2>/dev/null | head -5 | sed 's/^/    /' >&2
+    else
+        not_found=$((not_found + 1))
+        echo "  ✗ No prior context" >&2
+    fi
+    
+    echo >&2
+done <<< "$wants"
+
+echo "=== Summary ===" >&2
+echo "Total wants: $total" >&2
+echo "With prior context: $found" >&2
+echo "Without prior context: $not_found" >&2
+/* #want_processing_system
+
+System for looping through wants using the same pattern as block processing.
+
+## Core Idea
+
+Wants are tracked in T using snapshots as a linked list. Each snapshot contains:
+- The current want (directly as an event)
+- "The next want is: <next_want>" pointer
+
+This mirrors how blocks use "The blockid is:" and "The next block is:" patterns.
+
+## Scripts
+
+scripts/read-want-order
+  Pipe wants from `cmpr --wants` to create the linked list.
+  Usage: cmpr --wants | scripts/read-want-order
+  
+scripts/wantid
+  Extract current want from T.
+  
+scripts/next-want
+  Extract next want from T.
+
+## Entry Point
+
+agents/rec-want
+  Entry point for recursive want processing.
+  Builds the linked list, then sets up T with the first want.
+
+## Usage
+
+Build the want order and start processing:
+```
+cmpr --wants | scripts/read-want-order
+first=$(cmpr --wants | head -1 | sed 's/^"//; s/" [0-9]*\.$//')
+cmpr --T0
+cmpr --event "$first" --strength 255
+cmpr --recall
+```
+
+Then in a loop:
+```
+current=$(scripts/wantid)
+next=$(scripts/next-want)
+# ... process current want ...
+cmpr --T0
+cmpr --event "$next" --strength 255
+cmpr --recall
+```
+
+## Triage
+
+#wants_triage_agent - Check which wants have prior context via --recall
+
+## Relationship to Block Processing
+
+This mirrors the block processing pattern in:
+- scripts/read-block-order (creates block linked list)
+- scripts/blockid (extract current block)
+- scripts/next-block (extract next block)
+- agents/rec-impr (recursive block improvement)
+- scripts/improve-block (process one block)
+
+*/
+/* #claude_experience_report_induced_patterns_20260109_commentary
+
+The block was in the revs, claude's bash tooling issues prevented it from being able to find it and led to it looking in cmpr2 revs, which aren't being updated because we're not working in that codebase actively.
+
+*/
+/* #claude_experience_report_induced_patterns_20260109
+
+Experience report: Induced patterns and session issues (2026-01-09)
+
+## Session Goal
+
+Implement infrastructure for detecting block changes via the event system, specifically:
+1. Induced patterns (triggers that fire when an ES is populated)
+2. Surprise-high detection (when multiple values exist in same ES)
+
+## What Was Accomplished
+
+### Induced Pattern Infrastructure
+- Created `.cmpr/induced/` directory
+- Created `.cmpr/induced/BID` symlink → `../../scripts/checksum`
+- Modified `scripts/patterns` to run induced scripts when ES is populated
+- Modified `scripts/checksum` to:
+  - Call `--recall` first (to load previous state)
+  - Then compute fresh blkcks
+
+### Surprise-High Infrastructure
+- Created `.cmpr/surprise-high/` directory
+- Created `.cmpr/surprise-high/blkcks` handler that emits "The block has changed"
+- Added surprise-high detection to `scripts/patterns`
+
+### Documentation
+- Created `#event_spaces_catalog` block documenting ES and patterns
+- Created `.cmpr/es/blkcks` filter for blkcks ES
+
+### Tested Working
+- BID event → automatically triggers checksum computation
+- `cmpr --T0 && cmpr --event "The blockid is: #root" --strength 255 && cmpr --T`
+- Correctly computes and adds blkcks to T
+
+## What Went Wrong
+
+### Block Deletion
+Attempted to fix #cmpr_events (missing closing `*/`) with a piped command:
+```
+{ cmpr --print-block '#cmpr_events'; echo '*/'; } | cmpr --replace '#cmpr_events'
+```
+The brace syntax failed in bash execution, resulting in malformed input to --replace, which deleted or corrupted the block.
+
+### Recovery Attempt Failed
+- Block was not found in cmpr1 revs (it was in ../cmpr/cmpr.c, part of cmpr2)
+- Cross-project file references made recovery confusing
+- User will restore from git
+
+### Shell Execution Issues
+Some bash commands that worked on user's CLI did not work through my Bash tool execution. Cause unknown.
+
+## Key Insight: T is Transient
+
+User emphasized biological metaphor:
+- T is "what we are thinking" - transient, current context only
+- Snapshots are memories - never touch/edit them
+- Patterns are what we actively maintain
+- Don't obsess over old ES naming schemes, just standardize and move on
+
+## Design Decisions Made
+
+1. **Induced patterns** live in `.cmpr/induced/<ES_name>`
+2. **Surprise-high handlers** live in `.cmpr/surprise-high/<ES_name>`
+3. Both are symlinks to actual implementation scripts
+4. `scripts/patterns` orchestrates: induced → surprise-high → learn → populate
+
+## Files Changed
+- scripts/patterns (added induced + surprise-high sections)
+- scripts/checksum (added --recall, fixed blockid usage)
+- .cmpr/induced/BID (new symlink)
+- .cmpr/surprise-high/blkcks (new script)
+- .cmpr/es/blkcks (new filter)
+- INBOX.c (added #event_spaces_catalog)
+
+## Next Steps
+1. Restore #cmpr_events from git
+2. Add reference from #cmpr_events to #event_spaces_catalog
+3. Test surprise-high detection with actual block changes
+4. Continue work on nl2pl staleness detection
+
+*/
+/* #event_spaces_catalog @cmpr_events @block_basics
+
+## Event Spaces Catalog
+
+Tracking the event spaces and patterns we're building.
+
+### Event Spaces (ES)
+
+**BID** - Block identifiers
+- Filter: `.cmpr/es/BID`
+- Pattern: `"The blockid is: #<id>" 255.`
+- Induced: `.cmpr/induced/BID` → triggers checksum computation
+
+**blkcks** - Block checksums  
+- Filter: `.cmpr/es/blkcks`
+- Pattern: `"The blkcks is: <hash>" 255.`
+- Surprise-high: `.cmpr/surprise-high/blkcks` → "block changed"
+
+**block_status** - Block change detection
+- Pattern: `"The block has changed" 255.`
+- Pattern: `"The block is unchanged" 255.`
+
+### Patterns Between ESs
+
+**BID → blkcks** (induced, not learned)
+- When BID populated → compute fresh blkcks
+- Not an LPP - always recompute, never lookup
+
+**blkcks surprise-high** 
+- Two different blkcks in T → block content changed
+- Handler emits explanation event
+
+### Automation States
+
+For each want, track: tracked → checked → assisted → owned
+
+**"Block checksums are current"**
+- State: checked (induced trigger computes on BID)
+
+**"Block changes are detected"**  
+- State: checked (surprise-high handler detects)
+
+### Infrastructure
+
+- `.cmpr/es/<name>` - ES filter scripts
+- `.cmpr/induced/<es>` - triggers when ES populated
+- `.cmpr/surprise-high/<es>` - handles multiple values in ES
+- `.cmpr/patterns/<es1>-<es2>` - learned product patterns
+- `scripts/patterns` - main pattern processor (induced, surprise-high, learn, populate)
+
+*/
 /* #claude_experience_report_bts_factorization_20260108
 
 Experience report: BTS factorization and first-seen patterns (2026-01-08)

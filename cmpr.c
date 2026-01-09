@@ -2352,6 +2352,7 @@ int ind_conf = 0;
 	int ind_agents_wants = 0;
 	int ind_wants_dashboard = 0;
 	int ind_event_report = 0;
+	int ind_es = 0;
 	int ind_export_docs = 0;
 	int ind_snapshot_join = 0;
 	int ind_learn = 0;
@@ -2383,6 +2384,7 @@ int ind_conf = 0;
 	char *file_argument = NULL;
 	
 	int action_arg = 0;
+
 
 /* #handle_args_3 */
 for (int i = 1; i < argc; i++) {
@@ -2516,6 +2518,8 @@ for (int i = 1; i < argc; i++) {
 			ind_wants_dashboard = 1;
 		} else if (strcmp(arg, "--event-report") == 0) {
 			ind_event_report = 1;
+		} else if (strcmp(arg, "--es") == 0) {
+			ind_es = 1;
 		} else if (strcmp(arg, "--export-docs") == 0) {
 			ind_export_docs = 1;
 		} else if (arg[0] == '-' && arg[1] == '-') {
@@ -2527,6 +2531,8 @@ for (int i = 1; i < argc; i++) {
                         file_argument = arg;
                 }
 	}
+
+
 
 /* #handle_args_4 */
 if (ind_file_argument) {
@@ -2586,6 +2592,7 @@ if (ind_file_argument) {
 	             ind_agents_wants +
 	             ind_wants_dashboard +
 	             ind_event_report +
+	             ind_es +
 	             ind_export_docs +
 	             ind_snapshot_join +
 	             ind_learn +
@@ -2597,7 +2604,7 @@ if (ind_file_argument) {
 	}
 	
 	// Get code database if needed (for most commands)
-	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint) {
+	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es) {
 		get_code();
 	}
 	
@@ -2830,8 +2837,14 @@ if (ind_file_argument) {
 		flush_exit(0);
 	}
 
+	if (ind_es) {
+		handle_es();
+		flush_exit(0);
+	}
+
 	// No action arg - return to enter interactive mode
 }
+
 
 /* #handle_snapshot_join */
 void handle_snapshot_join(span es1, span es2) {
@@ -7375,6 +7388,73 @@ void handle_export_docs() {
     }
     
     flush();
+}
+
+
+
+/* #handle_es */
+void handle_es() {
+  span es_dir = S(".cmpr/es/");
+  span induced_dir = S(".cmpr/induced/");
+  span surprise_dir = S(".cmpr/surprise-high/");
+  span patterns_dir = S(".cmpr/patterns/");
+
+  spans es = dir_listing(es_dir);
+  spans pats = dir_listing(patterns_dir);
+
+  prt("ES\tinduced\tsurprise\tpatterns\n");
+
+  for (int i = 0; i < es.n; i++) {
+    span name = es.a[i];
+
+    span induced_path = concat(induced_dir, name);
+    span surprise_path = concat(surprise_dir, name);
+
+    int has_induced = readable_file(induced_path);
+    int has_surprise = readable_file(surprise_path);
+
+    char patbuf[1024];
+    patbuf[0] = 0;
+    int first = 1;
+
+    for (int j = 0; j < pats.n; j++) {
+      span fn = pats.a[j];
+
+      int dash = find_char(fn, '-');
+      if (dash <= 0) continue;
+      if (dash >= len(fn) - 1) continue;
+
+      span left = first_n(fn, dash);
+      span right = skip_n(fn, dash + 1);
+
+      span other = nullspan();
+      if (span_eq(name, left)) other = right;
+      else if (span_eq(name, right)) other = left;
+      else continue;
+
+      if (len(other) == 0) continue;
+
+      if ((int)strlen(patbuf) + (first ? 0 : 1) + len(other) + 1 >= (int)sizeof(patbuf)) break;
+
+      if (!first) strcat(patbuf, ",");
+      first = 0;
+
+      char tmp[512];
+      int n = len(other);
+      if (n >= (int)sizeof(tmp)) n = (int)sizeof(tmp) - 1;
+      memcpy(tmp, other.buf, n);
+      tmp[n] = 0;
+      strcat(patbuf, tmp);
+    }
+
+    prt("%s\t%s\t%s\t%s\n",
+        s(name),
+        has_induced ? s(name) : "-",
+        has_surprise ? s(name) : "-",
+        patbuf[0] ? patbuf : "-");
+  }
+
+  flush();
 }
 
 
