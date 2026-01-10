@@ -6609,123 +6609,75 @@ void handle_checksum(void) {
 
 /* #handle_wants */
 void handle_wants() {
-    // Helper function to parse SN line and check if it starts with "We want "
-    void check_line(span line) {
-        // Skip leading whitespace
-        while (line.buf < line.end && (*line.buf == ' ' || *line.buf == '\t')) {
-            line.buf++;
-        }
-        
-        // Save the start position (after whitespace)
-        u8 *line_start = line.buf;
-        
-        // Line must start with "
-        if (line.buf >= line.end || *line.buf != '"') return;
-        
-        // Search backwards from end for pattern " <digits>.
-        u8 *p = line.end - 1;
-        
-        // Must end with '.'
-        if (p < line.buf || *p != '.') return;
-        u8 *line_end = p + 1; // Save end position (inclusive of '.')
-        p--;
-        
-        // Skip digits
-        u8 *digit_end = p + 1;
-        while (p >= line.buf && *p >= '0' && *p <= '9') p--;
-        if (p < line.buf || p + 1 == digit_end) return; // No digits found
-        
-        // Must have space before digits
-        if (*p != ' ') return;
-        p--;
-        
-        // Must have " before space
-        if (p < line.buf || *p != '"') return;
-        
-        // Extract event string: between opening " and this "
-        span event_str = {line.buf + 1, p};
-        
-        // Check if starts with "We want "
-        span want_prefix = S("We want ");
-        if (event_str.end - event_str.buf >= want_prefix.end - want_prefix.buf &&
-            memcmp(event_str.buf, want_prefix.buf, want_prefix.end - want_prefix.buf) == 0) {
-            // Print the entire SN line
-            span sn_line = {line_start, line_end};
-            wrs(sn_line);
-            terpri();
-        }
-    }
+    get_code();
     
-    // Helper function to scan a file
-    void scan_file(const char *filepath) {
-        FILE *f = fopen(filepath, "r");
-        if (!f) return;
-        
-        // Read file into buffer
-        fseek(f, 0, SEEK_END);
-        long fsize = ftell(f);
-        if (fsize < 0 || fsize > 100000000) { // Skip files > 100MB
-            fclose(f);
-            return;
-        }
-        fseek(f, 0, SEEK_SET);
-        
-        u8 *content = (u8 *)malloc(fsize);
-        if (!content) {
-            fclose(f);
-            return;
-        }
-        
-        size_t bytes_read = fread(content, 1, fsize, f);
-        fclose(f);
-        
-        if (bytes_read != (size_t)fsize) {
-            free(content);
-            return;
-        }
-        
-        span file_span = {content, content + fsize};
-        
-        // Process line by line
-        while (file_span.buf < file_span.end) {
-            span line = head_line(&file_span);
-            check_line(line);
-        }
-        
-        free(content);
-    }
+    // Track seen wants to dedupe
+    span seen[1024];
+    int seen_count = 0;
     
-    // Scan source files
-    scan_file("cmpr.c");
-    scan_file("spanio.c");
-    scan_file("INBOX.c");
-    
-    // Scan .cmpr/T
-    scan_file(".cmpr/T");
-    
-    // Scan .cmpr/events/*
-    DIR *events_dir = opendir(".cmpr/events");
-    if (events_dir) {
-        struct dirent *entry;
-        while ((entry = readdir(events_dir)) != NULL) {
-            if (entry->d_name[0] == '.') continue;
+    for (int i = 0; i < state->blocks.n; i++) {
+        span block = state->blocks.a[i];
+        
+        while (block.buf < block.end) {
+            span line = head_line(&block);
             
-            char path[512];
-            snprintf(path, sizeof(path), ".cmpr/events/%s", entry->d_name);
-            scan_file(path);
+            // Skip leading whitespace
+            while (line.buf < line.end && (*line.buf == ' ' || *line.buf == '\t')) {
+                line.buf++;
+            }
+            
+            u8 *line_start = line.buf;
+            
+            // Line must start with "
+            if (line.buf >= line.end || *line.buf != '"') continue;
+            
+            // Search backwards for " <digits>.
+            u8 *p = line.end - 1;
+            if (p < line.buf || *p != '.') continue;
+            u8 *line_end = p + 1;
+            p--;
+            
+            u8 *digit_end = p + 1;
+            while (p >= line.buf && *p >= '0' && *p <= '9') p--;
+            if (p < line.buf || p + 1 == digit_end) continue;
+            if (*p != ' ') continue;
+            p--;
+            if (p < line.buf || *p != '"') continue;
+            
+            span event_str = {line.buf + 1, p};
+            span want_prefix = S("We want ");
+            int prefix_len = want_prefix.end - want_prefix.buf;
+            
+            if (event_str.end - event_str.buf >= prefix_len &&
+                memcmp(event_str.buf, want_prefix.buf, prefix_len) == 0) {
+                
+                span sn_line = {line_start, line_end};
+                
+                // Check if already seen
+                int is_dup = 0;
+                for (int j = 0; j < seen_count; j++) {
+                    if (span_eq(seen[j], sn_line)) {
+                        is_dup = 1;
+                        break;
+                    }
+                }
+                
+                if (!is_dup && seen_count < 1024) {
+                    seen[seen_count++] = sn_line;
+                    wrs(sn_line);
+                    terpri();
+                }
+            }
         }
-        closedir(events_dir);
     }
     
     flush();
 }
 
-
-
 /* #handle_wants_status */
 void handle_wants_status() {
     // Find the wants_status_report block
-    int block_idx = block_by_id(S("#wants_status_report"));
+    int block_idx = block_by_id(S("wants_status_report"));
     if (block_idx == -1) {
         prt("Error: #wants_status_report block not found\n");
         flush_exit(1);
@@ -6766,7 +6718,6 @@ void handle_wants_status() {
     // Exit with script's exit code
     flush_exit(WEXITSTATUS(status));
 }
-
 
 /* #handle_agents_wants */
 void handle_agents_wants() {

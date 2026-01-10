@@ -1,2 +1,3 @@
-"The next want is: We want a --move flag that will make moving blocks easy, probably like --move <id> --after <otherid>." 255.
-"We want blocks that appear after #INBOX to be moved to appropriate locations in the codebase based on their content and purpose." 255.
+"The experience report is: #claude_experience_report_help_argtable_want_20250110" 255.
+"We want the --help output and the actual argtable to be in sync." 255.
+"The --help and argtable are out of sync." 255.

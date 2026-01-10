@@ -20,6 +20,285 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 */
 
 
+/* #claude_experience_report_help_argtable_want_20250110
+
+Session goal: Work on the want "We want the --help output and the actual argtable to be in sync." - understand its state and move it forward.
+
+## What I Found
+
+### The Want
+Located in #argtable block:
+"We want the --help output and the actual argtable to be in sync." 255.
+
+### Current State
+- **Automation state**: Tracked (no agent, per --agents-wants output)
+- **Actual reality**: OUT OF SYNC
+
+### Specific Discrepancies
+The argtable command syntax has 3 items not in --help:
+1. `[--query <string>]` - in argtable, missing from --help
+2. `[--sn-filter]` - in argtable, missing from --help  
+3. `[FILE|-]` - in argtable, missing from --help
+
+## What I Created
+
+### Check Script
+`scripts/help-argtable-check` - compares argtable usage line to --help output, emits events:
+- "The --help and argtable are in sync." 255.
+- "The --help and argtable are out of sync." 255.
+
+### Event Space Filter
+`.cmpr/es/help-argtable` - grep filter for the ES
+
+## Open Question: Triggering
+
+The script exists but what runs it repeatedly? I found multiple mechanisms:
+- `scripts/patterns` - triggered when events are emitted, runs induced/surprise-high scripts
+- `scripts/read-want-order` - creates linked list of wants in snapshots
+- `scripts/next-want` - extracts next want from T
+- `scripts/loop` - iterates blocks, not wants
+
+The user indicated there's an outer loop agent for wants that should trigger these checks.
+
+## Fragmentation Observed
+
+Too many parallel concepts not unified:
+1. **Agent system** (#agents_system_hub, --agents, --agent-run) - complex, some old/new
+2. **Scripts** (scripts/) - simpler, just populate event spaces
+3. **Patterns** (.cmpr/patterns/, scripts/patterns) - triggered by events
+4. **Want processing** (--wants, --wants-status, --agents-wants, read-want-order)
+5. **ES filters** (.cmpr/es/) - grep patterns for event spaces
+6. **Induced scripts** (.cmpr/induced/) - run when ES populated
+7. **Surprise-high scripts** (.cmpr/surprise-high/) - run on multiple values in ES
+
+The relationship between these isn't clear. A want should:
+1. Define an ES
+2. Have a script that populates that ES
+3. Be checked by some outer loop
+
+But the connection between "agent" and "script that populates ES" is ambiguous.
+
+## Blocks Referenced
+- #root - navigation, want definition, want workflow docs
+- #argtable - CLI args, contains the want
+- #args_cli_hub - navigation to argtable
+- #agents_system_hub - agent infrastructure
+- scripts/nl2pl-block-check - example check script pattern
+- scripts/patterns - pattern processing
+- scripts/read-want-order - want linked list creation
+
+## Next Steps
+1. Understand the outer loop agent that iterates wants
+2. Connect help-argtable-check to that loop
+3. Then the want is truly "checked"
+4. Consider unifying the terminology (agent vs script vs ES populator)
+
+*/
+/* #want_state_tracker_design
+
+Design for want state tracking system.
+
+## Purpose
+
+Determine the distribution of want states across all wants using an LPP (Learned Product Pattern) that connects the want ES to the want state ES.
+
+## Event Spaces
+
+**Want ES** (open):
+Defined by "We want .*" where the content is typically one English sentence.
+This ES is continuously extended as new wants are added to the codebase.
+Filter: `.cmpr/es/want` contains `grep '^"We want'`
+
+**Want state ES** (closed):
+```
+"The want is tracked." 0.
+"The want is checked." 0.
+"The want is assisted." 0.
+"The want is owned." 0.
+```
+Filter: `.cmpr/es/wantstate` contains `grep '^"The want is'`
+
+These are the four decision states. All wants are "tracked" by definition (they exist in source code). The system can mature wants through: tracked → checked → assisted → owned.
+
+## LPP Implementation
+
+Pattern file: `.cmpr/patterns/want-wantstate`
+Format: `"<want>" "<state>" N.` where N is log support (bits)
+
+The LPP connects:
+- **Side A**: Want ES (open, many events)
+- **Side B**: Want state ES (closed, 4 events)
+
+### Training
+
+When both a want (255) and a state (255) are in T, the next `--event` call triggers LSI learning:
+```
+cmpr --T0
+cmpr --event "We want X" --strength 255
+cmpr --event "The want is tracked." --strength 255
+# ^ This --event call trains the association
+```
+
+### Query (Single Want)
+
+Load the want, state auto-populates via pattern processing:
+```
+cmpr --T0
+cmpr --event "We want X" --strength 255
+cmpr --T
+# Shows: "We want X" 255.
+#        "The want is tracked." 1.
+```
+
+## Aggregate Distribution via Context Event
+
+To get the distribution across ALL wants, we use a context event pattern (see #context_event_pattern).
+
+**Context event**: "We are scanning the wants"
+**product**: `.cmpr/patterns/scanning_wants-wantstate`
+
+### Training the LPP
+
+Run `scripts/train-want-state-synapse` which:
+1. Clears T, adds context event at 255
+2. For each want, looks up its state and adds it at 255
+3. LSI learning accumulates counts in the synapse
+
+### Querying Aggregate Distribution
+
+```
+cmpr --T0
+cmpr --event "We are scanning the wants" --strength 255
+cmpr --T
+# Shows: "We are scanning the wants" 255.
+#        "The want is tracked." N.
+#        "The want is checked." M.
+```
+
+The weights N, M are LSI counts (log-scale) representing the distribution.
+
+## State Transitions
+
+When a want matures (e.g., an agent is implemented that can CHECK it):
+1. Clear T
+2. Load the want into T at 255
+3. Add the new state event at 255
+   - This `--event` call trains the new association
+
+## First-Seen Tracking
+
+On first encounter with an unseen want:
+1. Clear T
+2. Load want at 255
+3. Add "The want is tracked." at 255
+
+This establishes the initial association in the LPP.
+
+## Loop Structure
+
+Uses existing infrastructure for iteration:
+- scripts/read-want-order (builds linked list)
+- scripts/wantid (get current want)
+- scripts/next-want (get next want)
+
+Eventually: pure associative via patterns, no explicit looping.
+
+*/
+/* #context_event_pattern
+
+The context event pattern (also called "synapse" or "event × ES") is a way to get aggregate statistics across an event space.
+
+Programmer commentary: No, the "synapse" is a single connection from one atomic event to another.
+"event \times ES" is a product, but it's just a product from a singleton set.
+It's what we do, apparently, when we want an aggregate statistic on ES2 over an entire ES1 context.
+This is why we also call in the "context neuron" or event for ES1 whenever there's some event (necessarily, outside it) that always fires whenever any event in it fires.
+We suspect that for every ES there will be some such context event.
+
+In other words, generally, instead of creating them, we should usually be looking for them.
+
+## The Problem
+
+A standard LPP (Learned Product Pattern) connects two event spaces: ES1 × ES2.
+When you query with events from ES1, you get associated events from ES2.
+But what if you want the AGGREGATE distribution across ES2 for ALL events in ES1?
+
+With a standard LPP, loading multiple ES1 events gives you individual associations, not sums.
+
+## The Solution: Context Event
+
+A context event is a single event that is "always true" when you're scanning an ES.
+It acts as a sum event - learning against it accumulates the aggregate.
+
+**Structure**: Single event × ES (not ES × ES)
+
+**Implementation**: Use a single-event ES. The existing LPP infrastructure handles it.
+
+## Example: Want State Distribution
+
+**Context event**: "We are scanning the wants"
+**Target ES**: wantstate (tracked, checked, assisted, owned)
+**Synapse file**: `.cmpr/patterns/scanning_wants-wantstate`
+
+### Training
+
+```bash
+cmpr --T0
+cmpr --event "We are scanning the wants" --strength 255
+# For each want, add its state at 255:
+cmpr --event "The want is tracked." --strength 255
+cmpr --event "The want is tracked." --strength 255
+cmpr --event "The want is checked." --strength 255
+# etc.
+```
+
+Each state event at 255 triggers LSI learning against the context event.
+The synapse accumulates log-scale counts.
+
+### Querying
+
+```bash
+cmpr --T0
+cmpr --event "We are scanning the wants" --strength 255
+cmpr --T
+# Output:
+# "We are scanning the wants" 255.
+# "The want is tracked." 4.
+# "The want is checked." 2.
+```
+
+The weights are LSI counts representing the aggregate distribution.
+
+## Creating a New Context Event Pattern
+
+1. Create single-event ES filter:
+   ```bash
+   echo '#!/bin/bash' > .cmpr/es/my_context
+   echo 'grep "^\"My context event\"$"' >> .cmpr/es/my_context
+   chmod +x .cmpr/es/my_context
+   ```
+
+2. Create pattern file (alphabetized name):
+   ```bash
+   touch .cmpr/patterns/my_context-target_es
+   ```
+
+3. Write training script that:
+   - Clears T
+   - Adds context event at 255
+   - Loops through source data, adding target ES events at 255
+
+4. Query by loading just the context event.
+
+## Theory
+
+From the design discussion in #want_state_tracker_design:
+
+- A context event is always true when any event in an ES is true
+- This is the "atomic learned pattern" - Hebbian learning between one event and an ES
+- It's a synapse: single event × ES, vs full product pattern (ES × ES)
+- Without a context event, aggregate distributions aren't stored anywhere
+
+*/
 /* #wants_triage_agent
 
 Agent that triages all wants by checking recall for prior context.
@@ -4013,7 +4292,7 @@ agent-qa
 */
 /* #help_text_summary
 
-Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs]
+Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs]
 
 For help on available topics: cmpr --help topics
 */
@@ -6592,87 +6871,71 @@ But the core contribution (event system query documentation + working script) is
 
 /* #wants_status_report
 
-Shell script to report status of all wants by querying event system snapshots.
-
-This script demonstrates the temporal query pattern from #event_system_temporal_queries.
+Shell script to report status of all wants by querying the LPP pattern system.
 
 Algorithm:
 1. Get all wants using `cmpr --wants`
 2. For each want:
-   - Clear T and set query event with the want text
-   - Use --recall to find most recent snapshot mentioning this want
-   - Extract status, agent, and timestamp from recalled events
-   - Output formatted result
-3. Handle cases where no status is found (want not yet checked)
+   - Clear T
+   - Load the want into T at strength 255
+   - Read T - the LPP auto-populates the associated state
+   - Extract and display the state
+
+The LPP in .cmpr/patterns/want-wantstate connects wants to their states.
+When a want is loaded into T, the pattern system adds the associated state event.
 
 Output format:
 - Want text (SN format)
-- Status: satisfied | not satisfied | unknown
-- Last checked: timestamp (if available)
-- Agent: agent_name (if available)
-- Blank line between wants
+- State: tracked | checked | assisted | owned | (no state)
 
-This queries historical agent execution data without re-running agents.
+Manually maintained.
 
 */
-
 #!/bin/bash
 set -euo pipefail
 
-echo "=== Wants Status Report ===" >&2
-echo >&2
+echo "=== Wants Status Report ==="
+echo
 
 # Get all wants
 wants=$(dist/cmpr --wants 2>/dev/null)
 
 # Process each want
 while IFS= read -r want_line; do
-    if [ -z "$want_line" ]; then
-        continue
-    fi
+    [ -z "$want_line" ] && continue
     
     # Extract want text (between quotes in SN format)
     want_text=$(echo "$want_line" | sed 's/^"\(.*\)" [0-9]*\.$/\1/')
     
-    # Query event system for this want
-    dist/cmpr --T0 2>/dev/null || true
-    dist/cmpr --event "$want_text" --strength 255 2>/dev/null || true
+    # Load want into T - LPP auto-populates state
+    dist/cmpr --T0 2>/dev/null
+    dist/cmpr --event "$want_text" --strength 255 2>/dev/null
     
-    # Try to recall snapshot containing this want
-    if dist/cmpr --recall 2>/dev/null; then
-        # Successfully recalled - extract events from T
-        t_output=$(dist/cmpr --T 2>/dev/null)
-        
-        # Extract status
-        status=$(echo "$t_output" | grep '"Status:' | sed 's/^"Status: \(.*\)" [0-9]*\.$/\1/' | head -1 || echo "unknown")
-        
-        # Extract agent
-        agent=$(echo "$t_output" | grep '"Agent:' | sed 's/^"Agent: \(.*\)" [0-9]*\.$/\1/' | head -1 || echo "")
-        
-        # Extract timestamp
-        timestamp=$(echo "$t_output" | grep '"Timestamp:' | sed 's/^"Timestamp: \(.*\)" [0-9]*\.$/\1/' | head -1 || echo "")
-        
-        # Output
-        echo "$want_line"
-        echo "  Status: $status"
-        if [ -n "$timestamp" ]; then
-            echo "  Last checked: $timestamp"
-        fi
-        if [ -n "$agent" ]; then
-            echo "  Agent: $agent"
-        fi
-    else
-        # No snapshot found
-        echo "$want_line"
-        echo "  Status: unknown (no recent agent run found)"
+    # Read T and extract state
+    t_output=$(dist/cmpr --T 2>/dev/null)
+    
+    # Look for state events
+    state=""
+    if echo "$t_output" | grep -q '"The want is owned\."'; then
+        state="owned"
+    elif echo "$t_output" | grep -q '"The want is assisted\."'; then
+        state="assisted"
+    elif echo "$t_output" | grep -q '"The want is checked\."'; then
+        state="checked"
+    elif echo "$t_output" | grep -q '"The want is tracked\."'; then
+        state="tracked"
     fi
     
-    echo ""
+    # Output
+    echo "$want_line"
+    if [ -n "$state" ]; then
+        echo "  State: $state"
+    else
+        echo "  State: (no state recorded)"
+    fi
+    echo
     
 done <<< "$wants"
-
-echo "=== End Report ===" >&2
-
 /* #event_system_temporal_queries
 
 Temporal query patterns using the T/E/S event system.

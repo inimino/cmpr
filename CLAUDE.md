@@ -641,17 +641,30 @@ Never be afraid to go back to the root block and look for something else.
 
 ## Session Workflow
 
-**Starting a session:**
+**Starting a session (MANDATORY - do this before ANY task):**
 
-Check current T state to see recent work:
+1. **Read the root block first** - understand current navigation structure:
+```bash
+cmpr --print-comment '#root'
+```
+
+2. **Check T state for recent work context**:
 ```bash
 cmpr --T
 ```
 
+3. **Find and read recent experience reports** - check INBOX for recent reports:
+```bash
+cmpr --files-blocks | grep -A8 '#INBOX'
+```
+This shows recent blocks after INBOX including experience reports. Read any relevant ones with `cmpr --print-comment '#block_id'`.
+
 T contains events from recent work sessions. Check for:
-- Experience report events: `"The experience report is: #blockid"`
+- Experience report events: `"The experience report is: #blockid"` - READ THESE BLOCKS
 - Agent execution results: `"Agent: "`, `"Status: "`, etc.
 - Want tracking: `"The want is: "`, `"Automation state: "`
+
+**Why this matters**: Experience reports contain detailed context about what was attempted, what worked, what failed, and next steps. Starting a task without reading relevant experience reports means repeating mistakes or missing important context.
 
 To load context from a previous session:
 ```bash

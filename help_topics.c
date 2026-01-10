@@ -1,5 +1,7 @@
 /* #generate_help_topics
 
+span get_help_text(char *topic);
+
 Generate help_topics.c from help text blocks in INBOX.c.
 
 This script extracts help text from blocks like #help_text_basic, #help_text_events, etc.
@@ -10,15 +12,13 @@ and generates a C source file with:
 
 The function declaration in the NL comment gets extracted by fdecls.h.
 
-span get_help_text(char *topic);
-
 */
 
 
 // Help text data arrays
 
 u8 help_summary_data[] =
-  "Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs]\n"
+  "Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs]\n"
   "\n"
   "For help on available topics: cmpr --help topics\n"
   ;
@@ -177,9 +177,51 @@ u8 help_search_data[] =
   "  3. Use --grep only when navigation doesn't work\n"
   ;
 
-u8 help_nl2pl_data[] = 
-  "nl2pl"
-  "===="
+u8 help_nl2pl_data[] =
+  "Natural Language to Code Generation\n"
+  "===================================\n"
+  "\n"
+  "--rewritepl <id>\n"
+  "  Regenerate PL (code) from NL (comment) using LLM.\n"
+  "  Sends NL part to configured LLM API.\n"
+  "  Replaces PL part with generated code.\n"
+  "  This is the preferred way to update code after changing NL.\n"
+  "  \n"
+  "  Example Workflow:\n"
+  "  1. Edit NL: cat new_nl.txt | cmpr --replace-comment '#blockid'\n"
+  "  2. Generate code: cmpr --rewritepl '#blockid'\n"
+  "  3. Verify: cmpr --print-code '#blockid'\n"
+  "  4. build or test or whatever.\n"
+  "  \n"
+  "  Example: cmpr --rewritepl '#handle_help_topic'\n"
+  "\n"
+  "--prompt <id>\n"
+  "  Print the prompt that would be sent to the LLM for nl2pl conversion.\n"
+  "  Does NOT call the LLM - just shows what prompt would be used.\n"
+  "  Useful for debugging and understanding LLM context.\n"
+  "  Example: cmpr --prompt '#blockid'\n"
+  "  See also --expand.\n"
+  "\n"
+  "Configuration:\n"
+  "  LLM settings are in .cmpr/conf:\n"
+  "  - llm_command: Command to call LLM API\n"
+  "  - llm_model: Model name to use\n"
+  "\n"
+  "NL Precision Principle:\n"
+  "  The nl2pl system generates correct code only when NL is unambiguous.\n"
+  "  Be explicit about:\n"
+  "  - Exact algorithms\n"
+  "  - Data structures  \n"
+  "  - Edge cases\n"
+  "  - What NOT to do\n"
+  "  \n"
+  "  If generated PL is wrong, fix the NL, not the PL.\n"
+  "\n"
+  "Manually Maintained Blocks:\n"
+  "  Add \"Manually maintained.\" as last line of NL comment.\n"
+  "  Only use when you MUST write PL directly.\n"
+  "  Avoid when possible - prefer letting the system generate code.\n"
+  "*/\n"
   ;
 
 u8 help_events_data[] =
