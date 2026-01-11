@@ -20,7 +20,485 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 */
 
 
+/* #claude_experience_report_strings_refactor_20260111
+
+Session goal: Refactor strings.c into the block system.
+
+## Problem
+
+strings.c was a confusing hybrid:
+- Started with #generate_strings block (a bash script)
+- Rest was generated C code (not blocks)
+- Duplicated help text that already existed in #help_text_* blocks
+- Required manual regeneration and wasn't tracked properly
+
+## Changes Made
+
+1. **Repurposed #get_help_text block**
+   - Was: just forward declarations pointing to strings.c
+   - Now: contains the generated C code (arrays + lookup functions)
+   - Added to cmpr-c-build (line 174, before #handle_help_topic)
+
+2. **Created scripts/generate-strings**
+   - Reads help text from #help_text_* blocks
+   - Reads agent scripts from #cmpra_* blocks
+   - Generates C arrays and lookup functions
+   - Updates #get_help_text via --replace-code
+   - Emits events: time, "Agent: generate-strings", "The generated strings code is up to date."
+
+3. **Updated Makefile**
+   - Removed strings.c from dependencies
+   - Removed `cat strings.c >>cmpr-sed.c`
+
+4. **Updated #help_topics_index**
+   - Added reference to #get_help_text
+   - Documented the generation workflow
+
+## Navigation
+
+```
+#root → #args_cli_hub → #help_topics_index → #get_help_text
+```
+
+## Workflow
+
+To update help text:
+1. Edit #help_text_* block
+2. Run scripts/generate-strings
+3. Run scripts/cmpr-c-from-cmpr-src-c && make
+
+To find last generation: `cmpr --T0 && cmpr --event "Agent: generate-strings" --strength 255 && cmpr --recall`
+
+## Cleanup Needed
+
+strings.c can now be deleted from the repo (or kept as dead file).
+
+*/
+/* #claude_experience_report_wants_agent_research_20260111
+
+Session goal: Research existing wants agent infrastructure, identify false starts, and understand current state before implementing the wants agent.
+
+## What Was Found
+
+### Core Infrastructure (Working)
+
+**Want listing and iteration**:
+- `cmpr --wants` - Lists all 41 wants in SN format
+- `cmpr --agents-wants` - Shows wants with their blocks and agent status (all show "Agent: none")
+- `scripts/read-want-order` - Creates linked list of wants in snapshots using "The next want is:" pattern
+- `scripts/wantid` - Extracts current want from T
+- `scripts/next-want` - Extracts next want from T
+- `agents/rec-want` - Entry point that builds linked list, loads first want into T
+
+**State tracking infrastructure**:
+- Four decision states: tracked → checked → assisted → owned
+- `.cmpr/patterns/want-wantstate` - Per-want state associations (has 2 entries)
+- `.cmpr/patterns/scanning_wants-wantstate` - Aggregate distribution (tracked: 4, checked: 2)
+- `scripts/train-want-state-synapse` - Trains aggregate pattern by looping wants
+
+Programmer commentary: "synapse" here is due to a misunderstanding by Claude.
+A synapse is a connection from one neuron (or event) to another, not from an event to an ES.
+That's a product pattern; the synapse is the atomic pattern between two atomic events.
+
+**Event spaces** (in `.cmpr/es/`):
+- `want` - `grep '^"We want'`
+- `wantstate` - `grep '^"The want is'`
+- `scanning_wants` - `grep '^"We are scanning the wants"'`
+
+### Worked Example: help-argtable Want
+
+The want "We want the --help output and the actual argtable to be in sync." has:
+- `scripts/help-argtable-check` - Compares argtable usage to --help, emits sync/out-of-sync events
+- `scripts/help-argtable-assist` - Creates assist block in INBOX with diagnosis and options
+- `.cmpr/es/help-argtable` - ES filter for this specific want
+- `#help_argtable_want_example` - Documentation of the progression
+
+This demonstrates the pattern: CHECK script → ASSIST script → (eventually) owned.
+
+### Design Blocks (Partial/Incomplete)
+
+**#want_processing_system**:
+- Describes linked list iteration pattern
+- References #wants_triage_agent for "check which wants have prior context"
+- Good infrastructure description but no agent that advances states
+
+**#want_state_tracker_design**:
+- LPP design connecting want ES to wantstate ES
+- Context event pattern for aggregate distribution
+- Training and query workflows documented
+- Missing: actual agent that performs state transitions
+
+**#want_maturation_overview**:
+- Meta-agent concept: evaluates automation state of all wants
+- References #want_maturation_agent_check (CHECK mode design)
+- Says "run CHECK impl if it exists" but doesn't create CHECK impls
+- #want_maturation_agent_fix mentioned for FIX mode (future)
+
+**#want_maturation_agent_check**:
+- Algorithm: loop wants, determine automation state, run CHECK if exists
+- But most wants have no CHECK impl, so this just records "tracked"
+
+**#wants_triage_agent**:
+- Uses --recall to check if we have prior context for each want
+- Outputs summary of found/not-found counts
+- Useful for initial triage but doesn't advance wants
+
+**#context_event_pattern**:
+- Explains how to get aggregate statistics via context events
+- Used by scanning_wants-wantstate pattern
+
+**#unified_execution_model**:
+- Overall execution model for agents/scripts/patterns
+- LSI learning, settling model, cost control (deferred)
+
+### Key Insights from Experience Reports
+
+From #claude_experience_report_help_argtable_want_20250110 (programmer commentary):
+
+"Fragmentation Observed - Too many parallel concepts not unified:
+1. Agent system (#agents_system_hub, --agents, --agent-run)
+2. Scripts (scripts/)
+3. Patterns (.cmpr/patterns/, scripts/patterns)
+4. Want processing (--wants, --wants-status, --agents-wants, read-want-order)
+5. ES filters (.cmpr/es/)
+6. Induced scripts (.cmpr/induced/)
+7. Surprise-high scripts (.cmpr/surprise-high/)"
+
+Programmer says: "Let's literally start with making that loop work, with what is already there, NOT starting over from scratch!"
+
+And: "I think this is basically the cmpr --work feature"
+
+### Current State
+
+**What exists**:
+- Iteration infrastructure (rec-want, read-want-order, wantid, next-want)
+- State tracking patterns (want-wantstate, scanning_wants-wantstate)
+- One worked example (help-argtable-check, help-argtable-assist)
+- Triage agent that checks --recall for prior context
+
+**What's missing**:
+- Agent that loops wants and evaluates each one
+- LLM integration to assess: "do we know how to handle this want?"
+- Decision production: break into sub-wants OR assign to existing agent
+- Request creation when programmer input needed (.cmpr/requests/ pattern exists)
+
+### Relevant Blocks for Implementation
+
+Navigation from #root:
+- #root → "Working on Wants" section → #want_processing_system, #want_state_tracker_design, #help_argtable_want_example
+- #root → #agents_system_hub → agent infrastructure
+- #root → #want_maturation_overview → meta-agent design
+
+Implementation blocks:
+- #wants_triage_agent - Existing triage implementation (bash script)
+- #want_maturation_agent_check - CHECK mode design (NL only, no PL)
+- #help_argtable_want_example - Worked example documentation
+
+Scripts:
+- scripts/read-want-order, scripts/wantid, scripts/next-want
+- scripts/help-argtable-check, scripts/help-argtable-assist
+- scripts/train-want-state-synapse
+- agents/rec-want
+
+Patterns:
+- .cmpr/patterns/want-wantstate
+- .cmpr/patterns/scanning_wants-wantstate
+
+### Proposed Agent Design (from user description)
+
+The agent should:
+1. Iterate over all wants (use existing rec-want / read-want-order)
+2. For each want, check if we've seen it before (use --recall like triage)
+3. Evaluate using LLM: "do we know how to handle this?"
+4. Determine handling approach:
+   - If checkable: assign to existing agent or create scripts/<want>-check
+   - If needs breakdown: create sub-wants
+   - If needs input: create request in .cmpr/requests/
+5. Most likely outcome: LLM has ideas, needs programmer feedback
+
+### Files Changed
+
+None - this was a research session.
+
+### Next Steps (for programmer decision)
+
+1. Should this be a new script in scripts/ or agents/?
+2. Should it use `claude -p` for LLM evaluation or something else?
+3. What output format for LLM suggestions needing review?
+4. Should it create .cmpr/requests/ files or assist blocks in INBOX?
+5. How to handle the 41 existing wants - batch triage or one-by-one?
+
+*/
+/* #claude_experience_report_agent_system_20260111
+
+Experience Report: End-to-End Agent System Implementation
+
+## Session Goal
+
+Implement a complete working agent system with the claude agent as "hello world":
+- --agents lists agents with running status
+- --install-agent extracts embedded script
+- Agent runs continuously watching CLAUDE.md
+- --agents shows when running
+
+## What Was Accomplished
+
+1. **Updated claude agent to continuous watcher**
+   - Removed old check/fix modes
+   - Uses entr to watch CLAUDE.md
+   - Runs inline check on each file change
+   - Emits events to T
+
+2. **Fixed running detection**
+   - Changed from PID files to pgrep
+   - Uses `pgrep -f '[.]cmpr/agents/NAME'` (bracket trick prevents self-match)
+   - Updated #handle_agents
+
+3. **Fixed install message**
+   - Now shows `.cmpr/agents/claude &` instead of old check/fix usage
+
+4. **Updated documentation**
+   - #agents_system_hub - Separates new vs old (deprecated) system
+   - #cmpr_agents - Describes continuous watcher pattern
+
+## Key Technical Details
+
+The entr pattern that works:
+```bash
+echo "CLAUDE.md" | entr -ns '
+cmpr --T0
+cmpr --event "Agent: claude" --strength 255
+# ... check logic ...
+cmpr --memorize
+'
+```
+
+Key insight: `-d` flag is for directory changes (file add/remove), not content changes. Removed it.
+
+## Issues Encountered
+
+1. **PID file conflict**: `.cmpr/agents/claude` is the script file, can't mkdir same name. Solved by switching to pgrep.
+
+2. **pgrep matching itself**: Fixed with bracket trick `[.]cmpr` instead of `.cmpr`.
+
+3. **entr -d not triggering**: Wrong flag for content changes. Removed -d, use -ns with inline script.
+
+4. **cmpr.c not updating**: Forgot to run `scripts/cmpr-c-from-cmpr-src-c` after block changes.
+
+## What Works
+
+```bash
+dist/cmpr --agents                    # Shows claude installed/running
+dist/cmpr --install-agent claude      # Extracts script
+.cmpr/agents/claude &                 # Runs, watches CLAUDE.md
+# modify CLAUDE.md
+dist/cmpr --T                         # Shows agent events
+```
+
+## Next Steps
+
+1. Update --help agents text to describe continuous watchers
+2. Migrate legacy agents (justify, nl2pl, etc.) to new pattern
+3. Consider --run-agent command for convenience
+4. Add more embedded agents
+
+*/
+/* #claude_experience_report_wants_cli_20250111
+
+Session: Adding --wants-status CLI flag and fixing --wants
+
+## Goal
+Add CLI flag for presenting want state info, add want about help/argtable sync.
+
+## Accomplished
+
+1. **Fixed --wants-status bug**: Was passing `"#wants_status_report"` to `block_by_id()` which expects ID without hash. Changed to `"wants_status_report"`.
+
+2. **Fixed --wants implementation**: Was scanning filesystem directly (hardcoded file list) instead of using loaded blocks. Rewrote to call `get_code()` and scan `state->blocks`. Added deduplication.
+
+3. **Added --wants-status to documentation**:
+   - Updated #argtable (command syntax, flags list, behavior, implementation notes, help string)
+   - Updated #help_text_summary
+   - Regenerated help_topics.c
+
+4. **Added want to #root**: `"We want the --help output and the actual argtable to be in sync." 255.`
+
+## Key Lesson
+
+Spent too long chasing wrong hypothesis (files in wrong location) without verification. The --wants implementation literally had a programmer comment saying it was wrong ("wtf did Claude do here"). Should have read that comment and fixed the root cause immediately instead of debugging file paths.
+
+Root cause analysis must be verified before acting. When something doesn't work, check the implementation first.
+
+## Files Changed
+- cmpr.c: #handle_wants (complete rewrite), #handle_wants_status (bug fix), #root (added want)
+- cmpr.c: #argtable, #help_text_summary (documentation)
+- help_topics.c: regenerated
+
+## Test Results
+- `cmpr --wants` now returns 37 deduped wants (was 50+ with duplicates)
+- `cmpr --wants | grep 'help output'` finds new want
+- `cmpr --help` includes --wants-status
+- `cmpr --wants-status` runs successfully
+
+*/
+/* #claude_experience_report_agent_onboarding_20260111
+
+Session goal: Implement agent onboarding system for cmpr v9 release.
+
+## What was accomplished
+
+1. **`cmpr --help claude-setup`** - New help topic containing generic CLAUDE.md prologue for any cmpr project. Users run `cmpr --help claude-setup >> CLAUDE.md`.
+
+2. **`cmpr --install-agent <name>`** - New command that extracts embedded agent scripts to `.cmpr/agents/<name>`. Agent scripts are embedded in binary via strings.c.
+
+3. **`#cmpra_claude_check`** - First onboarding agent. Checks if CLAUDE.md has the cmpr prologue. Supports `check` and `fix` modes. Communicates via T events.
+
+4. **`--agents` rewritten** - Now lists agents from embedded `available_agents[]` array instead of scanning blocks (users don't have source code). Shows INSTALLED and RUNNING columns.
+
+5. **Build system changes**:
+   - Renamed help_topics.c to strings.c
+   - Updated Makefile
+   - #generate_strings now generates both help topics AND agent scripts
+   - Added available_agents[] array for agent discovery
+
+## Key files/blocks modified
+
+- #generate_strings - generates strings.c with help + agents
+- #get_help_text - declarations for get_agent_script, available_agents
+- #handle_install_agent - new command handler
+- #handle_agents - rewritten for embedded agents
+- #handle_args_2, #handle_args_3, #handle_args_4 - added --install-agent
+- #help_text_claude_setup - the CLAUDE.md prologue content
+- #cmpra_claude_check - the claude agent script
+- cmpr-c-build - added #handle_install_agent
+- Makefile - help_topics.c -> strings.c
+- CLAUDE.md - documented that blocks go in cmpr2's cmpr.c, fdecls.h is generated
+
+## Mistakes made
+
+1. Initially put blocks in INBOX.c instead of cmpr2's cmpr.c - blocks for the build must go in cmpr2
+2. Tried to manually edit fdecls.h - it's generated from cmpr2's cmpr.c
+3. Tried to modify the fdecls generation script instead of putting blocks in the right place
+4. Used span_len() which doesn't exist - should use (span.end - span.buf)
+5. Misunderstood agent architecture - agents can be long-running, .cmpr/agents/<name>/ is scratch storage separate from the script
+
+## Current state
+
+- `cmpr --install-agent claude` works
+- `.cmpr/agents/claude check` and `fix` work
+- `cmpr --agents` shows embedded agents with install/running status
+- Running detection uses .cmpr/agents/<name>/pid convention
+
+## What needs navigation fixes
+
+New blocks that need to be reachable from root:
+- #handle_install_agent
+- #cmpra_claude_check  
+- #help_text_claude_setup
+- #generate_strings (was #generate_help_topics)
+
+*/
+/* #help_argtable_want_example
+
+Worked example: Moving a want through decision states.
+
+Want: "We want the --help output and the actual argtable to be in sync." 255.
+Location: #argtable
+Source of truth: argtable usage line
+What needs updating: #help_text_summary
+
+## Current State: ASSISTED
+
+## Decision States Progression
+
+### Tracked → Checked
+
+Created `scripts/help-argtable-check`:
+- Compares argtable usage line to --help output
+- Emits: "The --help and argtable are in sync." 255. OR
+- Emits: "The --help and argtable are out of sync." 255.
+
+To run: `cmpr --T0 && scripts/help-argtable-check && cmpr --T`
+
+### Checked → Assisted
+
+Created `scripts/help-argtable-assist`:
+- Checks sync status
+- If out of sync, creates assist block in INBOX with:
+  - Diagnosis (what's missing)
+  - Options (A: manual fix, B: LLM fix, C: argtable is wrong)
+  - Context needed to decide
+- Does NOT auto-call LLM (user controls that)
+
+To run: `cmpr --T0 && scripts/help-argtable-assist && cmpr --T`
+
+### Assisted → Owned (not yet)
+
+Would require:
+- Automatic detection of which option is correct
+- Automatic application of fix
+- No human review needed
+
+## Files
+
+- `scripts/help-argtable-check` - CHECK script
+- `scripts/help-argtable-assist` - ASSIST script  
+- `.cmpr/es/help-argtable` - ES filter (if created)
+
+## Pattern for Other Wants
+
+1. Create check script in scripts/<want-name>-check
+2. Script emits events to T describing state
+3. Create assist script in scripts/<want-name>-assist
+4. Assist script creates block with diagnosis + options
+5. User reviews and applies fix
+
+This pattern keeps humans in the loop while automating the diagnosis.
+*/
+/* #help_argtable_assist_20260110_071715
+
+Assist for: "We want the --help output and the actual argtable to be in sync." 255.
+
+## The Problem
+
+The argtable has this usage line (the source of truth):
+cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--query <string>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--sn-filter] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs] [FILE|-]
+
+But #help_text_summary currently outputs:
+cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs]
+
+## Missing from --help
+
+The argtable has these items that --help is missing:
+- [--query <string>]
+- [--sn-filter]
+- [FILE|-]
+
+## Options
+
+Option A: Update #help_text_summary to match argtable
+  Run: cmpr --print-comment '#argtable' | grep '^cmpr \[' | head -1 > /tmp/usage.txt
+  Then manually update #help_text_summary with that usage line
+
+Option B: Ask LLM to generate the fix
+  Run: claude -p "Generate a corrected #help_text_summary block..." [provide context]
+  Review output and apply with --replace
+
+Option C: The argtable is wrong, not --help
+  Update #argtable to remove unsupported flags
+
+## Current #help_text_summary block
+
+/* #help_text_summary
+
+Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs]
+
+For help on available topics: cmpr --help topics
+*/
+*/
 /* #claude_experience_report_help_argtable_want_20250110
+
+Programmer commentary (PC) inline. -mcc
 
 Session goal: Work on the want "We want the --help output and the actual argtable to be in sync." - understand its state and move it forward.
 
@@ -47,6 +525,12 @@ The argtable command syntax has 3 items not in --help:
 - "The --help and argtable are in sync." 255.
 - "The --help and argtable are out of sync." 255.
 
+PC: This script is good enough for now but it's a partial check. What we really mean is that we want everything that's in argtable to be in --help.
+That doesn't just mean everything in the usage line that's in argtable, it means all the arguments in argtable. Which I'm pretty sure aren't in line with the Usage line either.
+
+This might require more of LLM attention, in which case we can have the script use `claude -p`, but there are some restrictions before we do that so it doesn't get out of hand.
+-mcc
+
 ### Event Space Filter
 `.cmpr/es/help-argtable` - grep filter for the ES
 
@@ -58,7 +542,11 @@ The script exists but what runs it repeatedly? I found multiple mechanisms:
 - `scripts/next-want` - extracts next want from T
 - `scripts/loop` - iterates blocks, not wants
 
+PC: Yep, so loop is a pretty bad name for a script, we'll have to come back to that. -mcc
+
 The user indicated there's an outer loop agent for wants that should trigger these checks.
+
+PC: It may be that the only thing there currently is is read-want-order and next-want. -mcc
 
 ## Fragmentation Observed
 
@@ -78,6 +566,50 @@ The relationship between these isn't clear. A want should:
 
 But the connection between "agent" and "script that populates ES" is ambiguous.
 
+PC:
+we're moving from agents as the only mechanism we had for long-running tasks, to patterns that can trigger scripts directly.
+The idea is that we'll have something like cmpr --work or cmpr --think and then it will show us the contents of T every time it changes, so we have some observability into the system as we figure out how to get it up and running, and it will run scripts for us.
+
+I think I want to start with a loop that goes over the wants.
+
+Let's literally start with making that loop work, with what is already there, NOT starting over from scratch! and then once that loop works, it should advance each of the wants, either
+
+Right, so it's like this:
+
+"We want cmpr to be working on all of the wants." 255.
+
+OK, so we want this:
+
+agents/
+
+All the agents currently are pretty old and out of date, but they have a lot of useful ideas.
+We want to gradually examine them, take what's good, getting all that functionality within the new system, and then clean up.
+One by one, slowly.
+
+We want most claude sessions to start with cmpr --agents, --wants, --wants-status, and --T.
+
+All these things should be starting to move together.
+
+The relationship is:
+
+--agents are input systems like input neurons.
+They are like eyes, they are always producing inputs and they are an autonomous system.
+They can use things like our entr scripts to trigger input events when something interesting happens on disk without inefficiently polling.
+
+Things like "The block is: " represent internal mental states.
+T is the short-term memory, it's the working area for everything.
+It's the main short-term working area for communication between cmpr processes, any agents, scripts, etc.
+It's also our long-term memory because everything that we do that's significant gets --memorize 'd and anything that we put an LPP on gets automatically learned.
+
+Another long-term memory, of course, is the revstore.
+So it's safe to say that we want an agent that does everything that rvs did for indexing, and that is running continuously.
+"We want to strip the rvs functionality into a use of the cmpr event system / UM at least as an experiment." 255.
+
+This would be a chance to take an existing work of real non-trivial software engineering and split it up into new parts.
+However, probably we should just ship rvs.
+
+-mcc
+
 ## Blocks Referenced
 - #root - navigation, want definition, want workflow docs
 - #argtable - CLI args, contains the want
@@ -92,6 +624,24 @@ But the connection between "agent" and "script that populates ES" is ambiguous.
 2. Connect help-argtable-check to that loop
 3. Then the want is truly "checked"
 4. Consider unifying the terminology (agent vs script vs ES populator)
+
+PC:
+
+OK, so we don't have the wants stuff in place yet, so let's start working on it.
+
+Specifically: make that loop happen just once.
+
+Actually, ok, so we already have a loop that does something with agents/rec-want.
+
+I think what we need to distinguish --- that is about triaging the wants.
+
+That's the first step, and then we can find a want that we want to actually work on.
+Then working on the want means making sure we can check it, and if we know how to check it, then check it, and if not, ...
+
+I think this is basically the cmpr --work feature, which is kind of also like an agent, but just that it has a CLI arg.
+Maybe all that will do is call agents/work-on-wants or something.
+
+-mcc
 
 */
 /* #want_state_tracker_design
@@ -4065,6 +4615,9 @@ STEP 5: Report
 ---
 
 */
+
+
+
 /* #claude_experience_report_help_fix_20251229
 
 Session goal: Fix `cmpr --help` and `cmpr --help topics` output.
@@ -4084,37 +4637,36 @@ Files modified:
 
 Status: COMPLETE
 */
-/* #generate_help_topics
+/* #generate_strings
 
 span get_help_text(char *topic);
+span get_agent_script(char *name);
 
-Generate help_topics.c from help text blocks in INBOX.c.
+Generate strings.c containing embedded help text and agent scripts.
 
-This script extracts help text from blocks like #help_text_basic, #help_text_events, etc.
-and generates a C source file with:
-- Function declaration in NL comment: span get_help_text(char *topic);
-- u8 arrays for each topic containing the help text
-- Helper function get_help_text(topic) definition
-
-The function declaration in the NL comment gets extracted by fdecls.h.
+This script extracts content from blocks and generates a C source file with:
+- u8 arrays for each help topic
+- u8 arrays for each agent script
+- get_help_text(topic) function
+- get_agent_script(name) function
 
 */
 #!/bin/bash
-# Generate help_topics.c from help text blocks
+# Generate strings.c from help text blocks and agent script blocks
 
-# Output the NL comment with the declaration
-cmpr --print-comment '#generate_help_topics'
+# Output the NL comment with the declarations
+cmpr --print-comment '#generate_strings'
 echo ""
 
 echo "// Help text data arrays"
 echo ""
 
-# Function to extract and convert a single help block
+# Function to extract and convert a help block to C array
 generate_help_array() {
     local blockid="$1"
     local varname="$2"
     
-    # Extract content (skip header, remove closing */)
+    # Extract content (skip first 2 lines, remove last 2 lines including */)
     cmpr --print-comment "$blockid" | tail -n +3 | head -n -2 > /tmp/help_tmp.txt
     
     echo "u8 help_${varname}_data[] ="
@@ -4123,7 +4675,21 @@ generate_help_array() {
     echo ""
 }
 
-# Generate arrays for each topic
+# Function to extract and convert an agent script to C array
+generate_agent_array() {
+    local blockid="$1"
+    local varname="$2"
+    
+    # Extract code part (the shell script)
+    cmpr --print-code "$blockid" > /tmp/agent_tmp.txt
+    
+    echo "u8 agent_${varname}_data[] ="
+    sed 's/\\/\\\\/g; s/"/\\"/g; s/^/  "/; s/$/\\n"/' /tmp/agent_tmp.txt
+    echo "  ;"
+    echo ""
+}
+
+# Generate arrays for each help topic
 generate_help_array '#help_text_summary' 'summary'
 generate_help_array '#help_text_topics' 'topics'
 generate_help_array '#help_text_basic' 'basic'
@@ -4136,9 +4702,20 @@ generate_help_array '#help_text_agents' 'agents'
 generate_help_array '#help_text_reports' 'reports'
 generate_help_array '#help_text_wants' 'wants'
 generate_help_array '#help_text_agent_qa' 'agent_qa'
+generate_help_array '#help_text_claude_setup' 'claude_setup'
 
-# Generate the lookup function
-cat << 'EOF'
+echo "// Agent script data arrays"
+echo ""
+
+# Generate arrays for each agent script
+generate_agent_array '#cmpra_claude_check' 'claude'
+
+echo "// Available agents list"
+echo "char *available_agents[] = {\"claude\", NULL};"
+echo ""
+
+# Generate the help text lookup function
+cat << 'EOFHELP'
 span get_help_text(char *topic) {
     span s;
     s.buf = 0;
@@ -4180,13 +4757,35 @@ span get_help_text(char *topic) {
     } else if (strcmp(topic, "agent-qa") == 0) {
         s.buf = help_agent_qa_data;
         s.end = s.buf + sizeof(help_agent_qa_data) - 1;
+    } else if (strcmp(topic, "claude-setup") == 0) {
+        s.buf = help_claude_setup_data;
+        s.end = s.buf + sizeof(help_claude_setup_data) - 1;
     }
     
     return s;
 }
-EOF
+EOFHELP
 
-rm -f /tmp/help_tmp.txt
+# Generate the agent script lookup function
+cat << 'EOFAGENT'
+
+span get_agent_script(char *name) {
+    span s;
+    s.buf = 0;
+    s.end = 0;
+    
+    if (!name) {
+        return s;
+    } else if (strcmp(name, "claude") == 0) {
+        s.buf = agent_claude_data;
+        s.end = s.buf + sizeof(agent_claude_data) - 1;
+    }
+    
+    return s;
+}
+EOFAGENT
+
+rm -f /tmp/help_tmp.txt /tmp/agent_tmp.txt
 /* #claude_experience_report_help_topics_20251229
 
 Session Goal:
@@ -4254,10 +4853,9 @@ The implementation there was also a bit messed up but it's on the right track.
 
 Master index of all help topics available via `cmpr --help <topic>`.
 
-This block contains a simple list of help text block IDs. Each block ID follows the pattern #help_text_<topic>, where <topic> is the user-facing topic name.
+Help text blocks (source of truth):
 
-Help text blocks:
-
+#help_text_summary
 #help_text_topics
 #help_text_basic
 #help_text_blocks
@@ -4269,12 +4867,25 @@ Help text blocks:
 #help_text_reports
 #help_text_wants
 #help_text_agent_qa
+#help_text_claude_setup
 
-Implementation notes:
+## Compilation
 
-The handle_help_topic() function extracts topic names by stripping the "help_text_" prefix from block IDs.
-When --help or --help topics is called, list all topics by reading this block.
-When --help <topic> is called, look up #help_text_<topic> and print its NL comment.
+Help text is compiled into the binary so --help works without loading the codebase.
+
+#get_help_text - Generated C code (arrays + lookup functions)
+
+To regenerate after editing help text blocks:
+```
+scripts/generate-strings
+```
+
+This updates #get_help_text PL and emits events to T for tracking.
+
+## Implementation
+
+#handle_help_topic - Handler for --help <topic>
+
 */
 /* #help_text_topics
 
@@ -4289,6 +4900,7 @@ agents
 reports
 wants
 agent-qa
+claude-setup
 */
 /* #help_text_summary
 
@@ -4548,6 +5160,85 @@ Running Agents:
   cmpr --T                                     # Read results
 
 See: cmpr --help agent-qa (for QA process)
+*/
+
+/* #help_text_claude_setup
+
+## cmpr basics
+
+All cmpr state is maintained in .cmpr in your project directory (like .git).
+Run cmpr --init to set up .cmpr
+In .cmpr/conf is the "project manifest" or list of files that cmpr will know about.
+You can add all the files in your project or just start with one to try it.
+
+language: C
+file: .cmpr/conf
+file: INBOX.c
+
+Recommended is to create an "#INBOX" block; we have ours in INBOX.c
+Then any agents that want to drop new blocks into the codebase can use cmpr --after '#INBOX' and you can easily find their work for review.
+You can use cmpr via TUI, just run cmpr and use j/k to view your blocks, or with CLI flags as described below.
+
+## cmpr Block System
+
+This codebase uses cmpr for block-based code organization.
+Each file is divided into discrete "blocks" with unique IDs (e.g., #block_name).
+
+**IMPORTANT**: Always use cmpr commands instead of traditional file tools.
+
+### Navigation Commands
+
+cmpr --print-block '#id'    Show entire block (NL + PL)
+cmpr --print-comment '#id'  Show only NL comment (documentation)
+cmpr --print-code '#id'     Show only PL code (implementation)
+cmpr --grep 'pattern'       Search across all blocks
+cmpr --files-blocks         List all blocks in the project
+
+### Editing Commands
+
+cmpr --replace '#id'        Replace entire block from stdin
+cmpr --replace-comment '#id' Replace only NL part from stdin
+cmpr --replace-code '#id'   Replace only PL part from stdin
+cmpr --after '#id'          Add new block after given block from stdin
+
+### Navigation Pattern
+
+Always start from the root block and follow references:
+
+1. cmpr --print-comment '#root'     Read root block
+2. Follow block references (2-3 hops max to reach any code)
+3. Use --grep only when navigation fails
+
+If you cannot reach needed blocks from #root in 2-3 hops, that indicates
+a navigation structure problem that should be fixed.
+
+### Block Structure
+
+Each block has two parts:
+- NL (Natural Language): Documentation/specification in comments
+- PL (Programming Language): Implementation code
+
+You may use cmpr to manage the PL for you, while you maintain the NL, which is the source of truth.
+This system is enforced by cmpr --rewritepl '#id' which regenerates the PL using only a simple prompt and the contents of the NL block and any explicit blockrefs, which are expanded recursively.
+Using nl2pl is optional, you can also just use the block system by itself, which makes your codebase more navigable.
+Note that --rewritepl uses the model configured in .cmpr/conf.
+
+### Event System (Agent State)
+
+Agents communicate via T (transient memory):
+
+cmpr --T0                              Clear T
+cmpr --event "message" --strength 255  Add event to T
+cmpr --T                               Print current T
+cmpr --memorize                        Save T snapshot
+cmpr --recall                          Load matching snapshot
+
+Agent pattern for recalling previous state:
+  cmpr --T0
+  cmpr --event "Agent: myagent" --strength 255
+  cmpr --recall
+  cmpr --T  # now contains events from last run
+
 */
 /* #help_text_reports
 
@@ -8848,19 +9539,44 @@ Miscellaneous utility functions and experimental features.
 
 Agent system infrastructure and want tracking.
 
+## New Agent System (v9+)
+
+Agents are continuous watchers embedded in the binary:
+
+```
+cmpr --agents              # List agents and running status
+cmpr --install-agent NAME  # Install to .cmpr/agents/NAME
+.cmpr/agents/NAME &        # Run continuously in background
+```
+
+Agents watch files with entr and emit events to T on changes.
+Running detection uses pgrep (no PID files needed).
+
+Key blocks:
+- #cmpr_agents - Embedded agent overview
+- #handle_agents - Lists agents, detects running via pgrep
+- #handle_install_agent - Extracts embedded scripts
+- #cmpra_claude_check - The claude agent (hello world example)
+
+## Old Agent System (DEPRECATED)
+
+The following blocks describe the old CHECK/FIX mode pattern with PID files and scripts/<name>-check. This system is deprecated; agents should migrate to continuous watchers.
+
+Deprecated blocks:
+- #agent_infrastructure - Old interface contract (exit codes, check/fix modes)
+- #agent_runner - Old CHECK/FIX execution helper
+- #agent_request_protocol - Assumes CHECK/FIX model
+- #agent_justify - Legacy agent using old pattern
+- #agent_nl2pl - Legacy agent
+- #agent_cmpr1_build - Legacy agent
+- #agent_block_names - Legacy agent
+- #agent_doc_build - Legacy agent
+- #agent_meta - Legacy agent
+- #agent_sn - Legacy agent
+
 ## Execution Model
 
 #unified_execution_model - Unified model for agents, scripts, patterns; cost control; LPP installation
-
-## Agent Infrastructure
-
-#agent_request_protocol - Agent request/response protocol
-#agent_runner - Agent execution framework (see also #agent_infrastructure)
-#root_agent_progress - Root agent progress tracking
-
-## Revision & History Features
-
-#rvs_feature_root - Revision system features hub
 
 ## Event System Components
 
@@ -9421,6 +10137,11 @@ Argument parsing and command-line interface implementation.
 #handle_args_2 - Argument handler (part 2)
 #handle_args_3 - Argument handler (part 3)
 #handle_args_4 - Argument handler (part 4)
+
+## Help System
+
+#help_topics_index - Help topic blocks and generation
+#handle_help_topic - Handler for --help <topic>
 
 ## File and Block Operations
 

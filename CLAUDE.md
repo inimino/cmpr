@@ -2,12 +2,13 @@
 
 Guidance to Claude Code.
 
+## Overview
+
+**cmpr1 vs cmpr2**: This is the cmpr1 codebase (open source). A nearby directory contains cmpr2 (SaaS product). To access cmpr2 blocks: `cd ../cmpr; cmpr --print-comment '#foo'` etc.
 
 ## Overview
 
 cmpr provides code block database features.
-
-**cmpr1 vs cmpr2**: This is the cmpr1 codebase (C implementation). The parent directory contains cmpr2 (Python implementation), which is more feature-complete. To access cmpr2 blocks from cmpr1: `cd ../cmpr; cmpr --print-comment` followed by the block ID.
 
 **CLAUDE.md Principle**: This file teaches HOW to work with cmpr (commands, workflow, principles), not WHAT the codebase contains (structure, subsystems, features). Code navigability belongs in the navigable block structure itself. Almost no specific block IDs should appear in CLAUDE.md - navigation information lives in the code, accessed by reading the root block and following references.
 
@@ -210,10 +211,14 @@ All navigation MUST start from the root block and follow block references:
 - If the generated PL is wrong, the NL was probably ambiguous - fix the NL, not the PL
 
 **Function Declarations in NL**:
-- Every C function block in cmpr.c must have a function declaration in the NL comment (e.g., `void handle_foo(span arg)`)
+- Every C function block must have a function declaration in the NL comment (e.g., `void handle_foo(span arg)`)
 - This removes ambiguity for nl2pl and serves as documentation for callers
-- The build process extracts all declarations from NL comments into fdecls.h automatically
-- Therefore: order of C functions in cmpr.c doesn't matter; forward declarations are never needed
+- fdecls.h is a GENERATED file - NEVER edit it manually
+- fdecls.h is generated from cmpr2's cmpr.c (`../cmpr/cmpr.c`) by `scripts/cmpr-c-from-cmpr-src-c`
+- ALL new blocks that need to be in the build must be added to cmpr2's cmpr.c using `cmpr --after '#existing_block'`
+- INBOX.c is for staging/experimentation only - blocks there don't participate in fdecls.h scripting
+- new blocks that go in the build also need to be added to cmpr-c-build which is the blocks in the order, and we ship the PL only
+- Order of C functions in cmpr.c doesn't matter; forward declarations are never needed (fdecls.h provides them)
 
 **Using @C for Idiomatic Code**:
 - Always add `@C` blockref when creating C function blocks
@@ -739,3 +744,96 @@ This creates a queryable checkpoint. Future sessions can use `--recall` to load 
 - Experience reports go in INBOX initially: `cat report.txt | cmpr --after '#INBOX'`
 - Can be moved to permanent locations later during review
 - Or left in INBOX as temporal documentation
+
+topics
+basic
+blocks
+editing
+search
+nl2pl
+events
+agents
+reports
+wants
+agent-qa
+
+CLAUDE.md Prologue for cmpr Projects
+=====================================
+
+Add this section to your project's CLAUDE.md to enable Claude to work
+effectively with cmpr-organized codebases.
+
+---BEGIN CLAUDE.MD CONTENT---
+
+## cmpr Block System
+
+This codebase uses cmpr for block-based code organization. Each file contains
+discrete "blocks" with unique IDs (e.g., #block_name).
+
+**IMPORTANT**: Always use cmpr commands instead of traditional file tools.
+
+### Navigation Commands
+
+cmpr --print-block '#id'    Show entire block (NL + PL)
+cmpr --print-comment '#id'  Show only NL comment (documentation)
+cmpr --print-code '#id'     Show only PL code (implementation)
+cmpr --grep 'pattern'       Search across all blocks
+cmpr --files-blocks         List all blocks in the project
+
+### Editing Commands
+
+cmpr --replace '#id'        Replace entire block from stdin
+cmpr --replace-comment '#id' Replace only NL part from stdin
+cmpr --replace-code '#id'   Replace only PL part from stdin
+cmpr --after '#id'          Add new block after given block from stdin
+
+### Navigation Pattern
+
+Always start from the root block and follow references:
+
+1. cmpr --print-comment '#root'     Read root block
+2. Follow block references (2-3 hops max to reach any code)
+3. Use --grep only when navigation fails
+
+If you cannot reach needed blocks from #root in 2-3 hops, that indicates
+a navigation structure problem that should be fixed.
+
+### Block Structure
+
+Each block has two parts:
+- NL (Natural Language): Documentation/specification in comments
+- PL (Programming Language): Implementation code
+
+The NL is the source of truth. Use cmpr --rewritepl '#id' to regenerate
+PL from NL when specifications change.
+
+### Event System (Agent State)
+
+Agents communicate via T (transient memory):
+
+cmpr --T0                              Clear T
+cmpr --event "message" --strength 255  Add event to T
+cmpr --T                               Print current T
+cmpr --memorize                        Save T snapshot
+cmpr --recall                          Load matching snapshot
+
+Agent pattern for recalling previous state:
+  cmpr --T0
+  cmpr --event "Agent: myagent" --strength 255
+  cmpr --recall
+  cmpr --T  # now contains events from last run
+
+---END CLAUDE.MD CONTENT---
+
+Usage:
+  cmpr --help claude-setup >> CLAUDE.md
+
+Then customize the CLAUDE.md with project-specific details:
+- Build commands
+- Test commands
+- Project structure overview
+- Any project-specific conventions
+
+*/
+
+# trigger 1768103400
