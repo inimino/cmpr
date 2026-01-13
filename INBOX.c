@@ -20,6 +20,220 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 */
 
 
+/* #claude_experience_report_t_debug_patterns_20260113
+
+Session goal: Finish T-debug mechanism by extending it to cover the full event system.
+
+## What Was Accomplished
+
+### 1. Discovered Navigation Gap
+
+Started by trying to find T-debug implementation. Found it in #events_functions, but when asked about "other parts of the event system", I couldn't find LPPs, induced events, or surprise triggers through navigation.
+
+Root cause: #cmpr_events mentioned "Pattern Learning" but linked to #pattern_learning_hub which was empty. The actual documentation was in #event_spaces_catalog but not linked from the hub.
+
+### 2. Updated #cmpr_events
+
+Rewrote the hub to prominently document the three major features:
+- LPPs (Learned Product Patterns) - `.cmpr/patterns/`
+- Induced events - `.cmpr/induced/`
+- Surprise triggers - `.cmpr/surprise-high/`
+
+Added clear filesystem structure section showing where everything lives.
+
+### 3. Renamed #event_spaces_catalog → #pattern_infrastructure
+
+User pointed out "event_spaces_catalog" was a terrible name because ESs live in the filesystem (.cmpr/es/), not in the codebase. The block actually documents the pattern/induced/surprise infrastructure, so renamed accordingly.
+
+### 4. Added T-debug to scripts/patterns
+
+The core T operations (T0, event_add, recall) already had debug output. Added debug output to scripts/patterns so the full chain of causation is visible:
+
+- `[T-debug] patterns: induced BID -> .cmpr/induced/BID`
+- `[T-debug] patterns: surprise-high blkcks -> .cmpr/surprise-high/blkcks`
+- `[T-debug] patterns: populate want-wantstate: "The want is checked." 1.`
+
+Only logs things that change T (not pattern learning which updates files).
+
+## Key Insight
+
+The user's instruction "it should only document what it is adding to T" clarified the purpose: T-debug is about tracing breadcrumbs through T, not about logging all activity. Only changes to T matter for debugging the event flow.
+
+## Files Changed
+
+- cmpr.c: #cmpr_events (rewrote with prominent LPP/induced/surprise docs)
+- cmpr.c: #pattern_infrastructure (renamed from #event_spaces_catalog)
+- scripts/patterns (added t_debug function and calls)
+
+## Navigation Path
+
+root → #cmpr_events → #pattern_infrastructure
+
+*/
+/* #claude_experience_report_wants_status_format_20260113
+
+Session goal: Improve --wants-status output format and fix event system usage.
+
+## Accomplished
+
+### 1. Improved --wants-status Output Format
+
+Changed from 3 lines per want to 1 line with fixed-width state prefix:
+
+Before:
+  "We want X" 255.
+    State: checked
+  
+After:
+  [checked ] We want X
+
+States (8 chars, ASCII only):
+- tracked  - want exists, no automation
+- checked  - has CHECK script
+- assisted - has ASSIST script
+- owned    - fully automated
+- pending  - pending programmer input
+- -------- - no state recorded
+
+### 2. Fixed --wants-status to Use Recall
+
+Original implementation only checked LPP pattern (which had 3 entries).
+Fixed to use --recall with "Agent: process-want" marker to get state from snapshots.
+
+### 3. Fixed Event Format Inconsistency
+
+Found scripts/process-want was using "Status: pending programmer input" instead of wantstate ES format "The want is pending programmer input."
+
+Root cause: Previous session didn't check for existing ESs before creating events.
+
+### 4. Added ES Check Guidance
+
+Added "BEFORE CREATING NEW EVENTS" section to #event_system_guide:
+- Always check .cmpr/es/ for existing ES definitions
+- Search for existing events with similar purpose
+- Add to existing ES rather than inventing new formats
+
+### 5. Re-ran Want Processing
+
+Old snapshots had different T contents (different events at different times).
+Needed to rebuild linked list and reprocess all 41 wants:
+  cmpr --wants | scripts/read-want-order
+  scripts/process-all-wants
+
+Now all wants have snapshots with consistent events:
+- Want text + "Agent: process-want" marker + state event
+
+### 6. Updated Want State Documentation
+
+Updated #want_state_tracker_design to include "pending programmer input" as fifth state.
+
+## Key Insight
+
+Snapshots are just T at previous times - not different "formats". When T had different events in it at different times, the snapshots captured those different states. The fix was to reprocess all wants with the current script so they all have snapshots with consistent events that --recall can find.
+
+## Process Lesson
+
+When I found .cmpr/requests/ and assumed it was current, I should have:
+1. Asked for clarification rather than assuming
+2. Read the most recent experience report more thoroughly
+3. Verified with user before implementing
+
+## Files Changed
+
+- INBOX.c: #event_system_guide (added ES check guidance)
+- INBOX.c: #want_state_tracker_design (added pending state)
+- cmpr.c: #wants_status_report (one-line format, uses recall)
+- scripts/process-want (fixed to use wantstate ES format)
+
+*/
+/* #claude_experience_report_wants_and_recall_20260113
+
+Session goal: Make progress on wants system and document T/recall behavior.
+
+## Major Accomplishments
+
+### 1. Fixed --recall Matching Logic
+
+The original recall matched ANY query event. This was wrong.
+
+Correct behavior (now implemented in #event_recall):
+- Only 255-strength events in T are used as query
+- ALL query events must match (not ANY)
+- Newest matching snapshot wins
+- Entire snapshot replaces T
+
+### 2. Agent Marker Pattern
+
+Discovered need to distinguish snapshots from different contexts.
+
+Pattern: Add "Agent: <name>" 255. to T before memorizing.
+When recalling, include the agent marker in query to find YOUR snapshots.
+
+Example:
+  cmpr --T0
+  cmpr --event "We want X..." --strength 255
+  cmpr --event "Agent: process-want" --strength 255
+  cmpr --recall  # Finds snapshot with BOTH events
+
+### 3. Want Processing Scripts
+
+Created scripts/process-want and scripts/process-all-wants:
+- Loop through wants via linked list in T
+- For each want: recall config, run check script if exists
+- Mark new wants as "pending programmer input"
+- Uses agent marker pattern to isolate want config snapshots
+
+### 4. T System Clarifications Documented
+
+Key insights captured in CLAUDE.md and #event_system_guide:
+
+- T is TRANSIENT memory - meant to be cleared between work sessions
+- --T0 exists because T is meant to be cleared regularly
+- Snapshots are atomic - everything memorized together comes back together
+- Never "fix" pollution - just create new snapshots (newer supersedes older)
+- The "variable pattern" is correct: "The X is: value" not "X value is true"
+- Use loops with T0/memorize for multiple entities, not one giant T state
+
+### 5. T-Debug Convention
+
+Created .cmpr/T-debug file convention:
+- If file exists, all T operations print debug to stderr
+- Helps trace recall queries and matches
+- Documented in #event_system_guide
+
+## Key User Corrections
+
+1. "It goes into T, T goes into memories, it gets recalled. Don't create other state."
+   - I had created .cmpr/want-check-map file - wrong approach
+
+2. "Never fix pollution, just create new memories"
+   - I was trying to clean up T - wrong approach
+
+3. "Recall should match ONLY 255 events, and must match ALL of them"
+   - Original code matched ANY event at any strength
+
+4. "That's why the Agent: convention exists"
+   - Explained need for agent markers after I struggled with snapshot collisions
+
+5. "When your user asks about data loss DON'T DO MORE RANDOM STUPID SHIT"
+   - I damaged blocks while testing, then kept running commands
+   - Should have STOPPED and CONFIRMED recovery plan first
+
+## Navigation Path
+
+root → #cmpr_events → #event_system_guide
+
+CLAUDE.md contains key recall rules and references #event_system_guide for details.
+
+## Files Changed
+
+- cmpr.c: #event_recall rewritten with correct matching logic
+- cmpr-c-build: Added #event_recall and later all event function blocks
+- CLAUDE.md: Added recall rules, T-debug convention, agent marker pattern
+- INBOX.c: Updated #event_system_guide with comprehensive documentation
+- scripts/process-want, scripts/process-all-wants: New want processing scripts
+
+*/
 /* #claude_experience_report_events_refactor_20260113
 
 Session goal: Document T/recall clarifications and refactor events_functions into separate blocks.
@@ -726,10 +940,11 @@ Filter: `.cmpr/es/want` contains `grep '^"We want'`
 "The want is checked." 0.
 "The want is assisted." 0.
 "The want is owned." 0.
+"The want is pending programmer input." 0.
 ```
 Filter: `.cmpr/es/wantstate` contains `grep '^"The want is'`
 
-These are the four decision states. All wants are "tracked" by definition (they exist in source code). The system can mature wants through: tracked → checked → assisted → owned.
+These are the five decision states. All wants are "tracked" by definition (they exist in source code). The system can mature wants through: tracked → checked → assisted → owned (or pending programmer input when human decision needed).
 
 ## LPP Implementation
 
@@ -815,6 +1030,7 @@ Uses existing infrastructure for iteration:
 Eventually: pure associative via patterns, no explicit looping.
 
 */
+
 /* #context_event_pattern
 
 The context event pattern (also called "synapse" or "event × ES") is a way to get aggregate statistics across an event space.
@@ -1129,57 +1345,7 @@ User emphasized biological metaphor:
 4. Continue work on nl2pl staleness detection
 
 */
-/* #event_spaces_catalog @cmpr_events @block_basics
 
-## Event Spaces Catalog
-
-Tracking the event spaces and patterns we're building.
-
-### Event Spaces (ES)
-
-**BID** - Block identifiers
-- Filter: `.cmpr/es/BID`
-- Pattern: `"The blockid is: #<id>" 255.`
-- Induced: `.cmpr/induced/BID` → triggers checksum computation
-
-**blkcks** - Block checksums  
-- Filter: `.cmpr/es/blkcks`
-- Pattern: `"The blkcks is: <hash>" 255.`
-- Surprise-high: `.cmpr/surprise-high/blkcks` → "block changed"
-
-**block_status** - Block change detection
-- Pattern: `"The block has changed" 255.`
-- Pattern: `"The block is unchanged" 255.`
-
-### Patterns Between ESs
-
-**BID → blkcks** (induced, not learned)
-- When BID populated → compute fresh blkcks
-- Not an LPP - always recompute, never lookup
-
-**blkcks surprise-high** 
-- Two different blkcks in T → block content changed
-- Handler emits explanation event
-
-### Automation States
-
-For each want, track: tracked → checked → assisted → owned
-
-**"Block checksums are current"**
-- State: checked (induced trigger computes on BID)
-
-**"Block changes are detected"**  
-- State: checked (surprise-high handler detects)
-
-### Infrastructure
-
-- `.cmpr/es/<name>` - ES filter scripts
-- `.cmpr/induced/<es>` - triggers when ES populated
-- `.cmpr/surprise-high/<es>` - handles multiple values in ES
-- `.cmpr/patterns/<es1>-<es2>` - learned product patterns
-- `scripts/patterns` - main pattern processor (induced, surprise-high, learn, populate)
-
-*/
 /* #claude_experience_report_bts_factorization_20260108
 
 Experience report: BTS factorization and first-seen patterns (2026-01-08)
@@ -7623,31 +7789,32 @@ But the core contribution (event system query documentation + working script) is
 
 /* #wants_status_report
 
-Shell script to report status of all wants by querying the LPP pattern system.
+Shell script to report status of all wants by querying memorized state.
 
 Algorithm:
 1. Get all wants using `cmpr --wants`
 2. For each want:
    - Clear T
-   - Load the want into T at strength 255
-   - Read T - the LPP auto-populates the associated state
+   - Load the want + agent marker at strength 255
+   - Use --recall to load associated state from snapshots
    - Extract and display the state
 
-The LPP in .cmpr/patterns/want-wantstate connects wants to their states.
-When a want is loaded into T, the pattern system adds the associated state event.
+State is stored via process-want which memorizes with "Agent: process-want" marker.
+We recall with the same marker to get the associated state.
 
-Output format:
-- Want text (SN format)
-- State: tracked | checked | assisted | owned | (no state)
+Output format: One line per want with fixed-width state prefix for easy scanning.
+  [tracked ] We want X...
+  [checked ] We want Y...
+  [assisted] We want Z...
+  [owned   ] We want W...
+  [pending ] We want V...  (pending programmer input)
+  [--------] We want U...  (no state recorded)
 
 Manually maintained.
 
 */
 #!/bin/bash
 set -euo pipefail
-
-echo "=== Wants Status Report ==="
-echo
 
 # Get all wants
 wants=$(dist/cmpr --wants 2>/dev/null)
@@ -7659,33 +7826,33 @@ while IFS= read -r want_line; do
     # Extract want text (between quotes in SN format)
     want_text=$(echo "$want_line" | sed 's/^"\(.*\)" [0-9]*\.$/\1/')
     
-    # Load want into T - LPP auto-populates state
-    dist/cmpr --T0 2>/dev/null
-    dist/cmpr --event "$want_text" --strength 255 2>/dev/null
+    # Load want + agent marker into T, then recall to get stored state
+    dist/cmpr --T0 >/dev/null 2>&1
+    dist/cmpr --event "$want_text" --strength 255 >/dev/null 2>&1
+    dist/cmpr --event "Agent: process-want" --strength 255 >/dev/null 2>&1
+    dist/cmpr --recall >/dev/null 2>&1 || true  # May not have stored state yet
     
     # Read T and extract state
     t_output=$(dist/cmpr --T 2>/dev/null)
     
-    # Look for state events
-    state=""
+    # Look for state events (check in priority order, support both old and new formats)
+    state="--------"
     if echo "$t_output" | grep -q '"The want is owned\."'; then
-        state="owned"
+        state="owned   "
     elif echo "$t_output" | grep -q '"The want is assisted\."'; then
         state="assisted"
     elif echo "$t_output" | grep -q '"The want is checked\."'; then
-        state="checked"
+        state="checked "
     elif echo "$t_output" | grep -q '"The want is tracked\."'; then
-        state="tracked"
+        state="tracked "
+    elif echo "$t_output" | grep -q '"The want is pending programmer input\."'; then
+        state="pending "
+    elif echo "$t_output" | grep -q '"Status: pending programmer input"'; then
+        state="pending "  # Old format, still recognize it
     fi
     
-    # Output
-    echo "$want_line"
-    if [ -n "$state" ]; then
-        echo "  State: $state"
-    else
-        echo "  State: (no state recorded)"
-    fi
-    echo
+    # Output one line: [state   ] want text
+    printf "[%s] %s\n" "$state" "$want_text"
     
 done <<< "$wants"
 /* #event_system_temporal_queries
@@ -13419,6 +13586,30 @@ When working with code blocks, we have a natural event space defined by block pr
 
 Each describes one aspect of a block. Together they form a joint event space describing the complete state of a block.
 
+BEFORE CREATING NEW EVENTS
+
+CRITICAL: Before using the event system for any new purpose, ALWAYS check for existing relevant event spaces first.
+
+1. Check .cmpr/es/ directory for existing ES definitions:
+   ls .cmpr/es/
+
+2. Read the ES filter files to understand the format:
+   cat .cmpr/es/wantstate
+
+3. Search for existing events with similar purpose:
+   cmpr --grep 'The want is'
+
+Why this matters: Event spaces define the format for related events. Creating events with a different format (e.g., "Status: pending" vs "The want is pending programmer input.") causes fragmentation and breaks tooling that expects a consistent ES.
+
+Example: The wantstate ES defines:
+  "The want is tracked."
+  "The want is checked."
+  "The want is assisted."
+  "The want is owned."
+  "The want is pending programmer input."
+
+If you need a new state, ADD it to the existing ES - don't invent a new format.
+
 HOW EVENT SPACES RELATE TO WANTS
 
 A want automatically defines its dual event space. The want from root:
@@ -13550,7 +13741,7 @@ CORRECT pattern (one context per snapshot):
   cmpr --T0
   cmpr --event "We want X..." --strength 255
   cmpr --event "Agent: process-want" --strength 255
-  cmpr --event "Status: pending programmer input" --strength 255
+  cmpr --event "The want is pending programmer input." --strength 255
   cmpr --memorize
 
   cmpr --T0
@@ -13674,6 +13865,7 @@ Testing:
 - test_events_proposal
 - tests/test_events_*.sh
 */
+
 /* #event_visibility_examples @cmpr_events @event_system_guide
 
 Practical examples for using event system visibility commands.
