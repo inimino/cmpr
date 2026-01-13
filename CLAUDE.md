@@ -483,6 +483,19 @@ When designing solutions:
 - Pay attention to what system commands exist - they reveal design intent
 - The existence of --T0 means T is MEANT to be cleared regularly
 
+**CRITICAL: How --recall works**:
+- Recall only considers 255-strength events in T as the query (strength 1 events are ignored)
+- Recall finds the most recent snapshot containing ALL query events (not ANY - all must match)
+- When found, recall REPLACES T with the entire snapshot contents
+- Use agent markers (e.g., "Agent: my-agent" 255.) to distinguish your snapshots from others
+- Example: to recall config for a want, query with both the want AND your agent marker
+- See #event_system_guide for detailed examples
+
+**Debugging T changes**:
+- Create `.cmpr/T-debug` file to enable debug output for all T operations
+- Debug output goes to stderr showing: T0 clears, event adds, recall queries and matches
+- Remove the file to disable debug output
+
 **Event System Visualizations**:
 
 The event system includes visualization tools for analyzing temporal data:
@@ -663,6 +676,8 @@ cmpr --T
 cmpr --files-blocks | grep -A8 '#INBOX'
 ```
 This shows recent blocks after INBOX including experience reports. Read any relevant ones with `cmpr --print-comment '#block_id'`.
+
+**Convention**: Blocks ending in `_commentary` (e.g., `#claude_experience_report_foo_commentary`) contain programmer feedback on the preceding experience report. Always read these when they exist - they contain corrections, clarifications, and guidance that override the original report.
 
 T contains events from recent work sessions. Check for:
 - Experience report events: `"The experience report is: #blockid"` - READ THESE BLOCKS

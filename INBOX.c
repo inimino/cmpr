@@ -20,6 +20,67 @@ The idea of course is "cmpr --todo "blah blah blah" and it should just post that
 */
 
 
+/* #claude_experience_report_events_refactor_20260113
+
+Session goal: Document T/recall clarifications and refactor events_functions into separate blocks.
+
+## Accomplished
+
+1. Updated #event_system_guide with corrected recall behavior:
+   - Recall matches ALL 255-strength events (not ANY)
+   - Lower-strength events ignored in query
+   - Added "AGENT MARKER PATTERN" section
+   - Added "DEBUGGING T OPERATIONS" section (.cmpr/T-debug)
+   - Added "SNAPSHOT POLLUTION AND RECOVERY" section
+
+2. Refactored #events_functions into individual blocks:
+   - #event_load_T
+   - #event_save_T
+   - #event_add_internal
+   - #event_T0
+   - #event_add
+   - #event_memorize
+   - #event_print_T
+   - #event_query
+   
+   #events_functions now overview block with only utilities.
+
+3. All new blocks added to cmpr-c-build, clean compile, tests pass.
+
+## Issues Encountered
+
+1. Segfault investigation: Initially appeared to be spanio limit issue with 1k+ blocks.
+   - Turned out to be intermittent
+   - Root cause: malformed input to --replace-comment (missing /* delimiter)
+   - When --replace-comment gets input without /*, it corrupts block structure
+
+2. Data loss from careless testing:
+   - Replaced #event_visibility_examples and #ES_names with "test" while debugging
+   - Then ran more commands before confirming recovery plan
+   - User rightfully furious
+   - Lesson: STOP and CONFIRM before attempting recovery after data loss
+
+3. --replace-comment expects full comment with /* and */ delimiters
+
+## Key Learnings
+
+1. When investigating crashes, use NON-DESTRUCTIVE tests only
+2. After any data modification error, STOP and confirm state with user
+3. Build after every block addition to catch errors early
+4. The event function blocks are now properly factored - each ~20-50 lines
+
+## Files Changed
+
+- cmpr.c (via block edits)
+- cmpr-c-build (added 8 new block references)
+- INBOX.c (#event_system_guide updated, new function blocks added)
+
+## Next Steps
+
+- Install with sudo make install when ready
+- Consider factoring remaining utility functions from #events_functions if needed
+
+*/
 /* #claude_experience_report_strings_refactor_20260111
 
 Session goal: Refactor strings.c into the block system.
@@ -13432,6 +13493,91 @@ View the recalled state
 
 This enables time-travel: you can restore the complete event context from any previous snapshot.
 
+CRITICAL: HOW RECALL WORKS
+
+Recall finds the most recent snapshot containing ALL 255-strength events currently in T, then REPLACES T with the entire snapshot contents.
+
+Key rules:
+1. Only 255-strength events in T are used as query (lower strengths are ignored)
+2. ALL query events must match (not just any one of them)
+3. The entire snapshot replaces T (not just matching events)
+4. Newest matching snapshot wins (searched in reverse chronological order)
+
+Why this matters:
+- Use multiple 255-strength events to narrow your query
+- Lower-strength events (like pattern-added events) don't affect matching
+- You get back EVERYTHING that was in T when you memorized
+
+AGENT MARKER PATTERN
+
+When multiple agents or processes create snapshots, use an agent marker to distinguish them:
+
+  cmpr --T0
+  cmpr --event "We want X..." --strength 255
+  cmpr --event "Agent: my-agent" --strength 255  # Distinguishing marker
+  cmpr --event "Status: pending" --strength 255
+  cmpr --memorize
+
+Later, to recall YOUR snapshot (not someone else's):
+
+  cmpr --T0
+  cmpr --event "We want X..." --strength 255
+  cmpr --event "Agent: my-agent" --strength 255  # Include your marker!
+  cmpr --recall
+
+Without the agent marker, you might recall a snapshot from a different agent that also contains "We want X..." but has different associated state.
+
+The agent marker convention uses: "Agent: <agent-name>" 255.
+
+SNAPSHOT POLLUTION AND RECOVERY
+
+Never try to "fix" polluted snapshots. Just create new ones.
+
+Snapshots are like memories - you don't edit old memories, you form new ones. If a snapshot contains unwanted associations, the fix is:
+1. Create a new snapshot with the correct events
+2. Next time you recall with those query events, you'll get the newer snapshot
+
+This is why recall finds the MOST RECENT match - newer snapshots naturally supersede older ones.
+
+WRONG pattern (mixing contexts):
+  cmpr --T0
+  cmpr --event "We want X..." --strength 255
+  cmpr --event "We want Y..." --strength 255   # Two different wants!
+  cmpr --memorize
+  # Later, recalling want X will also bring back want Y
+
+CORRECT pattern (one context per snapshot):
+  cmpr --T0
+  cmpr --event "We want X..." --strength 255
+  cmpr --event "Agent: process-want" --strength 255
+  cmpr --event "Status: pending programmer input" --strength 255
+  cmpr --memorize
+
+  cmpr --T0
+  cmpr --event "We want Y..." --strength 255
+  cmpr --event "Agent: process-want" --strength 255
+  cmpr --event "The check script is: foo-check" --strength 255
+  cmpr --memorize
+
+Keep snapshots focused on ONE context (one want, one block, one task).
+
+DEBUGGING T OPERATIONS
+
+Create a file .cmpr/T-debug to enable debug output for all T operations:
+
+  touch .cmpr/T-debug
+
+With this file present, all T operations print debug info to stderr:
+- T0 clears
+- Event additions
+- Recall queries and which snapshot matched
+
+Remove the file to disable:
+
+  rm .cmpr/T-debug
+
+This is useful when recall returns unexpected results or you need to trace event flow.
+
 PERSISTENCE MODEL
 
 From events_persistence_questions and experience reports:
@@ -13440,7 +13586,7 @@ From events_persistence_questions and experience reports:
 - T is loaded on startup, so state survives across invocations
 - memorize saves timestamped snapshots to .cmpr/events/YYYYMMDD-HHMMSS-nanos
 - Snapshots preserve complete T state at that moment
-- recall searches snapshots (newest first) for ones matching current T query events
+- recall searches snapshots (newest first) for ones matching ALL 255-strength T events
 
 AGENT INTEGRATION
 
@@ -13464,6 +13610,12 @@ Pattern for Agent FIX mode:
   dist/cmpr --memorize
 
 This creates a complete temporal record of agent activity.
+
+Pattern for recalling previous agent state:
+  dist/cmpr --T0
+  dist/cmpr --event "Agent: root_agent" --strength 255
+  dist/cmpr --recall  # Loads last snapshot with this agent marker
+  dist/cmpr --T       # View recalled state
 
 SN NOTATION
 
@@ -13512,7 +13664,8 @@ IMPLEMENTATION BLOCKS
 
 Core implementation:
 - events_types - Data structures
-- events_functions - CLI operations
+- events_functions - CLI operations (event_load_T, event_save_T, event_T0, event_add, event_print_T, event_query, event_memorize)
+- event_recall - Recall implementation (matches ALL 255-strength query events)
 - events_persistence_questions - Design decisions about persistence
 - events_workflow_questions - Design decisions about workflow
 - events_example_interpretation - Example usage and interpretation
@@ -13520,13 +13673,7 @@ Core implementation:
 Testing:
 - test_events_proposal
 - tests/test_events_*.sh
-
 */
-
-
-
-
-
 /* #event_visibility_examples @cmpr_events @event_system_guide
 
 Practical examples for using event system visibility commands.

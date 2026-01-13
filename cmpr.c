@@ -1531,14 +1531,39 @@ void event_parse_content(span content) {
     event_parse_sn(content);  // Use corrected SN-compliant parsing from #event_parse_sn
 }
 
-void event_load_T() {
-    span t_file = prs("%.*s/T", len(state->cmprdir), state->cmprdir.buf);
-    span content = read_whole_file(t_file);
-    if (empty(content)) return; // File doesn't exist or is empty
-
-    event_parse_content(content);
+int T_debug_enabled() {
+    static int checked = 0;
+    static int enabled = 0;
+    if (!checked) {
+        span debug_file = prs("%.*s/T-debug", len(state->cmprdir), state->cmprdir.buf);
+        enabled = readable_file(debug_file);
+        checked = 1;
+    }
+    return enabled;
 }
 
+void T_debug_print_events(const char* label) {
+    if (!T_debug_enabled()) return;
+    fprintf(stderr, "[T-debug] %s: %zu events\n", label, state->events.n);
+    for (size_t i = 0; i < state->events.n; i++) {
+        fprintf(stderr, "  [%zu] \"%.*s\" %d.\n", i,
+                (int)len(state->events.a[i].event_str),
+                state->events.a[i].event_str.buf,
+                state->events.a[i].strength);
+    }
+}
+
+
+
+/* #event_load_T */
+void event_load_T() {
+    span path = S(".cmpr/T");
+    if (!readable_file(path)) return;
+    span content = read_file_into_cmp(path);
+    event_parse_sn(content);
+}
+
+/* #event_save_T */
 void event_save_T() {
     span saved_cmp = cmp;
     span t_file = prs("%.*s/T", len(state->cmprdir), state->cmprdir.buf);
@@ -1559,37 +1584,37 @@ void event_save_T() {
     cmp = saved_cmp;
 }
 
+/* #event_add_internal */
 void event_add_internal(span event_str, unsigned char strength) {
-    // Search for existing event
     for (size_t i = 0; i < state->events.n; i++) {
         if (span_eq(state->events.a[i].event_str, event_str)) {
             state->events.a[i].strength = strength;
             return;
         }
     }
-
-    // Not found, add new event
     event_entry e;
     e.event_str = event_str;
     e.strength = strength;
     event_entries_push(&state->events, e);
 }
 
+/* #event_T0 */
 void event_T0() {
     state->events.n = 0;
     event_save_T();
+    T_debug_print_events("T0 (cleared)");
 }
 
+/* #event_add */
 void event_add(span event_str, unsigned char strength) {
     event_add_internal(event_str, strength);
+    T_debug_print_events("event_add");
     event_save_T();
 
-    // Check recursion depth (max 1 for now - cautious approach)
     char *depth_str = getenv("CMPR_PATTERN_DEPTH");
     int depth = depth_str ? atoi(depth_str) : 0;
-    if (depth >= 1) return;  // Skip patterns if already recursing
+    if (depth >= 1) return;
 
-    // Set environment variables for scripts/patterns
     char event_buf[4096];
     int event_len = len(event_str);
     if (event_len >= (int)sizeof(event_buf)) event_len = sizeof(event_buf) - 1;
@@ -1607,7 +1632,6 @@ void event_add(span event_str, unsigned char strength) {
 
     system("scripts/patterns");
 
-    // Reset depth after return
     if (depth_str) {
         setenv("CMPR_PATTERN_DEPTH", depth_str, 1);
     } else {
@@ -1615,16 +1639,14 @@ void event_add(span event_str, unsigned char strength) {
     }
 }
 
+/* #event_memorize */
 void event_memorize() {
     span saved_cmp = cmp;
     span events_dir = prs("%.*s/events", len(state->cmprdir), state->cmprdir.buf);
     mkdir(s(events_dir), 0777);
 
-    // Get current timestamp
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
-
-    // Format timestamp as YYYYMMDD-HHMMSS
     struct tm *tm_info = localtime(&ts.tv_sec);
 
     span filename = prs("%.*s/%04d%02d%02d-%02d%02d%02d-%09ld",
@@ -1653,6 +1675,7 @@ void event_memorize() {
     cmp = saved_cmp;
 }
 
+/* #event_print_T */
 void event_print_T() {
     for (size_t i = 0; i < state->events.n; i++) {
         prt("\"");
@@ -1662,73 +1685,7 @@ void event_print_T() {
     flush();
 }
 
-void event_recall() {
-    // 1. Check that T is non-empty (must have query events)
-    if (state->events.n == 0) {
-        prt("Error: Cannot recall with empty T. Add query events first.\n");
-        flush_exit(1);
-    }
-
-    // Save current T events as query (before we potentially overwrite them)
-    event_entries query_events = state->events;
-
-    // 2. Get list of snapshot files
-    span events_dir = prs("%.*s/events", len(state->cmprdir), state->cmprdir.buf);
-    spans files = dir_listing(events_dir);
-
-    if (files.n == 0) {
-        prt("No memorized snapshots found.\n");
-        flush_exit(1);
-    }
-
-    // 3. Search snapshots in reverse chronological order (newest first)
-    for (int i = (int)files.n - 1; i >= 0; i--) {
-        span snapshot_path = prs("%.*s/%.*s", len(events_dir), events_dir.buf,
-                                  len(files.a[i]), files.a[i].buf);
-        span content = read_whole_file(snapshot_path);
-
-        if (empty(content)) continue;
-
-        // Parse snapshot into temporary storage
-        event_entries snapshot_events = {0};
-        span saved_cmp = cmp;
-        event_entries saved_state_events = state->events;
-        state->events = snapshot_events;
-
-        event_parse_content(content);
-        snapshot_events = state->events;
-
-        // Check if any query event matches any snapshot event
-        int found_match = 0;
-        for (size_t qi = 0; qi < query_events.n; qi++) {
-            for (size_t si = 0; si < snapshot_events.n; si++) {
-                if (span_eq(query_events.a[qi].event_str, snapshot_events.a[si].event_str)) {
-                    found_match = 1;
-                    break;
-                }
-            }
-            if (found_match) break;
-        }
-
-        if (found_match) {
-            // Found a match! Load this snapshot into T
-            state->events = snapshot_events;
-            event_save_T();
-            cmp = saved_cmp;
-            return;
-        }
-
-        // No match, restore state and continue
-        state->events = saved_state_events;
-        cmp = saved_cmp;
-    }
-
-    // 4. No matching snapshot found
-    prt("No memorized snapshot contains the query events.\n");
-    flush_exit(1);
-}
-
-
+/* #event_query */
 void event_query(span event_str) {
     for (size_t i = 0; i < state->events.n; i++) {
         if (span_eq(state->events.a[i].event_str, event_str)) {
@@ -1740,6 +1697,76 @@ void event_query(span event_str) {
     prt("0\n");
     flush();
 }
+
+/* #event_recall */
+void event_recall() {
+    event_entries query = {0};
+    for (size_t i = 0; i < (size_t)state->events.n; i++) {
+        if (state->events.a[i].strength == 255) {
+            event_entry e;
+            e.event_str = state->events.a[i].event_str;
+            e.strength = state->events.a[i].strength;
+            event_entries_push(&query, e);
+        }
+    }
+
+    if (query.n == 0) {
+        prt("Cannot recall with empty query (no 255-strength events in T).\n");
+        flush_exit(1);
+    }
+
+    if (T_debug_enabled()) T_debug_print_events("recall: query (255 only)");
+
+    span events_dir = prs("%.*s/events", len(state->cmprdir), state->cmprdir.buf);
+    spans files = dir_listing(events_dir);
+
+    if (files.n == 0) {
+        prt("No memorized snapshots found.\n");
+        flush_exit(1);
+    }
+
+    if (T_debug_enabled()) fprintf(stderr, "[T-debug] recall: searching %zu snapshots\n", files.n);
+
+    for (int i = (int)files.n - 1; i >= 0; i--) {
+        span snapshot_path = prs("%.*s/%.*s", len(events_dir), events_dir.buf, len(files.a[i]), files.a[i].buf);
+        span content = read_whole_file(snapshot_path);
+        if (empty(content)) continue;
+
+        event_entries saved = state->events;
+        state->events.n = 0;
+
+        event_parse_content(content);
+
+        event_entries snapshot = state->events;
+        state->events = saved;
+
+        int all_found = 1;
+        for (size_t qi = 0; qi < (size_t)query.n; qi++) {
+            int found = 0;
+            for (size_t si = 0; si < (size_t)snapshot.n; si++) {
+                if (span_eq(query.a[qi].event_str, snapshot.a[si].event_str)) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                all_found = 0;
+                break;
+            }
+        }
+
+        if (all_found) {
+            state->events = snapshot;
+            event_save_T();
+            if (T_debug_enabled()) T_debug_print_events("recall: loaded snapshot into T");
+            return;
+        }
+    }
+
+    prt("No memorized snapshot contains all query events.\n");
+    flush_exit(1);
+}
+
 
 /* #event_parse_sn */
 void event_parse_sn(span content) {
@@ -6475,7 +6502,7 @@ void handle_install_agent(char *agent_name) {
 // Help text data arrays
 
 u8 help_summary_data[] =
-  "Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs]\n"
+  "Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--query <string>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--sn-filter] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs] [FILE|-]\n"
   "\n"
   "For help on available topics: cmpr --help topics\n"
   "\n"
