@@ -25,14 +25,12 @@ typedef unsigned char u8;
 typedef uint64_t u64;
 #define flush_exit(n) flush(); exit(n) // used only by handle_args; let's do this differently
 
-
 /* #dbgx */
 #define dbgd(x) prt(#x ": %d\n", x),flush()
 #define dbgx(x) prt(#x ": %x\n", x),flush()
 #define dbgf(x) prt(#x ": %f\n", x),flush()
 #define dbgp(x) prt(#x ": %p\n", x),flush()
 #define dbgs(x) prt(#x ": %.*s\n", len(x), x.buf),flush()
-
 
 /* #span */
 typedef struct {
@@ -104,7 +102,6 @@ int copy_file(const char *src, const char *dest); // TODO: maybe take spans inst
 span inp_compl();
 span cmp_compl();
 span out_compl();
-
 /* #read_stdin_into_cmp */
 span read_stdin_into_cmp() {
   span ret = {cmp.end,cmp.end};
@@ -117,7 +114,6 @@ span read_stdin_into_cmp() {
   ret.end = cmp.end;
   return ret;
 }
-
 /* #spanio_basics */
 int empty(span s) {
   return s.end == s.buf;
@@ -222,7 +218,6 @@ const int ALWAYS_FLUSH = 0;
     We add mkdir_p and pathpart just to simplify out2atp.
  */
 
-
 /* #copy_file */
 int copy_file(const char *src, const char *dest) {
     int source_fd, dest_fd;
@@ -267,7 +262,6 @@ int copy_file(const char *src, const char *dest) {
         return -4; // Error reading from source file
     }
 }
-
 /* #mkdir_p */
 void mkdir_p(span dir) {
     u8* end = cmp.end;
@@ -303,7 +297,6 @@ void mkdir_p(span dir) {
     }
     cmp.end = end;
 }
-
 /* #pathpart */
 span pathpart(span dir) {
     int last_slash = find_char_rev(dir, '/');
@@ -312,7 +305,6 @@ span pathpart(span dir) {
     }
     return (span){ .buf = dir.buf, .end = dir.buf + last_slash + 1 };
 }
-
 
 /* #spanio_basics2 */
 out_sav out2cmp() { out_sav ret = {0}; ret.outp = outp; outp = &cmp; return ret; }
@@ -443,7 +435,6 @@ void flush_err() {
   }
 }
 
-
 /* #write_to_file */
 void write_to_file_2(span, const char*, int);
 
@@ -491,7 +482,6 @@ void write_to_file_span(span content, span filename_span, int clobber) {
   filename[filename_span.end - filename_span.buf] = '\0';
   write_to_file_2(content, filename, clobber);
 }
-
 
 /* #readable_file */
 int readable_file(span path) {
@@ -559,7 +549,6 @@ span read_file_into_span(char* filename, span buffer) {
   span new_span = {buffer.buf, buffer.buf + bytes_read};
   return new_span;
 }
-
 
 /* #take_n */
 span take_n(int n, span *io) {
@@ -661,7 +650,6 @@ span concat(span a, span b) {
   ret.end = cmp.end;
   return ret;
 }
-
 /* #next_line */
 span next_line(span *input) {
   if (empty(*input)) return nullspan();
@@ -677,7 +665,6 @@ span next_line(span *input) {
   return line;
 }
 
-
 /* #consume_prefix */
 span consume_prefix(span prefix, span *input) {
   if (len(*input) < len(prefix) || !span_eq(first_n(*input, len(prefix)), prefix)) {
@@ -688,7 +675,6 @@ span consume_prefix(span prefix, span *input) {
   ret.end = input->buf;
   return ret;
 }
-
 /* #generic_array_implementation */
 #define MAKE_ARENA(E, T, STACK_SIZE) \
 typedef struct { \
@@ -788,7 +774,6 @@ void T##_push(T* t, E e) { \
     t->a[t->n++] = e; \
 }
 
-
 /* #first_generic_array_is_spans */
 MAKE_ARENA(span,spans,256);
 
@@ -842,7 +827,6 @@ spans split_whitespace(span s) {
   ret.n = idx;
   return ret;
 }
-
 /* #json */
 typedef struct {
   span s;
@@ -1073,7 +1057,6 @@ json make_json(span s) { return (json){s}; }
 span json_un_s(json s) {
   return json_s2s(s, &cmp, cmp_space + BUF_SZ);
 }
-
 /* #json_parse */
 json json_parse(span s) {
   skip_whitespace(&s);
@@ -1082,7 +1065,6 @@ json json_parse(span s) {
   if (empty(s)) return ret;
   return nulljson();
 }
-
 /* #json_parse_prefix */
 json json_parse_prefix(span *input) {
     json ret = {0};
@@ -1141,7 +1123,6 @@ json json_parse_prefix(span *input) {
     ret.s.end = input->buf;
     return ret;
 }
-
 /* #json_s2s */
 // Utility to convert a hex digit to its integer value
 int hex_to_int(char c) {
@@ -1220,7 +1201,6 @@ span json_s2s(json j, span *buffer, u8 *max) {
     return ret;
 }
 
-
 /* #json_parse_prefix_string */
 json json_parse_prefix_string(span *input) {
     if (empty(*input) || *input->buf != '\"') return nulljson();
@@ -1245,7 +1225,6 @@ json json_parse_prefix_string(span *input) {
     advance1(input);
     return make_json((span){start.buf - 1, input->buf});
 }
-
 
 /* #json_parse_prefix_number */
 json json_parse_prefix_number(span *input) {
@@ -1276,7 +1255,6 @@ json json_parse_prefix_number(span *input) {
   ret.s.end = input->buf;
   return ret;
 }
-
 /* #json_parse_prefix_littok */
 json json_parse_prefix_littok(span *input) {
   span inner;
@@ -1286,13 +1264,9 @@ json json_parse_prefix_littok(span *input) {
   return nulljson();
 }
 
-
 /* #sio */
-
 /* #parserpattern */
-
 /* #jsonparser */
-
 /* #spanspan */
 span spanspan(span haystack, span needle) {
   if (empty(needle)) return (span){haystack.buf, haystack.buf};
@@ -1325,7 +1299,6 @@ int index_of(span x, spans ys) {
   return -1;
 }
 
-
 /* #inp_compl */
 span inp_compl() {
   span compl;
@@ -1347,7 +1320,6 @@ span out_compl() {
   compl.end = output_space + BUF_SZ;
   return compl;
 }
-
 
 /* #config_fields */
 #define CONFIG_FIELDS \
@@ -2099,7 +2071,6 @@ span filename_template(span template) {
 
 
 /* #assoc_spans */
-
 /* #assoc_spans_lookup */
 span assoc_spans_lookup(spans assoc_list, span key) {
     for (size_t i = 0; i < assoc_list.n / 2; ++i) {
@@ -2325,25 +2296,12 @@ void print_config() {
 }
 
 
-/* #print_bootstrap */
-// Forward declaration for function generated in bootstrap_content.c
-span get_bootstrap_content_span();
-
-void print_bootstrap() {
-    span content = get_bootstrap_content_span();
-    prt("%.*s", len(content), content.buf);
-    flush();
-}
-
 /* #argtable */
-
 /* #handle_args */
 void handle_args(int argc, char **argv) {
-
 /* #handle_args_2 */
 int ind_conf = 0;
 	int ind_print_conf = 0;
-	int ind_print_bootstrap = 0;
 	int ind_init = 0;
 	int ind_help = 0;
 	int ind_version = 0;
@@ -2414,6 +2372,7 @@ int ind_conf = 0;
 	
 	int action_arg = 0;
 
+
 /* #handle_args_3 */
 for (int i = 1; i < argc; i++) {
 		char *arg = argv[i];
@@ -2434,8 +2393,6 @@ for (int i = 1; i < argc; i++) {
 			conf_filepath = argv[++i];
 		} else if (strcmp(arg, "--print-conf") == 0) {
 			ind_print_conf = 1;
-		} else if (strcmp(arg, "--print-bootstrap") == 0) {
-			ind_print_bootstrap = 1;
 		} else if (strcmp(arg, "--print-block") == 0) {
 			ind_print_block = 1;
 			if (i + 1 >= argc) { prt("Missing <id> argument for --print-block\n"); flush_exit(1); }
@@ -2564,6 +2521,7 @@ for (int i = 1; i < argc; i++) {
                 }
 	}
 
+
 /* #handle_args_4 */
 if (ind_file_argument) {
                 state->manual_filename = S(file_argument);
@@ -2605,11 +2563,6 @@ if (ind_file_argument) {
 		flush_exit(0);
 	}
 
-	// Handle --print-bootstrap
-	if (ind_print_bootstrap) {
-		print_bootstrap();
-		flush_exit(0);
-	}
 
 	// Handle --install-agent (doesn't need code loading)
 	if (ind_install_agent) {
@@ -2881,6 +2834,7 @@ if (ind_file_argument) {
 	// No action arg - return to enter interactive mode
 }
 
+
 /* #handle_snapshot_join */
 void handle_snapshot_join(span es1, span es2) {
     // Build filter paths
@@ -3000,7 +2954,6 @@ void handle_snapshot_join(span es1, span es2) {
 }
 
 /* #help_text_nl2pl */
-
 /* #print_physical_lines */
 void print_physical_lines(span block, int lines_to_print) {
     while (!empty(block) && lines_to_print > 0) {
@@ -3176,7 +3129,6 @@ void inp_sanity_checks() {
 
 
 /* #jk_implementation */
-
 /* #find_all_blocks */
 void find_all_blocks() {
    state->blocks = spans_alloc(256);
@@ -3249,9 +3201,7 @@ void ingest() {
 
 
 /* #blocks */
-
 /* #files */
-
 /* #index_block_ids */
 void index_block_ids() {
     int id_count = 0;
@@ -3319,7 +3269,6 @@ spans ids_for_block(span block) {
 
 
 /* #block_idx */
-
 /* #block_for_span */
 int block_for_span(span s) {
     for (int i = 0; i < state->blocks.n; i++) {
@@ -3397,9 +3346,7 @@ span get_revdir() {
 
 
 /* #complain_and_exit */
-
 /* #complain_and_prompt */
-
 /* #get_revs */
 void get_revs() {
     span revdir = get_revdir();
@@ -3561,7 +3508,6 @@ void get_revs_2() {
 
 
 /* #revs_cache_design */
-
 /* #get_revs_cache_get */
 int get_revs_cache_get(span bname, span rev_contents) {
     u8* cmp_end_backup = cmp.end;
@@ -3968,7 +3914,6 @@ span prs_checksum(checksum c) {
 }
 
 /* #SBV_design */
-
 /* #getkey */
 #define ARROW_U 256
 #define ARROW_D 257
@@ -4655,7 +4600,6 @@ void print_multiple_partial_blocks(int start_block, int end_block) {
 
 
 /* #keybinds */
-
 /* #handle_keystroke */
 void handle_keystroke(char input) {
     terpri();
@@ -4940,7 +4884,6 @@ void start_ex() {
 
 
 /* #extable */
-
 /* #handle_ex_command */
 // stubbed for now (manually)
 void addfile(span s) {}
@@ -5121,7 +5064,6 @@ void select_model() {
 
 
 /* #bootstrap */
-
 /* #perform_search */
 void perform_search() {
     int remaining_lines = state->terminal_rows;
@@ -6009,7 +5951,6 @@ span block_code_part(span block) {
 
 
 /* #get_palette */
-
 /* #apply_prompt */
 void apply_prompt(span prompt_name) {
     if (span_eq(prompt_name, S("NL -> PL rewrite"))) {
@@ -6035,9 +5976,7 @@ void apply_prompt(span prompt_name) {
 
 
 /* #nl2plrewrite */
-
 /* #prompt_template_design */
-
 /* #hc_prompts */
 // Hardcoded prompt templates
 span pt_nl2pl_rewrite() { return S("```{langtag}\n{context}\n```\n\n(above: references)\n---\n(below: current task)\n\n```{langtag}\n{comment}\n```\n\nWrite the code only for the current task. Reply only with a code block beginning with \"```{langtag}\". Do not include comments.\n"); }
@@ -6156,7 +6095,6 @@ void print_template_literal(span input) {
 
 
 /* #gcb */
-
 /* #current_block_template_vars */
 spans current_block_template_vars() {
     spans vars = spans_alloc(8);
@@ -6219,7 +6157,6 @@ void eval_template_variable(span var_name, spans vars) {
 
 
 /* #template_language_design */
-
 /* #parse_template */
 spans parse_template(span input) {
     spans result = spans_alloc(10);
@@ -8455,7 +8392,6 @@ int block_by_id(span id_no_hash) {
 
 
 /* #press_any_key */
-
 /* #ex_expand */
 void ex_expand() {
     span current_block = state->blocks.a[state->curr_block_idx];
@@ -8695,7 +8631,6 @@ void expand_refs_2_rec_context(span block, span transform, spans* already, int c
 
 
 /* #chase_ref */
-
 /* #chase_ref_2 */
 span chase_ref_2(span ref_id) {
     int idx = block_by_id(ref_id);
@@ -8939,7 +8874,6 @@ void replace_block_code_part(span new_code) {
 }
 
 /* #output_design */
-
 /* #output_save */
 void output_save(span operation, span message) {
     generic_output_save(operation, message);
@@ -9234,7 +9168,6 @@ void agreement_to_pl_diff() {
 
 
 /* #summarize_block */
-
 /* #handle_learn */
 void handle_learn(span es1, span es2) {
     // Alphabetize for consistent filename

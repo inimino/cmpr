@@ -1,17 +1,3 @@
-.cmpr/revs
-.cmpr/tmp
-.cmpr/api_calls
-.cmpr/cache
-.cmpr/events
-.cmpr/rev-indices
-.cmpr/claude_p_runs
-revs
-tmp
-api_calls
-cache
-outputs
-openai-key
-prompt_list
 dist
 *.bak
 .vscode
@@ -20,7 +6,6 @@ dist
 *.o
 siphash/test*
 siphash/vectors.h
-functions.sh
 cmpr-sed.c
 tags
 claude_prompt_*
