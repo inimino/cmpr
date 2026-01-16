@@ -5074,14 +5074,8 @@ void delete_block() {
 }
 /* #find_last_deleted_block */
 span find_last_deleted_block() {
-    prt("DEBUG find_last_deleted_block: n_revblocks=%d\n", state->revs.n_revblocks);
-    for (int i = state->revs.n_revblocks - 1; i >= 0; --i) {
+    for (int i = 0; i < state->revs.n_revblocks; ++i) {
         rev_block *rb = &state->revs.revblocks[i];
-        prt("DEBUG i=%d timestamp=%ld ids.n=%d", i, (long)rb->timestamp, rb->ids.n);
-        if (rb->ids.n > 0) {
-            prt(" first_id=%.*s", (int)len(rb->ids.a[0]), rb->ids.a[0].buf);
-        }
-        prt("\n");
         if (rb->ids.n == 0) continue;
         int found_in_current = 0;
         for (int j = 0; j < rb->ids.n; ++j) {
@@ -5093,13 +5087,8 @@ span find_last_deleted_block() {
             }
             if (found_in_current) break;
         }
-        prt("DEBUG   found_in_current=%d\n", found_in_current);
-        if (!found_in_current) {
-            prt("DEBUG   RETURNING this block\n");
-            return rb->contents;
-        }
+        if (!found_in_current) return rb->contents;
     }
-    prt("DEBUG   returning nullspan\n");
     return nullspan();
 }
 /* #paste_after */
