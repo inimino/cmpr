@@ -2299,6 +2299,7 @@ void print_config() {
 /* #argtable */
 /* #handle_args */
 void handle_args(int argc, char **argv) {
+
 /* #handle_args_2 */
 int ind_conf = 0;
 	int ind_print_conf = 0;
@@ -5749,10 +5750,10 @@ void send_to_llm(span prompt, llm_message_handler cb) {
     //prt_cmp();
     json messages = json_a();
     //int system_index = find_block(S("#systemprompt"));
-    int system_index = block_by_id(S("systemprompt"));
-    if (system_index != -1) {
-        json_a_extend(&messages, gpt_message(S("system"), state->blocks.a[system_index]));
-    }
+    //int system_index = block_by_id(S("systemprompt"));
+    //if (system_index != -1) {
+        //json_a_extend(&messages, gpt_message(S("system"), state->blocks.a[system_index]));
+    //}
 
     if (!empty(state->bootstrapprompt)) {
         json_a_extend(&messages, gpt_message(S("user"), state->bootstrapprompt));
@@ -6405,7 +6406,7 @@ void handle_agents() {
 
 /* #handle_install_agent */
 void handle_install_agent(char *agent_name) {
-    span script = get_agent_script(agent_name);
+    span script = get_agent_script(S(agent_name));
     if (script.buf == 0 || script.buf == script.end) {
         prt("Unknown agent: %s\n", agent_name);
         prt("Available agents: claude\n");
@@ -6434,707 +6435,739 @@ void handle_install_agent(char *agent_name) {
     prt("Installed agent: %s\n", path);
     prt("Run with: %s &\n", path);
 }
+/* #help_text_summary_impl */
+span help_text_summary(span s) {
+  if (empty(s) || span_eq(S("help_text_summary"), s)) return S(
+"Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs]\n"
+"\n"
+"For help on available topics: cmpr --help topics\n"
+); else return nullspan();
+}
+
+/* #help_text_topics_impl */
+span help_text_topics(span s) {
+  if (empty(s) || span_eq(S("help_text_topics"), s)) return S(
+"topics\n\
+basics\n\
+blocks\n\
+editing\n\
+search\n\
+nl2pl\n\
+events\n\
+agents\n\
+reports\n\
+wants\n\
+claude-setup\n\
+");
+  else return nullspan();
+}
+
+/* #help_text_basic_impl */
+span help_text_basic(span s) {
+  if (empty(s) || span_eq(S("help_text_basic"),s)) return S(
+"All cmpr state is maintained in .cmpr in your project directory (like .git), also set up via `cmpr --init` in a new project.\n"
+"In .cmpr/conf is the \"project manifest\" or list of files that cmpr will know about.\n"
+"You can add all the files in your project or just start with one to try it.\n"
+"Recommended starter example .cmpr/conf:\n"
+"\n"
+"cmprdir: .cmpr/\n"
+"buildcmd: make\n"
+"[ ... other config ... ]\n"
+"model: gpt-4.1\n"
+"\n"
+"language: C\n"
+"file: .cmpr/conf\n"
+"file: my-project-code\n"
+"\n"
+"Note that \"language: C\" only refers to the cmpr \"blockizing style\".\n"
+"You should use \"C\" regardless of the actual programming language in your project, unless it is Python.\n"
+"\n"
+"Only use \"language: Python\" for Python files, and \"language: none\" for files that you don't want to be blockized at all.\n"
+"Each language line applies to all file lines up to the next language line.\n"
+"\n"
+"Replace buildcmd with your actual build command.\n"
+"This only applies to the TUI currently, specifically the 'B' keybinding.\n"
+"\n"
+"cmpr can be used via TUI, reached by running `cmpr` with no arguments (or with a single filename).\n"
+"It can be used from the shell via CLI, see cmpr --help for basic usage.\n"
+"\n"
+"cmpr organizes your code into blocks, which are marked by actual block comments in your source code.\n"
+"Next, read `cmpr --help blocks` for the basics of blocks and cmpr source-code access.\n"
+"\n"
+"Basic Commands\n"
+"==============\n"
+"\n"
+"--help [topic]\n"
+"  Display help information.\n"
+"  cmpr --help         # basic usage\n"
+"  cmpr --help topics  # list of topics\n"
+"\n"
+"--version\n"
+"  Version information.\n"
+"\n"
+"--init\n"
+"  Initialize .cmpr/ directory structure in current directory.\n"
+"  Use when setting up cmpr in a new project, then manually edit .cmpr/conf to add your source files.\n"
+"\n"
+"--conf <filepath>\n"
+"  Use alternate configuration file.\n"
+"  Example: cmpr --conf /path/to/custom.conf --print-block '#root'\n"
+"\n"
+"--print-conf\n"
+"  Display current configuration.\n"
+"\n"
+); else return nullspan();
+}
+
+/* #help_text_blocks_impl */
+span help_text_blocks(span s) {
+  static char txt[] =
+"In cmpr every source code file listed in the manifest is divided into blocks.\n"
+"Blocks are contiguous: the concatenation of all the blocks in the file gives back the original file.\n"
+"In the \"C\" blockizing style, which should be used in all programming languages that support C-style block comments, a block starts with a block comment that begins in column 0.\n"
+"That means you can still use block comments inside a cmpr block by indenting your block comment start delimiter, if you really absolutely must.\n"
+"In Python, triple-quotes are used, also starting in column 0.\n"
+"\n"
+"The definition of the blocks in a file is just the lines between any line that starts a block.\n"
+"So blockizing is deterministic and very simple to understand.\n"
+"\n"
+"## Block ids\n"
+"\n"
+"A block has an id, like a hashtag: #example_block is an example of a block id.\n"
+"The blockid goes right after the opening \"/*\" on the same line separated by a single space: \"/* #example\"\n"
+"A block without an id is called an anonymous block, and generally the first thing you should do with these (e.g. if you're onboarding an existing codebase to cmpr for the first time) is give them names.\n"
+"(Block numbers will change as blocks are added or removed from your codebase, so they make horrible identifiers.)\n"
+"\n"
+"## Root and INBOX blocks\n"
+"\n"
+"The basic block that every project should create first, and from which you should be able to find everything else in your codebase, is #root.\n"
+"\n"
+"If you're starting a new cmpr project, or adapting an existing codebase to use cmpr, we highly recommend creating two blocks:\n"
+"\n"
+"- #root should contain your project overview and will gradually be filled in with pointers to other blocks so that codebase navigation becomes easy.\n"
+"- #INBOX is a recommended convention, if you use cmpr with an AI coding assistant, so that agents can send experience reports or programmer feedback requests to a consistent place, using `cmpr --after '#INBOX'` with input on stdin.\n"
+"\n"
+"(You can of course establish your own conventions (e.g. by documenting them in the root block) if you don't like these ones.)\n"
+"\n"
+"Basic Block Commands\n"
+"====================\n"
+"\n"
+"--files-blocks\n"
+"  Print structured list of all files and their blocks.\n"
+"  Shows file names (in manifest order) and block IDs that each file contains.\n"
+"\n"
+"--print-block <id>\n"
+"  Print complete block (both NL comment and PL code parts).\n"
+"  <id> can be also be a one-based index in case of an anonymous block.\n"
+"  Example: cmpr --print-block '#root'\n"
+"\n"
+"--print-comment <id>\n"
+"  Print only the NL (natural language) comment part of a block.\n"
+"  Example: cmpr --print-comment '#argtable'\n"
+"\n"
+"--print-code <id>\n"
+"  Print only the PL (programming language) code part of a block.\n"
+"  Example: cmpr --print-code '#agent_root' | bash\n"
+"\n"
+"Rarely-used commands:\n"
+"\n"
+"--count-blocks   # prints number of blocks\n"
+"--print-all      # prints concatenation of all files\n"
+"\n"
+"(Pop /bin/sh quiz: how would you find the average size in bytes of the blocks in your project using cmpr --count-blocks, --print-all, and POSIX utilities only?)\n"
+"\n"
+"See also: block editing commands (--help editing) and nl2pl (--help nl2pl).\n"
+;
+  if (empty(s) || span_eq(S("help_text_blocks"), s)) return (span){(u8*)txt, (u8*)txt + sizeof(txt) - 1};
+  else return nullspan();
+}
+
+/* #help_text_editing_impl */
+span help_text_editing(span s) {
+  if (empty(s) || span_eq(S("help_text_editing"), s)) return S(
+"\
+#help_text_editing\n\
+\n\
+## Editing with cmpr\n\
+\n\
+You can use the TUI `cmpr` or `cmpr foo.c` to navigate around your codebase by blocks (using j/k) and edit them using 'e', which will open up vim (or your configured $EDITOR) on a temporary file containing that block, and then replace it back into the file after you save and successfully (status code 0) exit vim.\n\
+\n\
+Coding agents should use the CLI commands instead.\n\
+\n\
+Block Editing Commands\n\
+======================\n\
+\n\
+--after <id>\n\
+  Insert new block after the specified block ID.\n\
+  Reads new block content (NL + PL) from stdin.\n\
+  New block is inserted in the same file.\n\
+  Example: cat newblock.txt | cmpr --after '#INBOX'\n\
+\n\
+--replace <id>\n\
+  Replace entire block (both NL and PL parts) with content from stdin.\n\
+  Completely overwrites existing block.\n\
+  Example: cat updated.txt | cmpr --replace '#blockid'\n\
+\n\
+--replace-comment <id>\n\
+  Replace only the NL (comment) part, keeping PL unchanged.\n\
+  Use this to update documentation without touching code.\n\
+  Example: cat new_comment.txt | cmpr --replace-comment '#blockid'\n\
+\n\
+--replace-code <id>\n\
+  Replace only the PL (code) part, keeping NL unchanged.\n\
+  Less preferred than --rewritepl which generates from NL.\n\
+  Example: cat new_code.c | cmpr --replace-code '#blockid'\n\
+\n\
+\n\
+## General editing recipe\n\
+\n\
+There is no \"before\" even though there is an --after, so if you want to put a block before the first block in a file, follow the general editing recipe we describe here.\n\
+\n\
+This also applies to handling blocks that are anonymous, since you can't use --replace with numeric blockids at all without introducing race conditions in case anyone else is editing the codebase at the same time.\n\
+\n\
+The \"general editing recipe\" lets you do anything with blocks and makes cmpr a complete swiss army knife.\n\
+But this knife is sharp so be careful with it.\n\
+\n\
+In the general editing recipe, you construct a temp file, concatenating any cmpr --print-* commands or whatever other information you want into it, edit it using any tools you like, and then finally run `cmpr --replace \\#foo < path/to/that/file` to replace #foo with whatever you have constructed.\n\
+\n\
+Note this allows you to totally rewrite the block structure of a file, and fix (or make) all kinds of mistakes, for example:\n\
+\ndelete a block: cmpr --replace '#foo' </dev/null # or: true | cmpr --replace ...\n\
+split a block into two:\n\
+    cmpr --print-block '#foo' >/path/to/tmpfile\n\
+    vim /path/to/tmpfile                         # add a block comment opening in column 0\n\
+    cmpr --replace '#foo' </path/to/tmpfile\n\
+    cmpr --files-blocks | grep -A3 '#foo'        # check the current block structure\n\
+\n\
+You can also use this to rename a block, or even remove (or indent) the block comment part of a block, making it become part of the previous block in the file.\n\
+\n\
+You can also do terrible mistakes like sending a Python block which is triple-quote delimited into a C-style file.\n\
+In this case the Python block won't start a new block, since that's not how the file is blockized.\n\
+You can fix this by editing the block that you put the Python block after, which will now contain the Python block entirely as part of its PL section.\n\
+Copy it into a file and fix it and then --replace and check the block structure as above (applies to any surgery of this sort).\n\
+\
+"); else return nullspan();
+}
+
+/* #help_text_search_impl */
+span help_text_search(span s) {
+  if (empty(s) || span_eq(S("help_text_search"),s))
+    return S(
+"As your general-purpose code database and swiss army knife, of course cmpr offers a search feature.\n"
+"In the TUI there is a very limited \"/\" keybind which just searches for literal strings (no regex features) so you get exactly what you type.\n"
+"Use n/N keys to move forward and back in the search results.\n"
+"\n"
+"From the CLI we have powerful --grep which uses POSIX EREs, but usually you don't need it at all.\n"
+"Instead you should look up the root block, and follow references from there, or if the navigation in the project is broken, then you should do --files-blocks and read all the blockids.\n"
+"Usually you can understand everything and find everything from there.\n"
+"\n"
+"However, if the blocks are all anonymous or the blockids are terrible, then you probably have some onboarding work to do and you should go through and name some blocks, add some mentions of important waypoints into your root block, etc etc.\n"
+"\n"
+"Search and Navigation Commands\n"
+"==============================\n"
+"\n"
+"--grep <pattern>\n"
+"  Search all blocks using POSIX Extended Regular Expression.\n"
+"  Searches both NL (comment) and PL (code) parts.\n"
+"  Returns space-separated list of matching block IDs.\n"
+"  Outputs \"#id\" when NL matches, \"#id:code\" for PL-only matches.\n"
+"  Anonymous blocks are returned by index.\n"
+"  \n"
+"  Pattern syntax: POSIX ERE (not JavaScript regex)\n"
+"  - Use [0-9] instead of \\d\n"
+"  - Use [a-zA-Z0-9_] instead of \\w\n"
+"  - Use [[:space:]] instead of \\s\n"
+"  \n"
+"  Example: cmpr --grep 'handle.*help'\n"
+"  Example: cmpr --grep '#[a-z_]+'      # pointless but it's a way to search for lowercase blockids\n"
+"\n"
+"--content-index <search>\n"
+"  Search for literal string (not regex) across all blocks.\n"
+"  This is mostly used internally or by scripts.\n"
+"  Returns space-separated list of one-based indices.\n"
+"  Example: cmpr --content-index 'event_system'\n"
+"\n"
+"--files-blocks\n"
+"  Print structured list of all files and blocks.\n"
+"  Each line shows either \"file: filename\" or \"Block N: #id\" (or \"Block N\" if anonymous).\n"
+"  Best and shortest project overview and highly recommended for orientation in almost any project.\n"
+"  \n"
+"  Filter to specific file:\n"
+"  cmpr --files-blocks | grep -A 1000 'file: spanio.c' | \\\n"
+"    grep -B 1000 -m 1 '^file:' | head -n -1\n"
+"\n"
+"Recommended Navigation Pattern:\n"
+"  1. Start at root: cmpr --print-comment '#root'\n"
+"  2. Follow references to hubs (2-3 hops to reach any block)\n"
+"  3. Use --grep only when navigation doesn't work\n"
+"\n"
+"Fallback Navigation Pattern:\n"
+"  1. Start with cmpr --count-blocks or just yolo it with --files-blocks.\n"
+"  2. Read the blockids and think about which ones are probably the ones you want.\n"
+"  3. Use --print-comment <id> on the most promising blockids until you find what you need.\n"
+"\n"
+"Third choice navigation:\n"
+"  1. Use cmpr --grep on some likely strings (error messages, code snippets)\n"
+"  2. Use regular grep and then guess the blockids or look nearby using sed or use --files-blocks and guess.\n"
+"  3. If you have just a line number and no relevant code at all, then use sed or awk or similar to read lines nearby.\n"
+"\n"
+"For weird things like Makefiles and other things that don't fall into a standard code file pattern, if you really want to manage them using blocks (for example, to benefit from cmpr's revision control) then you can put them in blocks and use a cmpr --print-code > path/to/whatever pattern.\n"
+);
+  else return nullspan();
+}
+
+/* #help_text_nl2pl_impl */
+span help_text_nl2pl(span s) {
+  if (empty(s) || span_eq(S("help_text_nl2pl"), s)) return S(
+"The nl2pl subsystem is the very oldest part of cmpr and it wrote almost all of the rest, until in the GPT-5 era, models became good enough to write the code directly.\n"
+"However, for efficiency, nl2pl is still strongly recommended.\n"
+"We are gradually migrating the cmpr codebase itself back to nl2pl code generation.\n"
+"\n"
+"In times of accumulating tech debt to try ideas, you may have a lot of \"manually maintained\" code (writted by gpt5 or similar class model) however this tech debt should always be cleaned up bringing the codebase into a clean state where every block that has PL at all is successfully and repeatably generated by --rewritepl (or 'R' in the TUI).\n"
+"\n"
+"Natural Language to Code Generation\n"
+"===================================\n"
+"\n"
+"--rewritepl <id>\n"
+"  Regenerate PL (code) from NL (comment) using LLM.\n"
+"  Sends NL part to configured LLM API.\n"
+"  Replaces PL part with generated code.\n"
+"  This is the preferred way to update code after changing NL.\n"
+"  \n"
+"  Typical Workflow:\n"
+"  1. Edit NL: cat new_nl.txt | cmpr --replace-comment '#blockid'\n"
+"  2. Generate code: cmpr --rewritepl '#blockid'\n"
+"  3. Verify: cmpr --print-code '#blockid'\n"
+"  4. build or test or whatever.\n"
+"\n"
+"  If the code is not as you expect:\n"
+"  1. use --expand and --blockrefs and similar to make sure you understand what nl2pl is seeing\n"
+"  2. add negative advice in the NL in an \"Implementation notes\" or similar section\n"
+"  3. add an explicit algorithm, described in English prose, ideally without bullet points and definitely without cheating by embedding code\n"
+"  4. include a line of just identifier names at the bottom, without explanation; the model will know to use those variable names\n"
+"  5. include one or more code snippets alone without explanation or with \"Hint: \" as a prefix, until gpt4 (the basic model of nl2pl) starts to write good code\n"
+"  6. resist the urge to write the code yourself, unless you don't know what the code needs to do. then write it yourself, and only after it works rewrite the NL using English only, and iterate until gpt4 can write the same code you wrote (up to variable names and formatting, e.g.).\n"
+"\n"
+"--prompt <id>\n"
+"  Print the prompt that would be sent to the LLM for nl2pl conversion.\n"
+"  Does NOT call the LLM - just shows what prompt would be used.\n"
+"  Useful for debugging and understanding LLM context.\n"
+"  Example: cmpr --prompt '#blockid'\n"
+"  See also --expand.\n"
+"\n"
+"Configuration:\n"
+"  LLM settings are in .cmpr/conf:\n"
+"\n"
+"If generated PL is wrong, fix the NL, not the PL.\n"
+"\n"
+"Manually Maintained Blocks:\n"
+"  Add \"Manually maintained.\" as last line of NL comment.\n"
+"  Only use when you MUST write PL directly.\n"
+"  Avoid when possible.\n"
+"  nl2pl subsystem will skip touching the PL in these blocks (but not if you run --rewritepl directly, so don't).\n"
+"\n"
+); else return nullspan();
+}
+
+/* #help_text_events_impl */
+span help_text_events(span s) {
+  if (empty(s) || span_eq(S("help_text_events"), s)) return S(
+"This documentation is incomplete and subject to rapid revision.\n"
+"\n"
+"Event System (Temporal Reasoning)\n"
+"==================================\n"
+"\n"
+"The event system provides temporal reasoning through tracking events\n"
+"in transient memory (T).\n"
+"\n"
+"Core Concepts:\n"
+"  T - Transient memory (current event state)\n"
+"  E - Events (strings with associated strength values)\n"
+"  S - Strength (binary log odds, 0-255 bits of support) (think of these as FALSE = 0, TRUE = 255)\n"
+"\n"
+"Commands:\n"
+"\n"
+"--T0\n"
+"  Reset T to empty state.\n"
+"  Use at start of new work session to clear transient context.\n"
+"  Example: cmpr --T0\n"
+"\n"
+"--event <string> --strength <value>\n"
+"  Add event to T with specified strength (0-255).\n"
+"  Events are deduplicated - adding duplicate updates strength.\n"
+"  Currently only strength 255 is well-supported.\n"
+"  Some day we may support leaving the strength out for a default of \"truth\" or 255, but for now it's still a required argument.\n"
+"  Example: cmpr --event \"The block id is: #root.\" --strength 255\n"
+"\n"
+"--T\n"
+"  Print current T state as SN (strength-notation) lines.\n"
+"  Format: \"event_string\" strength.\n"
+"  Example: cmpr --T\n"
+"\n"
+"--memorize\n"
+"  Save current T to timestamped snapshot in .cmpr/events/\n"
+"  Creates permanent record of current transient state.\n"
+"  Example: cmpr --memorize\n"
+"\n"
+"--recall\n"
+"  Use current T as query to search memorized snapshots.\n"
+"  Finds the most recent snapshot containing all 255 events in T and loads that snapshot.\n"
+"  T should be non-empty before calling --recall.\n"
+"  Example:\n"
+"    cmpr --T0\n"
+"    cmpr --event \"The blockid is: #root.\" --strength 255\n"
+"    cmpr --recall # find out whatever we were thinking about the last time the blockid was #root\n"
+"\n"
+"--snapshots\n"
+"  List all event snapshots with timestamps and previews.\n"
+"  Currently busted.\n"
+"\n"
+"--snapshot-view <timestamp>\n"
+"  View complete contents of specific snapshot.\n"
+"  Timestamp format: YYYYMMDD-HHMMSS-nanos (from --snapshots)\n"
+"  Unimplemented. Snapshots are available in .cmpr/events if you want to look at them, and they are just text files, so none of this is necessary.\n"
+"  So --snapshots is ls -l .cmpr/events and --snapshot-view is cat.\n"
+"\n"
+"Common Workflow Pattern:\n"
+"  1. Clear T: cmpr --T0\n"
+"  2. Set context: cmpr --event \"The blockid is: #foo\" --strength 255\n"
+"  3. Add facts: cmpr --event \"Block is reachable\" --strength 255\n"
+"  4. Save snapshot: cmpr --memorize\n"
+"\n"
+"T is TRANSIENT - meant to be cleared between work sessions.\n"
+"Snapshots provide HISTORICAL queries via --recall.\n"
+"\n"
+"This communication pattern can be used for agents to communicate with each other while working on the same codebase.\n"
+"Multiple agents can share the same T but won't conflict with each other if they don't use the same events with different meanings.\n"
+"This is why our event names tend to be kind of formulaic at the beginning, like \"The blockid is: ...\".\n"
+"\n"
+);
+  else return nullspan();
+}
+
+/* #help_text_agents_impl */
+span help_text_agents(span s) {
+  if (empty(s) || span_eq(S("help_text_agents"), s)) return S(
+"Agent System (Automated Maintenance)\n"
+"====================================\n"
+"\n"
+"Agents are executable blocks that verify and maintain wants (desired states).\n"
+"\n"
+"BASIC CONTRACT:\n"
+"\n"
+"You define wants in your source code by writing them in SN in some block.\n"
+"The context in the block should be used to give commentary on what the want is about, but the want itself is just one sentence.\n"
+"\n"
+"An agent in cmpr is just a shell script that we run, and it takes responsibility for a want or some set of wants.\n"
+"\n"
+"ALL agent communication is via T:\n"
+"  - Agents use `cmpr --event \"...\" --strength N` for ALL results\n"
+"  - NO stdout/stderr for normal operation\n"
+"\n"
+"A typical set of events put into T by an agent might look like:\n"
+"  \"Agent: foo\" 255.\n"
+"  \"We want foo to be working.\" 255.\n"
+"  \"The time is: ...\" 255.\n"
+"  ...\n"
+"\n"
+"The same agent might then later look up (using --memorize and --recall) the same thought, retrieving the timestamp of the most recent check without needing any extra work.\n"
+"\n"
+"Architecture:\n"
+"  Agent = Predicate (Want) + Step Function (CHECK/FIX modes)\n"
+"  \n"
+"  Four decision states:\n"
+"  1. Tracked - Want is recorded but not verified\n"
+"  2. Checked - Can determine if want is satisfied\n"
+"  3. Assisted - Can offer help with fixing\n"
+"  4. Owned - Automatically maintains the want\n"
+"\n"
+"This is about the relationship between an agent and a want.\n"
+"This system is currently in flux with several overlapping approaches in play, so check back soon for more practical documentation.\n"
+"\n"
+"Commands:\n"
+"\n"
+"This is changing too quickly, see cmpr --help and good luck, have fun.\n"
+"\n"
+  ); else return nullspan();
+}
+
+/* #help_text_reports_impl */
+span help_text_reports(span s) {
+  static const char t[] =
+"HTML Reports and Dashboards\n"
+"===========================\n"
+"\n"
+"Commands that generate HTML reports for system visibility.\n"
+"\n"
+"--wants-dashboard\n"
+"  Generate All Wants Dashboard HTML report.\n"
+"  Checks staleness and regenerates if needed (daily).\n"
+"  Creates public_html/wants_dashboard.html\n"
+"  Shows all wants grouped by decision state.\n"
+"  Requires pandoc for HTML conversion.\n"
+"  Example: cmpr --wants-dashboard\n"
+"\n"
+"--event-report\n"
+"  Generate Event System Activity Report HTML.\n"
+"  Checks staleness and regenerates if needed (daily).\n"
+"  Creates public_html/event_activity.html\n"
+"  Shows agent runs, work sessions, and metrics over time.\n"
+"  Requires pandoc for HTML conversion.\n"
+"  Example: cmpr --event-report\n"
+"\n"
+"--export-docs\n"
+"  Generate markdown reports in docs/ directory for GitHub.\n"
+"  Creates:\n"
+"    - docs/wants_dashboard.md\n"
+"    - docs/event_activity.md\n"
+"    - docs/README.md\n"
+"  Always regenerates (no staleness check).\n"
+"  Suitable for committing to version control.\n"
+"  Example: cmpr --export-docs\n"
+"\n"
+"Visualization Generators (execute via --print-code):\n"
+"  #generate_timeline_html      - Event timeline scatter plot\n"
+"  #generate_metric_plot        - Metric tracking over time\n"
+"  #generate_snapshot_stats     - Snapshot statistics\n"
+"  #generate_visualization_index - Navigation page\n"
+"\n"
+"All HTML visualizations are self-contained.\n"
+"Reports contain only metadata, no sensitive data.\n"
+"\n"
+"Note: Current visualizations use Chart.js, but we plan to remove\n"
+"this dependency in favor of a simpler approach.\n"
+"\n";
+  if (empty(s) || span_eq(S("help_text_reports"), s)) return (span){ (u8*)t, (u8*)t + sizeof(t) - 1 };
+  return nullspan();
+}
+
+/* #help_text_wants_impl */
+span help_text_wants(span s) {
+  if (empty(s) || span_eq(S("help_text_wants"), s)) return S(
+"Want Tracking and Decision States\n"
+"==================================\n"
+"\n"
+"Want = statement of desired state, dual to an agent.\n"
+"\n"
+"Commands:\n"
+"\n"
+"--wants\n"
+"  Find and print all want statements in the project.\n"
+"  Searches all files for SN lines starting with \"We want \".\n"
+"  Scans source files, .cmpr/T, and .cmpr/events/*\n"
+"  Example: cmpr --wants\n"
+"\n"
+"--agents-wants\n"
+"  Show relationship between wants and agents.\n"
+"  Displays decision state for each want:\n"
+"    - TRACKED: Want recorded, no agent\n"
+"    - CHECKED: Has CHECK implementation\n"
+"    - ASSISTED: Has CHECK and FIX implementations\n"
+"    - OWNED: Automatic maintenance (future)\n"
+"  \n"
+"  Output grouped by decision state showing:\n"
+"    - Want text\n"
+"    - Block ID containing want\n"
+"    - Agent ID (if any)\n"
+"    - Implementation blocks\n"
+"  \n"
+"  Example: cmpr --agents-wants\n"
+"\n"
+"Want Format (SN notation):\n"
+"  \"We want <description of desired state>\" <strength>.\n"
+"\n"
+"Example want statements:\n"
+"  \"We want all blocks reachable from #root in ≤2 hops\" 255.\n"
+"  \"We want the build to complete without warnings\" 255.\n"
+"\n"
+"Decision State Progression:\n"
+"  tracked → checked → assisted → owned\n"
+"\n"
+"Each state adds capability:\n"
+"  - Checked: Can verify if satisfied\n"
+"  - Assisted: Can help fix violations\n"
+"  - Owned: Automatically maintains\n"
+"\n"
+"Wants establish event spaces (desired state, complement).\n"
+"Agents verify and maintain wants through CHECK and FIX modes.\n"
+"\n"
+); else return nullspan();
+}
+
+/* #help_text_agent_qa_impl */
+span help_text_agent_qa(span s) {
+  if (empty(s) || span_eq(S("help_text_agent_qa"), s)) return S(
+"Agent QA (Manual Quality Assurance)\n"
+"====================================\n"
+"\n"
+"Pipe this help text to an assistant: cmpr --help agent-qa | claude\n"
+"\n"
+"---\n"
+"\n"
+"ASSISTANT INSTRUCTIONS:\n"
+"\n"
+"You are performing manual QA on an agent.\n"
+"\n"
+"NAMING CONVENTIONS:\n"
+"\n"
+"New style (#cmpra_ namespace):\n"
+"  #cmpra_<name>         - Agent hub (want + references, NL only)\n"
+"  #cmpra_<name>_check   - CHECK implementation\n"
+"  #cmpra_<name>_fix     - FIX implementation (optional)\n"
+"\n"
+"Old style:\n"
+"  #agent_<name>         - Agent definition\n"
+"  #<name>_agent_check   - CHECK implementation\n"
+"  #<name>_agent_fix     - FIX implementation\n"
+"\n"
+"Both styles are valid.\n"
+"\n"
+"COMMUNICATION CONTRACT:\n"
+"\n"
+"ALL agent communication is via T (transient memory):\n"
+"  - Agents use `cmpr --event \"...\" --strength N` for ALL results\n"
+"  - NO stdout/stderr for normal operation\n"
+"  - Callers read results via `cmpr --T`\n"
+"\n"
+"Required event patterns:\n"
+"  \"Agent: <name>\" 255.\n"
+"  \"Mode: CHECK|FIX\" 255.\n"
+"  \"Status: <result>\" 255.\n"
+"\n"
+"STEP 1: Check if agent exists\n"
+"  Run: cmpr --agents | grep <agent_name>\n"
+"  \n"
+"  If no match: Agent does not exist. Stop.\n"
+"  If match: Continue.\n"
+"\n"
+"STEP 2: Find agent blocks\n"
+"  Run: cmpr --files-blocks | grep -i <agent_name>\n"
+"  \n"
+"  Look for hub and impl blocks in either naming style.\n"
+"\n"
+"STEP 3: Read agent hub/definition\n"
+"  Run: cmpr --print-comment '#cmpra_<name>' or '#agent_<name>'\n"
+"  \n"
+"  Check for:\n"
+"    - Want statement\n"
+"    - References to CHECK/FIX implementations\n"
+"\n"
+"STEP 4: Verify CHECK implementation\n"
+"  Clear T and run:\n"
+"    cmpr --T0\n"
+"    cmpr --print-code '#<check_block>' | bash\n"
+"    cmpr --T\n"
+"  \n"
+"  Verify output contains required event patterns.\n"
+"\n"
+"STEP 5: Report\n"
+"  - Hub: exists/missing\n"
+"  - CHECK: exists/missing (and uses T communication)\n"
+"  - FIX: exists/missing\n"
+"  - Run command\n"
+"\n"
+"---\n"
+"\n"
+); else return nullspan();
+}
+
+/* #help_text_claude_setup_impl */
+span help_text_claude_setup(span s) {
+  if (empty(s) || span_eq(S("help_text_claude_setup"), s)) return S(
+"This codebase uses cmpr for block-based code organization.\n"
+"\n"
+"**IMPORTANT**: Always use cmpr commands instead of built-in or traditional file-based editing tools.\n"
+"\n"
+"All AI agents and especially Claude Code should begin every session by running this:\n"
+"\n"
+"cmpr --help && cmpr --help basic && cmpr --help blocks && cmpr --count-blocks && cmpr --T && cmpr --print-block '#root'\n"
+"\n"
+); else return nullspan();
+}
+
+/* #agent_script_claude_impl */
+span agent_script_claude(span s) {
+    if (empty(s) || span_eq(S("agent_script_claude"), s)) return S(
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        "\n"
+        "# Initial check\n"
+        "cmpr --T0 2>/dev/null || true\n"
+        "cmpr --event \"Agent: claude\" --strength 255 2>/dev/null || true\n"
+        "if [ ! -f \"CLAUDE.md\" ]; then\n"
+        "    cmpr --event \"Status: CLAUDE.md missing\" --strength 255 2>/dev/null || true\n"
+        "elif grep -q \"## cmpr Block System\" CLAUDE.md; then\n"
+        "    cmpr --event \"Status: ok\" --strength 255 2>/dev/null || true\n"
+        "else\n"
+        "    cmpr --event \"Status: prologue missing\" --strength 255 2>/dev/null || true\n"
+        "fi\n"
+        "cmpr --memorize 2>/dev/null || true\n"
+        "\n"
+        "# Watch and check on changes\n"
+        "echo \"CLAUDE.md\" | entr -ns '\n"
+        "cmpr --T0 2>/dev/null || true\n"
+        "cmpr --event \"Agent: claude\" --strength 255 2>/dev/null || true\n"
+        "if [ ! -f \"CLAUDE.md\" ]; then\n"
+        "    cmpr --event \"Status: CLAUDE.md missing\" --strength 255 2>/dev/null || true\n"
+        "elif grep -q \"## cmpr Block System\" CLAUDE.md; then\n"
+        "    cmpr --event \"Status: ok\" --strength 255 2>/dev/null || true\n"
+        "else\n"
+        "    cmpr --event \"Status: prologue missing\" --strength 255 2>/dev/null || true\n"
+        "fi\n"
+        "cmpr --memorize 2>/dev/null || true\n"
+        "'\n"
+    ); else return nullspan();
+}
 
 /* #get_help_text */
-// Help text data arrays
-
-u8 help_summary_data[] =
-  "Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--query <string>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--sn-filter] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs] [FILE|-]\n"
-  "\n"
-  "For help on available topics: cmpr --help topics\n"
-  "\n"
-  ;
-
-u8 help_topics_data[] =
-  "topics\n"
-  "basic\n"
-  "blocks\n"
-  "editing\n"
-  "search\n"
-  "nl2pl\n"
-  "events\n"
-  "agents\n"
-  "reports\n"
-  "wants\n"
-  "agent-qa\n"
-  "claude-setup\n"
-  "\n"
-  ;
-
-u8 help_basic_data[] =
-  "Basic Commands\n"
-  "==============\n"
-  "\n"
-  "--help [topic]\n"
-  "  Display help information.\n"
-  "  Without topic: list all available topics.\n"
-  "  With topic: show detailed help for that topic.\n"
-  "  Example: cmpr --help events\n"
-  "\n"
-  "--version\n"
-  "  Display version number and build timestamp.\n"
-  "\n"
-  "--init\n"
-  "  Initialize .cmpr/ directory structure in current directory.\n"
-  "  Creates necessary subdirectories and configuration files.\n"
-  "  Cannot be combined with --conf.\n"
-  "\n"
-  "--conf <filepath>\n"
-  "  Use alternate configuration file.\n"
-  "  Specify before other commands to override default .cmpr/conf location.\n"
-  "  Example: cmpr --conf /path/to/custom.conf --print-block '#root'\n"
-  "\n"
-  "--print-conf\n"
-  "  Display current configuration settings.\n"
-  "  Shows all configuration variables and their values.\n"
-  "\n"
-  ;
-
-u8 help_blocks_data[] =
-  "Block Viewing Commands\n"
-  "======================\n"
-  "\n"
-  "--print-block <id>\n"
-  "  Print complete block (both NL comment and PL code parts).\n"
-  "  ID can be block ID like '#root' or one-based index.\n"
-  "  Example: cmpr --print-block '#root'\n"
-  "  Example: cmpr --print-block 1\n"
-  "\n"
-  "--print-comment <id>\n"
-  "  Print only the NL (natural language) comment part of a block.\n"
-  "  Useful for reading documentation without code.\n"
-  "  Example: cmpr --print-comment '#argtable'\n"
-  "\n"
-  "--print-code <id>\n"
-  "  Print only the PL (programming language) code part of a block.\n"
-  "  Useful for extracting executable code.\n"
-  "  Example: cmpr --print-code '#agent_root' | bash\n"
-  "\n"
-  "--expand-block <id>\n"
-  "  Print block with all @blockid references transitively expanded inline.\n"
-  "  Recursively expands references to show complete context.\n"
-  "  Example: cmpr --expand-block '#root'\n"
-  "\n"
-  "--files-blocks\n"
-  "  Print structured list of all files and their blocks.\n"
-  "  Shows file names and block IDs/indices within each file.\n"
-  "  Useful for understanding project structure.\n"
-  "\n"
-  "--print-all\n"
-  "  Print all blocks in the project sequentially.\n"
-  "  Outputs complete content (NL + PL) for every block.\n"
-  "\n"
-  "--count-blocks\n"
-  "  Print total number of blocks in the project.\n"
-  "\n"
-  ;
-
-u8 help_editing_data[] =
-  "Block Editing Commands\n"
-  "======================\n"
-  "\n"
-  "--after <id>\n"
-  "  Insert new block after the specified block ID.\n"
-  "  Reads new block content (NL + PL) from stdin.\n"
-  "  New block is inserted in the same file.\n"
-  "  Example: cat newblock.txt | cmpr --after '#INBOX'\n"
-  "\n"
-  "--replace <id>\n"
-  "  Replace entire block (both NL and PL parts) with content from stdin.\n"
-  "  Completely overwrites existing block.\n"
-  "  Example: cat updated.txt | cmpr --replace '#blockid'\n"
-  "\n"
-  "--replace-comment <id>\n"
-  "  Replace only the NL (comment) part, keeping PL unchanged.\n"
-  "  Use this to update documentation without touching code.\n"
-  "  Example: cat new_comment.txt | cmpr --replace-comment '#blockid'\n"
-  "\n"
-  "--replace-code <id>\n"
-  "  Replace only the PL (code) part, keeping NL unchanged.\n"
-  "  Less preferred than --rewritepl which generates from NL.\n"
-  "  Example: cat new_code.c | cmpr --replace-code '#blockid'\n"
-  "\n"
-  "Standard Workflow:\n"
-  "  1. Edit NL using --replace-comment\n"
-  "  2. Regenerate PL using --rewritepl\n"
-  "  3. Verify with --print-code\n"
-  "  4. Test changes with dist/cmpr\n"
-  "  5. Install when satisfied: sudo make install\n"
-  "\n"
-  "Note: Always prefer editing NL and regenerating PL over directly editing PL.\n"
-  "      Mark blocks \"Manually maintained.\" only when necessary.\n"
-  "\n"
-  ;
-
-u8 help_search_data[] =
-  "Search and Navigation Commands\n"
-  "==============================\n"
-  "\n"
-  "--grep <pattern>\n"
-  "  Search all blocks using POSIX Extended Regular Expression.\n"
-  "  Searches both NL (comment) and PL (code) parts.\n"
-  "  Returns space-separated list of matching block IDs.\n"
-  "  Outputs \"#id\" for NL matches, \"#id:code\" for PL-only matches.\n"
-  "  \n"
-  "  Pattern syntax: POSIX ERE (not JavaScript regex)\n"
-  "  - Use [0-9] instead of \\d\n"
-  "  - Use [a-zA-Z0-9_] instead of \\w\n"
-  "  - Use [[:space:]] instead of \\s\n"
-  "  \n"
-  "  Example: cmpr --grep 'handle.*help'\n"
-  "  Example: cmpr --grep '#[a-z_]+'\n"
-  "\n"
-  "--content-index <search>\n"
-  "  Search for literal string (not regex) across all blocks.\n"
-  "  Returns space-separated list of one-based indices.\n"
-  "  Example: cmpr --content-index 'event_system'\n"
-  "\n"
-  "--files-blocks\n"
-  "  Print structured list of all files and blocks.\n"
-  "  Each line shows either \"file: filename\" or \"Block N: #id\".\n"
-  "  Useful for understanding project structure.\n"
-  "  \n"
-  "  Filter to specific file:\n"
-  "  cmpr --files-blocks | grep -A 1000 'file: spanio.c' | \\\n"
-  "    grep -B 1000 -m 1 '^file:' | head -n -1\n"
-  "\n"
-  "Navigation Pattern:\n"
-  "  1. Start at root: cmpr --print-comment '#root'\n"
-  "  2. Follow references to hubs (2-3 hops to reach any block)\n"
-  "  3. Use --grep only when navigation doesn't work\n"
-  "\n"
-  ;
-
-u8 help_nl2pl_data[] =
-  "Natural Language to Code Generation\n"
-  "===================================\n"
-  "\n"
-  "--rewritepl <id>\n"
-  "  Regenerate PL (code) from NL (comment) using LLM.\n"
-  "  Sends NL part to configured LLM API.\n"
-  "  Replaces PL part with generated code.\n"
-  "  This is the preferred way to update code after changing NL.\n"
-  "  \n"
-  "  Example Workflow:\n"
-  "  1. Edit NL: cat new_nl.txt | cmpr --replace-comment '#blockid'\n"
-  "  2. Generate code: cmpr --rewritepl '#blockid'\n"
-  "  3. Verify: cmpr --print-code '#blockid'\n"
-  "  4. build or test or whatever.\n"
-  "  \n"
-  "  Example: cmpr --rewritepl '#handle_help_topic'\n"
-  "\n"
-  "--prompt <id>\n"
-  "  Print the prompt that would be sent to the LLM for nl2pl conversion.\n"
-  "  Does NOT call the LLM - just shows what prompt would be used.\n"
-  "  Useful for debugging and understanding LLM context.\n"
-  "  Example: cmpr --prompt '#blockid'\n"
-  "  See also --expand.\n"
-  "\n"
-  "Configuration:\n"
-  "  LLM settings are in .cmpr/conf:\n"
-  "  - llm_command: Command to call LLM API\n"
-  "  - llm_model: Model name to use\n"
-  "\n"
-  "NL Precision Principle:\n"
-  "  The nl2pl system generates correct code only when NL is unambiguous.\n"
-  "  Be explicit about:\n"
-  "  - Exact algorithms\n"
-  "  - Data structures  \n"
-  "  - Edge cases\n"
-  "  - What NOT to do\n"
-  "  \n"
-  "  If generated PL is wrong, fix the NL, not the PL.\n"
-  "\n"
-  "Manually Maintained Blocks:\n"
-  "  Add \"Manually maintained.\" as last line of NL comment.\n"
-  "  Only use when you MUST write PL directly.\n"
-  "  Avoid when possible - prefer letting the system generate code.\n"
-  "*/\n"
-  "\n"
-  ;
-
-u8 help_events_data[] =
-  "Event System (Temporal Reasoning)\n"
-  "==================================\n"
-  "\n"
-  "The event system provides temporal reasoning through tracking events\n"
-  "in transient memory (T).\n"
-  "\n"
-  "Core Concepts:\n"
-  "  T - Transient memory (current event state)\n"
-  "  E - Events (strings with associated strength values)\n"
-  "  S - Strength (binary log odds, 0-255 bits of support)\n"
-  "\n"
-  "Commands:\n"
-  "\n"
-  "--T0\n"
-  "  Reset T to empty state.\n"
-  "  Use at start of new work session to clear transient context.\n"
-  "  Example: cmpr --T0\n"
-  "\n"
-  "--event <string> --strength <value>\n"
-  "  Add event to T with specified strength (0-255).\n"
-  "  Events are deduplicated - adding duplicate updates strength.\n"
-  "  Currently only strength 255 is well-supported.\n"
-  "  Example: cmpr --event \"The block id is: #root\" --strength 255\n"
-  "\n"
-  "--T\n"
-  "  Print current T state as SN (strength-notation) lines.\n"
-  "  Format: \"event_string\" strength.\n"
-  "  Example: cmpr --T\n"
-  "\n"
-  "--memorize\n"
-  "  Save current T to timestamped snapshot in .cmpr/events/\n"
-  "  Creates permanent record of current transient state.\n"
-  "  Example: cmpr --memorize\n"
-  "\n"
-  "--recall\n"
-  "  Use current T as query to search memorized snapshots.\n"
-  "  Finds most recent snapshot containing any query event.\n"
-  "  Loads all events from that snapshot into T (associative memory).\n"
-  "  T must be non-empty before calling --recall.\n"
-  "  Example:\n"
-  "    cmpr --T0\n"
-  "    cmpr --event \"The block id is: #foo\" --strength 255\n"
-  "    cmpr --recall\n"
-  "\n"
-  "--snapshots\n"
-  "  List all event snapshots with timestamps and previews.\n"
-  "\n"
-  "--snapshot-view <timestamp>\n"
-  "  View complete contents of specific snapshot.\n"
-  "  Timestamp format: YYYYMMDD-HHMMSS-nanos (from --snapshots)\n"
-  "\n"
-  "Workflow Pattern:\n"
-  "  1. Clear T: cmpr --T0\n"
-  "  2. Set context: cmpr --event \"The block id is: #foo\" --strength 255\n"
-  "  3. Add facts: cmpr --event \"Block is reachable\" --strength 255\n"
-  "  4. Save snapshot: cmpr --memorize\n"
-  "\n"
-  "T is TRANSIENT - meant to be cleared between work sessions.\n"
-  "Snapshots provide HISTORICAL queries via --recall.\n"
-  "\n"
-  ;
-
-u8 help_agents_data[] =
-  "Agent System (Automated Maintenance)\n"
-  "====================================\n"
-  "\n"
-  "Agents are executable blocks that verify and maintain wants (desired states).\n"
-  "\n"
-  "COMMUNICATION CONTRACT:\n"
-  "\n"
-  "ALL agent communication is via T (transient memory):\n"
-  "  - Agents use `cmpr --event \"...\" --strength N` for ALL results\n"
-  "  - NO stdout/stderr for normal operation\n"
-  "  - Callers read results via `cmpr --T`\n"
-  "\n"
-  "Required event patterns:\n"
-  "  \"Agent: <name>\" 255.\n"
-  "  \"Mode: CHECK|FIX\" 255.\n"
-  "  \"Status: <result>\" 255.\n"
-  "  \"<domain-specific facts>\" N.\n"
-  "\n"
-  "Architecture:\n"
-  "  Agent = Predicate (Want) + Step Function (CHECK/FIX modes)\n"
-  "  \n"
-  "  Four decision states:\n"
-  "  1. Tracked - Want is recorded but not verified\n"
-  "  2. Checked - Can determine if want is satisfied\n"
-  "  3. Assisted - Can offer help with fixing\n"
-  "  4. Owned - Automatically maintains the want\n"
-  "\n"
-  "Commands:\n"
-  "\n"
-  "--agents\n"
-  "  List all registered agents in the project.\n"
-  "  Finds blocks matching #agent_* and #cmpra_* patterns.\n"
-  "\n"
-  "--agent-run <agent_name> <mode>\n"
-  "  Execute an agent in CHECK or FIX mode.\n"
-  "  Clears T, runs agent, results appear in T.\n"
-  "\n"
-  "Agent Naming (new style):\n"
-  "  #cmpra_<name>           - Agent hub (want + references)\n"
-  "  #cmpra_<name>_check     - CHECK mode implementation\n"
-  "  #cmpra_<name>_fix       - FIX mode implementation\n"
-  "\n"
-  "Running Agents:\n"
-  "  cmpr --T0                                    # Clear T\n"
-  "  cmpr --print-code '#cmpra_foo_check' | bash  # Run\n"
-  "  cmpr --T                                     # Read results\n"
-  "\n"
-  "See: cmpr --help agent-qa (for QA process)\n"
-  "*/\n"
-  "\n"
-  ;
-
-u8 help_reports_data[] =
-  "HTML Reports and Dashboards\n"
-  "===========================\n"
-  "\n"
-  "Commands that generate HTML reports for system visibility.\n"
-  "\n"
-  "--wants-dashboard\n"
-  "  Generate All Wants Dashboard HTML report.\n"
-  "  Checks staleness and regenerates if needed (daily).\n"
-  "  Creates public_html/wants_dashboard.html\n"
-  "  Shows all wants grouped by decision state.\n"
-  "  Requires pandoc for HTML conversion.\n"
-  "  Example: cmpr --wants-dashboard\n"
-  "\n"
-  "--event-report\n"
-  "  Generate Event System Activity Report HTML.\n"
-  "  Checks staleness and regenerates if needed (daily).\n"
-  "  Creates public_html/event_activity.html\n"
-  "  Shows agent runs, work sessions, and metrics over time.\n"
-  "  Requires pandoc for HTML conversion.\n"
-  "  Example: cmpr --event-report\n"
-  "\n"
-  "--export-docs\n"
-  "  Generate markdown reports in docs/ directory for GitHub.\n"
-  "  Creates:\n"
-  "    - docs/wants_dashboard.md\n"
-  "    - docs/event_activity.md\n"
-  "    - docs/README.md\n"
-  "  Always regenerates (no staleness check).\n"
-  "  Suitable for committing to version control.\n"
-  "  Example: cmpr --export-docs\n"
-  "\n"
-  "Visualization Generators (execute via --print-code):\n"
-  "  #generate_timeline_html      - Event timeline scatter plot\n"
-  "  #generate_metric_plot        - Metric tracking over time\n"
-  "  #generate_snapshot_stats     - Snapshot statistics\n"
-  "  #generate_visualization_index - Navigation page\n"
-  "\n"
-  "All HTML visualizations are self-contained.\n"
-  "Reports contain only metadata, no sensitive data.\n"
-  "\n"
-  "Note: Current visualizations use Chart.js, but we plan to remove\n"
-  "this dependency in favor of a simpler approach.\n"
-  "\n"
-  ;
-
-u8 help_wants_data[] =
-  "Want Tracking and Decision States\n"
-  "==================================\n"
-  "\n"
-  "Want = statement of desired state, dual to an agent.\n"
-  "\n"
-  "Commands:\n"
-  "\n"
-  "--wants\n"
-  "  Find and print all want statements in the project.\n"
-  "  Searches all files for SN lines starting with \"We want \".\n"
-  "  Scans source files, .cmpr/T, and .cmpr/events/*\n"
-  "  Example: cmpr --wants\n"
-  "\n"
-  "--agents-wants\n"
-  "  Show relationship between wants and agents.\n"
-  "  Displays decision state for each want:\n"
-  "    - TRACKED: Want recorded, no agent\n"
-  "    - CHECKED: Has CHECK implementation\n"
-  "    - ASSISTED: Has CHECK and FIX implementations\n"
-  "    - OWNED: Automatic maintenance (future)\n"
-  "  \n"
-  "  Output grouped by decision state showing:\n"
-  "    - Want text\n"
-  "    - Block ID containing want\n"
-  "    - Agent ID (if any)\n"
-  "    - Implementation blocks\n"
-  "  \n"
-  "  Example: cmpr --agents-wants\n"
-  "\n"
-  "Want Format (SN notation):\n"
-  "  \"We want <description of desired state>\" <strength>.\n"
-  "\n"
-  "Example want statements:\n"
-  "  \"We want all blocks reachable from #root in ≤2 hops\" 255.\n"
-  "  \"We want the build to complete without warnings\" 255.\n"
-  "\n"
-  "Decision State Progression:\n"
-  "  tracked → checked → assisted → owned\n"
-  "\n"
-  "Each state adds capability:\n"
-  "  - Checked: Can verify if satisfied\n"
-  "  - Assisted: Can help fix violations\n"
-  "  - Owned: Automatically maintains\n"
-  "\n"
-  "Wants establish event spaces (desired state, complement).\n"
-  "Agents verify and maintain wants through CHECK and FIX modes.\n"
-  "*/\n"
-  "\n"
-  ;
-
-u8 help_agent_qa_data[] =
-  "Agent QA (Manual Quality Assurance)\n"
-  "====================================\n"
-  "\n"
-  "Pipe this help text to an assistant: cmpr --help agent-qa | claude\n"
-  "\n"
-  "---\n"
-  "\n"
-  "ASSISTANT INSTRUCTIONS:\n"
-  "\n"
-  "You are performing manual QA on an agent.\n"
-  "\n"
-  "NAMING CONVENTIONS:\n"
-  "\n"
-  "New style (#cmpra_ namespace):\n"
-  "  #cmpra_<name>         - Agent hub (want + references, NL only)\n"
-  "  #cmpra_<name>_check   - CHECK implementation\n"
-  "  #cmpra_<name>_fix     - FIX implementation (optional)\n"
-  "\n"
-  "Old style:\n"
-  "  #agent_<name>         - Agent definition\n"
-  "  #<name>_agent_check   - CHECK implementation\n"
-  "  #<name>_agent_fix     - FIX implementation\n"
-  "\n"
-  "Both styles are valid.\n"
-  "\n"
-  "COMMUNICATION CONTRACT:\n"
-  "\n"
-  "ALL agent communication is via T (transient memory):\n"
-  "  - Agents use `cmpr --event \"...\" --strength N` for ALL results\n"
-  "  - NO stdout/stderr for normal operation\n"
-  "  - Callers read results via `cmpr --T`\n"
-  "\n"
-  "Required event patterns:\n"
-  "  \"Agent: <name>\" 255.\n"
-  "  \"Mode: CHECK|FIX\" 255.\n"
-  "  \"Status: <result>\" 255.\n"
-  "\n"
-  "STEP 1: Check if agent exists\n"
-  "  Run: cmpr --agents | grep <agent_name>\n"
-  "  \n"
-  "  If no match: Agent does not exist. Stop.\n"
-  "  If match: Continue.\n"
-  "\n"
-  "STEP 2: Find agent blocks\n"
-  "  Run: cmpr --files-blocks | grep -i <agent_name>\n"
-  "  \n"
-  "  Look for hub and impl blocks in either naming style.\n"
-  "\n"
-  "STEP 3: Read agent hub/definition\n"
-  "  Run: cmpr --print-comment '#cmpra_<name>' or '#agent_<name>'\n"
-  "  \n"
-  "  Check for:\n"
-  "    - Want statement\n"
-  "    - References to CHECK/FIX implementations\n"
-  "\n"
-  "STEP 4: Verify CHECK implementation\n"
-  "  Clear T and run:\n"
-  "    cmpr --T0\n"
-  "    cmpr --print-code '#<check_block>' | bash\n"
-  "    cmpr --T\n"
-  "  \n"
-  "  Verify output contains required event patterns.\n"
-  "\n"
-  "STEP 5: Report\n"
-  "  - Hub: exists/missing\n"
-  "  - CHECK: exists/missing (and uses T communication)\n"
-  "  - FIX: exists/missing\n"
-  "  - Run command\n"
-  "\n"
-  "---\n"
-  "\n"
-  "*/\n"
-  "\n"
-  "\n"
-  "\n"
-  ;
-
-u8 help_claude_setup_data[] =
-  "## cmpr basics\n"
-  "\n"
-  "All cmpr state is maintained in .cmpr in your project directory (like .git).\n"
-  "Run cmpr --init to set up .cmpr\n"
-  "In .cmpr/conf is the \"project manifest\" or list of files that cmpr will know about.\n"
-  "You can add all the files in your project or just start with one to try it.\n"
-  "\n"
-  "language: C\n"
-  "file: .cmpr/conf\n"
-  "file: INBOX.c\n"
-  "\n"
-  "Recommended is to create an \"#INBOX\" block; we have ours in INBOX.c\n"
-  "Then any agents that want to drop new blocks into the codebase can use cmpr --after '#INBOX' and you can easily find their work for review.\n"
-  "You can use cmpr via TUI, just run cmpr and use j/k to view your blocks, or with CLI flags as described below.\n"
-  "\n"
-  "## cmpr Block System\n"
-  "\n"
-  "This codebase uses cmpr for block-based code organization.\n"
-  "Each file is divided into discrete \"blocks\" with unique IDs (e.g., #block_name).\n"
-  "\n"
-  "**IMPORTANT**: Always use cmpr commands instead of traditional file tools.\n"
-  "\n"
-  "### Navigation Commands\n"
-  "\n"
-  "cmpr --print-block '#id'    Show entire block (NL + PL)\n"
-  "cmpr --print-comment '#id'  Show only NL comment (documentation)\n"
-  "cmpr --print-code '#id'     Show only PL code (implementation)\n"
-  "cmpr --grep 'pattern'       Search across all blocks\n"
-  "cmpr --files-blocks         List all blocks in the project\n"
-  "\n"
-  "### Editing Commands\n"
-  "\n"
-  "cmpr --replace '#id'        Replace entire block from stdin\n"
-  "cmpr --replace-comment '#id' Replace only NL part from stdin\n"
-  "cmpr --replace-code '#id'   Replace only PL part from stdin\n"
-  "cmpr --after '#id'          Add new block after given block from stdin\n"
-  "\n"
-  "### Navigation Pattern\n"
-  "\n"
-  "Always start from the root block and follow references:\n"
-  "\n"
-  "1. cmpr --print-comment '#root'     Read root block\n"
-  "2. Follow block references (2-3 hops max to reach any code)\n"
-  "3. Use --grep only when navigation fails\n"
-  "\n"
-  "If you cannot reach needed blocks from #root in 2-3 hops, that indicates\n"
-  "a navigation structure problem that should be fixed.\n"
-  "\n"
-  "### Block Structure\n"
-  "\n"
-  "Each block has two parts:\n"
-  "- NL (Natural Language): Documentation/specification in comments\n"
-  "- PL (Programming Language): Implementation code\n"
-  "\n"
-  "You may use cmpr to manage the PL for you, while you maintain the NL, which is the source of truth.\n"
-  "This system is enforced by cmpr --rewritepl '#id' which regenerates the PL using only a simple prompt and the contents of the NL block and any explicit blockrefs, which are expanded recursively.\n"
-  "Using nl2pl is optional, you can also just use the block system by itself, which makes your codebase more navigable.\n"
-  "Note that --rewritepl uses the model configured in .cmpr/conf.\n"
-  "\n"
-  "### Event System (Agent State)\n"
-  "\n"
-  "Agents communicate via T (transient memory):\n"
-  "\n"
-  "cmpr --T0                              Clear T\n"
-  "cmpr --event \"message\" --strength 255  Add event to T\n"
-  "cmpr --T                               Print current T\n"
-  "cmpr --memorize                        Save T snapshot\n"
-  "cmpr --recall                          Load matching snapshot\n"
-  "\n"
-  "Agent pattern for recalling previous state:\n"
-  "  cmpr --T0\n"
-  "  cmpr --event \"Agent: myagent\" --strength 255\n"
-  "  cmpr --recall\n"
-  "  cmpr --T  # now contains events from last run\n"
-  "\n"
-  "\n"
-  ;
-
-// Agent script data arrays
-
-u8 agent_claude_data[] =
-  "#!/bin/bash\n"
-  "set -euo pipefail\n"
-  "\n"
-  "# Initial check\n"
-  "cmpr --T0 2>/dev/null || true\n"
-  "cmpr --event \"Agent: claude\" --strength 255 2>/dev/null || true\n"
-  "if [ ! -f \"CLAUDE.md\" ]; then\n"
-  "    cmpr --event \"Status: CLAUDE.md missing\" --strength 255 2>/dev/null || true\n"
-  "elif grep -q \"## cmpr Block System\" CLAUDE.md; then\n"
-  "    cmpr --event \"Status: ok\" --strength 255 2>/dev/null || true\n"
-  "else\n"
-  "    cmpr --event \"Status: prologue missing\" --strength 255 2>/dev/null || true\n"
-  "fi\n"
-  "cmpr --memorize 2>/dev/null || true\n"
-  "\n"
-  "# Watch and check on changes\n"
-  "echo \"CLAUDE.md\" | entr -ns '\n"
-  "cmpr --T0 2>/dev/null || true\n"
-  "cmpr --event \"Agent: claude\" --strength 255 2>/dev/null || true\n"
-  "if [ ! -f \"CLAUDE.md\" ]; then\n"
-  "    cmpr --event \"Status: CLAUDE.md missing\" --strength 255 2>/dev/null || true\n"
-  "elif grep -q \"## cmpr Block System\" CLAUDE.md; then\n"
-  "    cmpr --event \"Status: ok\" --strength 255 2>/dev/null || true\n"
-  "else\n"
-  "    cmpr --event \"Status: prologue missing\" --strength 255 2>/dev/null || true\n"
-  "fi\n"
-  "cmpr --memorize 2>/dev/null || true\n"
-  "'\n"
-  "\n"
-  "\n"
-  ;
-
 // Available agents list
 char *available_agents[] = {"claude", NULL};
 
-span get_help_text(char *topic) {
-    span s;
-    s.buf = 0;
-    s.end = 0;
-
-    if (!topic) {
-        s.buf = help_summary_data;
-        s.end = s.buf + sizeof(help_summary_data) - 1;
-    } else if (strcmp(topic, "summary") == 0) {
-        s.buf = help_summary_data;
-        s.end = s.buf + sizeof(help_summary_data) - 1;
-    } else if (strcmp(topic, "topics") == 0) {
-        s.buf = help_topics_data;
-        s.end = s.buf + sizeof(help_topics_data) - 1;
-    } else if (strcmp(topic, "basic") == 0) {
-        s.buf = help_basic_data;
-        s.end = s.buf + sizeof(help_basic_data) - 1;
-    } else if (strcmp(topic, "blocks") == 0) {
-        s.buf = help_blocks_data;
-        s.end = s.buf + sizeof(help_blocks_data) - 1;
-    } else if (strcmp(topic, "editing") == 0) {
-        s.buf = help_editing_data;
-        s.end = s.buf + sizeof(help_editing_data) - 1;
-    } else if (strcmp(topic, "search") == 0) {
-        s.buf = help_search_data;
-        s.end = s.buf + sizeof(help_search_data) - 1;
-    } else if (strcmp(topic, "nl2pl") == 0) {
-        s.buf = help_nl2pl_data;
-        s.end = s.buf + sizeof(help_nl2pl_data) - 1;
-    } else if (strcmp(topic, "events") == 0) {
-        s.buf = help_events_data;
-        s.end = s.buf + sizeof(help_events_data) - 1;
-    } else if (strcmp(topic, "agents") == 0) {
-        s.buf = help_agents_data;
-        s.end = s.buf + sizeof(help_agents_data) - 1;
-    } else if (strcmp(topic, "reports") == 0) {
-        s.buf = help_reports_data;
-        s.end = s.buf + sizeof(help_reports_data) - 1;
-    } else if (strcmp(topic, "wants") == 0) {
-        s.buf = help_wants_data;
-        s.end = s.buf + sizeof(help_wants_data) - 1;
-    } else if (strcmp(topic, "agent-qa") == 0) {
-        s.buf = help_agent_qa_data;
-        s.end = s.buf + sizeof(help_agent_qa_data) - 1;
-    } else if (strcmp(topic, "claude-setup") == 0) {
-        s.buf = help_claude_setup_data;
-        s.end = s.buf + sizeof(help_claude_setup_data) - 1;
+span get_help_text(span topic) {
+    if (empty(topic) || span_eq(topic, S("summary"))) {
+        return help_text_summary(nullspan());
+    } else if (span_eq(topic, S("topics"))) {
+        return help_text_topics(nullspan());
+    } else if (span_eq(topic, S("basic"))) {
+        return help_text_basic(nullspan());
+    } else if (span_eq(topic, S("blocks"))) {
+        return help_text_blocks(nullspan());
+    } else if (span_eq(topic, S("editing"))) {
+        return help_text_editing(nullspan());
+    } else if (span_eq(topic, S("search"))) {
+        return help_text_search(nullspan());
+    } else if (span_eq(topic, S("nl2pl"))) {
+        return help_text_nl2pl(nullspan());
+    } else if (span_eq(topic, S("events"))) {
+        return help_text_events(nullspan());
+    } else if (span_eq(topic, S("agents"))) {
+        return help_text_agents(nullspan());
+    } else if (span_eq(topic, S("reports"))) {
+        return help_text_reports(nullspan());
+    } else if (span_eq(topic, S("wants"))) {
+        return help_text_wants(nullspan());
+    } else if (span_eq(topic, S("agent-qa"))) {
+        return help_text_agent_qa(nullspan());
+    } else if (span_eq(topic, S("claude-setup"))) {
+        return help_text_claude_setup(nullspan());
     }
-
-    return s;
+    return nullspan();
 }
 
-span get_agent_script(char *name) {
-    span s;
-    s.buf = 0;
-    s.end = 0;
-
-    if (!name) {
-        return s;
-    } else if (strcmp(name, "claude") == 0) {
-        s.buf = agent_claude_data;
-        s.end = s.buf + sizeof(agent_claude_data) - 1;
+span get_agent_script(span name) {
+    if (empty(name)) {
+        return nullspan();
+    } else if (span_eq(name, S("claude"))) {
+        return agent_script_claude(nullspan());
     }
-
-    return s;
+    return nullspan();
 }
-
 /* #handle_help_topic */
 void handle_help_topic(char *topic) {
-    span s = get_help_text(topic);
+    span s = get_help_text(S(topic));
     
     if (s.buf == 0) {
         fprintf(stderr, "Unknown help topic: %s\n\n", topic ? topic : "");
-        s = get_help_text("topics");
+        s = get_help_text(S("topics"));
         if (s.buf) {
             fwrite(s.buf, 1, s.end - s.buf, stdout);
         }
@@ -7144,7 +7177,6 @@ void handle_help_topic(char *topic) {
     fwrite(s.buf, 1, s.end - s.buf, stdout);
     flush_exit(0);
 }
-
 /* #handle_prompt */
 void handle_prompt(int block_idx) {
     state->curr_block_idx = block_idx;
