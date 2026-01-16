@@ -3917,26 +3917,15 @@ void parse_blocks_lines(int *failure, time_t timestamp, int n_blocks, span rev_c
 
 /* #parse_scs_lines */
 void parse_scs_lines(int *failure, int rev_block_idx, span* rev_cache) {
-    span copy = *rev_cache;
-    int num_lines = 0;
-
-    while (!empty(copy)) {
-        span line = next_line(&copy);
-        if (len(line) == 0) break;
-        num_lines++;
-    }
-
-    checksums cksums = checksums_alloc(num_lines);
-    for (int i = 0; i < num_lines; i++) {
+    while (!empty(*rev_cache)) {
         span line = next_line(rev_cache);
-        checksum cs = scan_checksum(line);
-        checksums_push(&cksums, cs);
+        if (len(line) == 0) break;
     }
 
-    state->revs.revblocks[rev_block_idx].sorted_line_cksums = cksums;
+    state->revs.revblocks[rev_block_idx].sorted_line_cksums.n = -1;
+    state->revs.revblocks[rev_block_idx].sorted_line_cksums.a = NULL;
+    state->revs.revblocks[rev_block_idx].sorted_line_cksums.cap = 0;
 }
-
-
 
 /* #parse_ids_lines */
 void parse_ids_lines(int *failure, int rev_block_idx, span* rev_cache) {
@@ -3984,6 +3973,8 @@ void get_revs_cache_put(checksums* working_set, span bname, span content) {
     size_t projfile_count = state->files.n;
     int best_match_index = -1;
     int max_intersection = -1;
+    
+    checksums_arena_push();
     checksums rev_cksums = sorted_line_checksums(content);
 
     for (size_t i = 0; i < projfile_count; ++i) {
@@ -3993,6 +3984,7 @@ void get_revs_cache_put(checksums* working_set, span bname, span content) {
             best_match_index = i;
         }
     }
+    checksums_arena_pop();
 
     if (best_match_index == -1)
         return;
@@ -4000,7 +3992,6 @@ void get_revs_cache_put(checksums* working_set, span bname, span content) {
     span language = state->files.a[best_match_index].language;
     spans blocks = find_blocks_language(content, language);
 
-    //
     int prev_n_revblocks = state->revs.n_revblocks;
 
     if (state->revs.n_revblocks + blocks.n > state->revs.cap_revblocks) {
@@ -4013,7 +4004,10 @@ void get_revs_cache_put(checksums* working_set, span bname, span content) {
 
     for (size_t i = 0; i < blocks.n; ++i) {
         revblocks[i].contents = blocks.a[i];
-        revblocks[i].sorted_line_cksums = sorted_line_checksums(blocks.a[i]);
+        /* Set sentinel - checksums NOT stored on revblock, loaded lazily */
+        revblocks[i].sorted_line_cksums.n = -1;
+        revblocks[i].sorted_line_cksums.a = NULL;
+        revblocks[i].sorted_line_cksums.cap = 0;
         revblocks[i].ids = ids_for_block(blocks.a[i]);
         assert(revblocks[i].ids.n >= 0);
         revblocks[i].timestamp = timestamp;
@@ -4024,23 +4018,13 @@ void get_revs_cache_put(checksums* working_set, span bname, span content) {
     span cmprdir = state->cmprdir;
     u8* end = out.end;
     u8* ce = cmp.end;
-    //span cache_path = prs("%s/cache/v8/revs/%s", s(cmprdir), s(bname));
-    //char *cache_path;
-    //asprintf(&cache_path, "%.*s/cache/v8/revs/%.*s", len(cmprdir), cmprdir.buf, len(bname), bname.buf);
-    //discard();
-    //cmp.end = end; // this can't be here, must improve the library API
-    //out_sav out_state = out2atp(S(cache_path));
     pr_revinfo(language, blocks, prev_n_revblocks, content);
-    //flush();
-    //out_rst(out_state);
     span output = (span){end, out.end};
     span cache_path = prs("%.*s/cache/v8/revs/%.*s", len(cmprdir), cmprdir.buf, len(bname), bname.buf);
     write_to_file_span(output, cache_path, 1);
     out.end = end;
     cmp.end = ce;
 }
-
-
 
 /* #pr_revinfo */
 void pr_checksum(checksum cksum) {
@@ -4062,18 +4046,19 @@ void pr_revinfo(span language, spans blocks, int prev_n_revblocks, span contents
 
     for (size_t i = 0; i < blocks.n; i++) {
         span block = blocks.a[i];
-        checksum* scs = sorted_line_checksums(block).a;
-        size_t scs_count = sorted_line_checksums(block).n;
-
+        
+        checksums_arena_push();
+        checksums scs = sorted_line_checksums(block);
+        
         prt("\nblock %ld scs\n", i + 1);
-        for (size_t j = 0; j < scs_count; j++) {
-            pr_checksum(scs[j]);
+        for (size_t j = 0; j < scs.n; j++) {
+            pr_checksum(scs.a[j]);
         }
+        checksums_arena_pop();
     }
 
     for (size_t i = 0; i < blocks.n; i++) {
         rev_block rb = state->revs.revblocks[prev_n_revblocks + i];
-        //rev_block rb = blocks.a[i];
         if (rb.ids.n > 0) {
             prt("\nblock %ld ids\n", i + 1);
             for (size_t j = 0; j < rb.ids.n; j++) {
@@ -4081,10 +4066,7 @@ void pr_revinfo(span language, spans blocks, int prev_n_revblocks, span contents
             }
         }
     }
-    //flush();
 }
-
-
 
 /* #prs_checksum */
 span prs_checksum(checksum c) {
@@ -4294,6 +4276,94 @@ void sbv_display(sbv_state* sbvs) {
 
 
 
+/* #load_revblock_checksums */
+checksums load_revblock_checksums(int revblock_idx) {
+    rev_block *rb = &state->revs.revblocks[revblock_idx];
+
+    char timestamp_str[17];
+    time_t t = rb->timestamp;
+    struct tm tm;
+    localtime_r(&t, &tm);
+    strftime(timestamp_str, sizeof(timestamp_str), "%Y%m%d-%H%M%S", &tm);
+
+    span cmprdir = state->cmprdir;
+    span prefix = concat(cmprdir, S("/cache/v8/revs/"));
+    span ts_span = S(timestamp_str); // on stack, so copy to cmp for pointers OK
+    span cache_path = concat(prefix, ts_span);
+
+    if (!readable_file(cache_path)) {
+        checksums empty = { .n = 0, .a = NULL, .cap = 0 };
+        return empty;
+    }
+
+    u8 *old_end = cmp.end;
+    span cache_contents = read_file_into_cmp(cache_path);
+
+    int n_block = 0;
+    for (int i = 0; i <= revblock_idx; ++i) {
+        if (state->revs.revblocks[i].timestamp == rb->timestamp)
+            ++n_block;
+    }
+
+    char section_buf[64];
+    int section_len = snprintf(section_buf, sizeof(section_buf), "block %d scs", n_block);
+    span want_section = S(section_buf);
+    want_section.end = want_section.buf + section_len;
+
+    span cur = cache_contents;
+    span line;
+    for (;;) {
+        if (empty(cur)) break;
+        line = next_line(&cur);
+        if (empty(trim(line))) break; // first blank line = end of header
+    }
+
+    int in_section = 0;
+    int num_lines = 0;
+    span tmpcur = cur;
+    while (!empty(tmpcur)) {
+        span l = next_line(&tmpcur);
+        if (empty(trim(l))) {
+            in_section = 0;
+            continue;
+        }
+        if (!in_section) {
+            if (span_eq(l, want_section)) {
+                in_section = 1;
+            }
+            continue;
+        }
+        ++num_lines;
+    }
+
+    checksums cksums = checksums_alloc(num_lines);
+
+    tmpcur = cur;
+    in_section = 0;
+    int count = 0;
+    while (!empty(tmpcur)) {
+        span l = next_line(&tmpcur);
+        if (empty(trim(l))) {
+            in_section = 0;
+            continue;
+        }
+        if (!in_section) {
+            if (span_eq(l, want_section)) {
+                in_section = 1;
+            }
+            continue;
+        }
+        if (count < num_lines) {
+            checksum c = scan_checksum(l);
+            checksums_push(&cksums, c);
+            ++count;
+        }
+    }
+
+    cmp.end = old_end;
+    return cksums;
+}
+
 /* #sbv_populate */
 void sbv_populate(sbv_state* sbvs) {
     int i, max_idx = sbvs->max_index;
@@ -4308,7 +4378,7 @@ void sbv_populate(sbv_state* sbvs) {
             }
         } else {
             for (i = sbvs->revblock_indices[max_idx] + 1; i < state->revs.n_revblocks; i++) {
-                if (rev_block_match(sbvs, &state->revs.revblocks[i])) {
+                if (rev_block_match(sbvs, i)) {
                     sbvs->revblock_indices[++sbvs->max_index] = i;
                     return;
                 }
@@ -4329,7 +4399,9 @@ int block_id_match(spans curr_ids, spans rev_ids) {
     return 0;
 }
 
-int rev_block_match(sbv_state* sbvs, rev_block* current_revblock) {
+int rev_block_match(sbv_state* sbvs, int revblock_idx) {
+    rev_block* current_revblock = &state->revs.revblocks[revblock_idx];
+    
     for (int i = 0; i <= sbvs->max_index; i++) {
         if (span_eq(current_revblock->contents, state->revs.revblocks[sbvs->revblock_indices[i]].contents)) {
             return 0;
@@ -4338,12 +4410,24 @@ int rev_block_match(sbv_state* sbvs, rev_block* current_revblock) {
     if (block_id_match(sbvs->curr_block_ids, current_revblock->ids)) {
         return 1;
     }
+    
     int curr_uniq = sbvs->sorted_line_cksums.n;
-    int rev_uniq = current_revblock->sorted_line_cksums.n;
-    int intersection = cksums_intersection(sbvs->sorted_line_cksums, current_revblock->sorted_line_cksums);
+    int rev_uniq;
+    int intersection;
+    
+    if (current_revblock->sorted_line_cksums.n == -1) {
+        checksums_arena_push();
+        checksums rev_cksums = load_revblock_checksums(revblock_idx);
+        rev_uniq = rev_cksums.n;
+        intersection = cksums_intersection(sbvs->sorted_line_cksums, rev_cksums);
+        checksums_arena_pop();
+    } else {
+        rev_uniq = current_revblock->sorted_line_cksums.n;
+        intersection = cksums_intersection(sbvs->sorted_line_cksums, current_revblock->sorted_line_cksums);
+    }
+    
     return (curr_uniq > 8 && rev_uniq > 8 && intersection > 8);
 }
-
 
 /* #select_block_version */
 void select_block_version() {
