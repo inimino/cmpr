@@ -174,6 +174,7 @@ int span_cmp(span s1, span s2) {
 }
 
 span S(char *s) {
+  if (!s) return (span){0,0};
   span ret = {(u8*)s, (u8*)s + strlen(s) };
   return ret;
 }
@@ -3336,6 +3337,83 @@ void block_id_jump() {
 }
 
 
+/* #refs_for_block */
+spans refs_for_block(span block) {
+    spans refs = spans_alloc(8);
+    span top = next_line(&block);
+
+    // Top line tokens
+    span tokens = top;
+    while (!empty(tokens)) {
+        // skip leading whitespace
+        while (!empty(tokens) && isspace(*tokens.buf)) advance1(&tokens);
+        if (empty(tokens)) break;
+        // find next whitespace/token end
+        u8* start = tokens.buf;
+        u8* p = start;
+        while (p < tokens.end && !isspace(*p)) p++;
+        span tok = (span){start, p};
+        if (!empty(tok) && *tok.buf == '@')
+            spans_push(&refs, tok);
+        tokens.buf = p;
+        // No advance1 for whitespace here, loop'll skip ws next round
+    }
+
+    // Remaining lines
+    while (!empty(block)) {
+        span line = next_line(&block);
+        if (len(line) >= 1 && *line.buf == '@') {
+            if (!(len(line) >= 3 && line.buf[0] == '@' && line.buf[1] == '-' && isspace(line.buf[2]))) {
+                // Extract first whitespace-separated token
+                u8* start = line.buf, *p = line.buf;
+                while (p < line.end && !isspace(*p)) p++;
+                spans_push(&refs, (span){start, p});
+            }
+        }
+    }
+    return refs;
+}
+
+/* #referrers_to_block */
+spans referrers_to_block(int block_idx) {
+    spans result = spans_alloc(8);
+    span block = state->blocks.a[block_idx];
+    spans our_ids = ids_for_block(block);
+    for (int i = 0; i < state->blocks.n; i++) {
+        if (i == block_idx) continue;
+        spans refs = refs_for_block(state->blocks.a[i]);
+        for (int j = 0; j < refs.n; j++) {
+            span ref = refs.a[j];
+            if (len(ref) < 2 || ref.buf[0] != '@') continue;
+            span bare = ref;
+            advance1(&bare); // skip '@'
+            int colon = find_char(bare, ':');
+            if (colon >= 0) bare = first_n(bare, colon);
+            for (int k = 0; k < our_ids.n; k++) {
+                span id = our_ids.a[k];
+                if (len(id) < 2 || id.buf[0] != '#') continue;
+                span our_id_bare = id; 
+                advance1(&our_id_bare); // skip '#'
+                if (span_eq(bare, our_id_bare)) {
+                    // get the first id for this referrer block
+                    spans referrer_ids = ids_for_block(state->blocks.a[i]);
+                    if (referrer_ids.n > 0)
+                        spans_push(&result, referrer_ids.a[0]);
+                    break;
+                }
+            }
+        }
+    }
+    return result;
+}
+
+/* #block_refs_jump */
+void block_refs_jump() {
+    if (state->curr_block_idx < 0) return;
+    int idx = refs_menu(state->curr_block_idx);
+    if (idx != -1) set_current_block(idx);
+}
+
 /* #get_revdir */
 span get_revdir() {
     static char buf[2048] = {0};
@@ -3967,6 +4045,127 @@ restore:
     return ret;
 }
 
+
+/* #refs_menu */
+int refs_menu(int block_idx) {
+    span block = state->blocks.a[block_idx];
+    span blockid = id_for_block(block);
+    spans outs = refs_for_block(block);
+    spans ins = referrers_to_block(block_idx);
+
+    int num_out = outs.n;
+    int num_in = ins.n;
+    int num_total = num_out + num_in;
+    if(num_total == 0) {
+        prt("no references\n");
+        flush();
+        getkey();
+        return -1;
+    }
+    int sel = 0;
+
+    for(;;) {
+        clear_display();
+        prt("References for ");
+        wrs(blockid);
+        terpri();
+        terpri();
+        for(int i=0; i<num_out; i++) {
+            if(sel == i) set_highlight();
+            prt("  ");
+            wrs(outs.a[i]);
+            if(sel == i) reset_highlight();
+            terpri();
+        }
+        if(num_out > 0 && num_in > 0) {
+            if(sel == num_out) set_highlight();
+            prt("  ...");
+            if(sel == num_out) reset_highlight();
+            terpri();
+        }
+        for(int i=0; i<num_in; i++) {
+            int index = num_out + ((num_out>0&&num_in>0)?1:0) + i; // account for possible divider
+            int sel_index = (num_out>0&&num_in>0)?(sel-num_out-1):(sel-num_out);
+            if(num_out>0&&num_in>0) {
+                if(sel == (num_out+1+i)) set_highlight();
+            } else {
+                if(sel == (num_out+i)) set_highlight();
+            }
+            prt("  ");
+            wrs(ins.a[i]);
+            if(num_out>0&&num_in>0) {
+                if(sel == (num_out+1+i)) reset_highlight();
+            } else {
+                if(sel == (num_out+i)) reset_highlight();
+            }
+            terpri();
+        }
+        // push nav hint to bottom
+        int lines_used = 2 + num_out + ((num_out>0&&num_in>0)?1:0) + num_in + 1;
+        int scr_rows = state->terminal_rows ? state->terminal_rows : 24;
+        for(int i=lines_used; i<scr_rows-2; i++) terpri();
+        prt("j/k:move  @:drill  enter:jump  q:cancel");
+        flush();
+
+        int k = getkey();
+        if(k == 'q' || k == 27) return -1;
+        if(k == '\n' || k == '\r') {
+            // selection to block idx
+            if(sel < num_out) {
+                span ref = outs.a[sel];
+                // skip '@', handle colon
+                span have = ref;
+                advance1(&have);
+                int col_idx = find_char(have, ':');
+                span id = col_idx<0 ? have : first_n(have,col_idx);
+                int idx = block_by_id(id);
+                if(idx != -1) return idx;
+            } else {
+                int in_idx = sel - num_out;
+                if(num_out>0&&num_in>0) in_idx--; // adjust for divider
+                if(in_idx >= 0 && in_idx < num_in) {
+                    span ref = ins.a[in_idx];
+                    // ref has leading '#', skip it
+                    span have = ref;
+                    if(!empty(have) && have.buf[0]=='#') advance1(&have);
+                    int idx = block_by_id(have);
+                    if(idx != -1) return idx;
+                }
+            }
+        }
+        if((k == 'j' || k == ARROW_D)) {
+            int last = num_total-1;
+            if(num_out>0&&num_in>0) last++; // for divider
+            if(sel < last) sel++;
+        }
+        if((k == 'k' || k == ARROW_U)) {
+            if(sel > 0) sel--;
+        }
+        if(k == '@') {
+            int sub_idx = -1;
+            if(sel < num_out) {
+                span ref = outs.a[sel];
+                span have = ref;
+                advance1(&have);
+                int col_idx = find_char(have, ':');
+                span id = col_idx<0 ? have : first_n(have,col_idx);
+                sub_idx = block_by_id(id);
+            } else {
+                int in_idx = sel - num_out;
+                if(num_out>0&&num_in>0) in_idx--;
+                if(in_idx >= 0 && in_idx < num_in) {
+                    span ref = ins.a[in_idx];
+                    if(!empty(ref) && ref.buf[0]=='#') advance1(&ref);
+                    sub_idx = block_by_id(ref);
+                }
+            }
+            if(sub_idx != -1) {
+                int ret = refs_menu(sub_idx);
+                if(ret != -1) return ret;
+            }
+        }
+    }
+}
 
 /* #sbv_display */
 void sbv_display(sbv_state* sbvs) {
@@ -4665,6 +4864,9 @@ void handle_keystroke(char input) {
         case '#':
             block_id_jump();
             break;
+        case '@':
+            block_refs_jump();
+            break;
         case '?':
             keyboard_help();
             break;
@@ -4677,10 +4879,6 @@ void handle_keystroke(char input) {
             break;
     }
 }
-
-
-
-
 /* #keyboard_help */
 void keyboard_help() {
     clear_display();
@@ -4700,6 +4898,7 @@ void keyboard_help() {
     //prt("v    - Toggle visual selection mode\n");
     prt("/    - Enter search mode\n");
     prt("#    - Open block id jump list\n");
+    prt("@    - Open block references jump list\n");
     prt(":    - Enter ex command line\n");
     prt("n    - Repeat search forward\n");
     prt("N    - Repeat search backward\n");
@@ -4710,7 +4909,6 @@ void keyboard_help() {
     flush();
     getch();
 }
-
 /* #handle_jkgG */
 void handle_j() {
     if (state->curr_file_idx == -1) return;
@@ -5424,7 +5622,8 @@ void check_dirs() {
         S("cache/v8/"),
         S("cache/v8/revs/"),
         S("outputs/"),
-        S("events/")
+        S("events/"),
+        S("sync/")
     };
     
     char buffer[1024];
@@ -5434,8 +5633,6 @@ void check_dirs() {
         mkdir(buffer, 0777);
     }
 }
-
-
 /* #check_conf_vars */
 void check_conf_vars() {
     int confChanged = 0;
@@ -5665,70 +5862,168 @@ void handle_edited_file(char *filename) {
 }
 
 
-/* #new_rev */
-void new_rev(span tmp_filename, int file_index) {
-    span dir = state->cmprdir;
-    time_t now = time(NULL);
-    struct tm *timeinfo = localtime(&now);
-    char timestamp[16];
-    strftime(timestamp, sizeof(timestamp), "%Y%m%d-%H%M%S", timeinfo);
-    
-    span rev_path = concat(concat(dir, S("/revs/")), S(timestamp));
-    prt("writing new rev %.*s\n", len(rev_path), rev_path.buf);
-    write_to_file_span(state->files.a[file_index].contents, rev_path, 1);
-    
-    update_projfile(file_index, tmp_filename, rev_path);
+/* #compute_file_checksum */
+checksum compute_file_checksum(span path) {
+    if (!readable_file(path)) {
+        checksum c = { .__u = 0 };
+        return c;
+    }
+    span content = read_file_into_cmp(path);
+    return selected_checksum(content);
 }
 
+/* #checksum_is_known */
+int checksum_is_known(checksum cs) {
+    span hex = prs_checksum(cs);
+    span path = concat(state->cmprdir, S("sync/known-checksums"));
+    if (!readable_file(path)) return 0;
+    span file = read_file_into_cmp(path);
+    span lines = file;
+    while (!empty(lines)) {
+        span line = next_line(&lines);
+        if (starts_with(line, hex)) return 1;
+    }
+    return 0;
+}
 
+/* #replace_known_checksum */
+void replace_known_checksum(checksum old_cs, checksum new_cs, span filename) {
+    char path_buf[PATH_MAX];
+    s_buffer(path_buf, PATH_MAX, concat(state->cmprdir, S("sync/known-checksums")));
+    span path = S(path_buf);
+
+    char old_hex_buf[17], new_hex_buf[17];
+    s_buffer(old_hex_buf, sizeof(old_hex_buf), prs_checksum(old_cs));
+    s_buffer(new_hex_buf, sizeof(new_hex_buf), prs_checksum(new_cs));
+    span old_hex = S(old_hex_buf);
+    span new_hex = S(new_hex_buf);
+
+    span file_content = nullspan();
+    int has_content = 0;
+    if (readable_file(path)) {
+        file_content = read_file_into_cmp(path);
+        has_content = 1;
+    }
+
+    out_sav sav = out2cmp();
+    u8* new_start = cmp.end;
+
+    if (has_content) {
+        span lines = file_content;
+        while (!empty(lines)) {
+            span ln = next_line(&lines);
+            int write_line = 1;
+            if (old_cs.__u != 0) {
+                if (starts_with(ln, old_hex)) write_line = 0;
+            }
+            if (write_line) {
+                wrs(ln);
+                terpri();
+            }
+        }
+    }
+
+    wrs(new_hex);
+    w_char('\t');
+    wrs(filename);
+    terpri();
+
+    span new_content = (span){ new_start, cmp.end };
+    write_to_file_span(new_content, path, 1);
+    out_rst(sav);
+}
+
+/* #save_external_rev */
+void save_external_rev(int file_index, struct timespec ts) {
+    span file_path = state->files.a[file_index].path;
+    span file_contents = read_file_into_cmp(file_path);
+    span rev_path = unique_rev_path(ts);
+    write_to_file_span(file_contents, rev_path, 1);
+    prt("Detected external changes to %.*s, saving as rev %.*s\n",
+        (int)len(file_path), file_path.buf,
+        (int)len(rev_path), rev_path.buf);
+}
+
+/* #unique_rev_path */
+span unique_rev_path(struct timespec ts) {
+    char tsbuf[32];
+    struct tm tm;
+    localtime_r(&ts.tv_sec, &tm);
+    snprintf(tsbuf, sizeof(tsbuf), "%04d%02d%02d-%02d%02d%02d",
+             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+             tm.tm_hour, tm.tm_min, tm.tm_sec);
+    span prefix = concat(state->cmprdir, S("/revs/"));
+    span ts_span = S(tsbuf);
+    span base_path = concat(prefix, ts_span);
+    char pathbuf[PATH_MAX];
+    s_buffer(pathbuf, sizeof(pathbuf), base_path);
+    if (access(pathbuf, F_OK) != 0) return base_path;
+
+    int divisors[] = {100000000, 10000000, 1000000, 100000, 10000, 1000, 100, 10, 1};
+    u64 nsec = ts.tv_nsec;
+    char frac[16] = ".";
+    int k = 1;
+    for (int i = 0; i < 9; ++i) {
+        frac[k++] = '0' + (nsec / divisors[i]) % 10;
+        frac[k] = 0;
+        span path_span = prs("%s%s", tsbuf, frac);
+        span full_span = concat(prefix, path_span);
+        s_buffer(pathbuf, sizeof(pathbuf), full_span);
+        if (access(pathbuf, F_OK) != 0) return full_span;
+    }
+    return nullspan();
+}
+
+/* #new_rev */
+void new_rev(span tmp_filename, int file_index) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    span rev_path = unique_rev_path(ts);
+    prt("writing new rev %.*s\n", len(rev_path), rev_path.buf);
+    write_to_file_span(state->files.a[file_index].contents, rev_path, 1);
+    update_projfile(file_index, tmp_filename, rev_path);
+}
 
 /* #update_projfile */
 void update_projfile(int file_index, span tmp_filename, span rev_path) {
     span projfile_path = state->files.a[file_index].path;
-    char projfile_path_str[2048];
-    s_buffer(projfile_path_str, sizeof(projfile_path_str), projfile_path);
-
-    char rev_path_str[2048];
-    s_buffer(rev_path_str, sizeof(rev_path_str), rev_path);
-
+    char projfile_buf[PATH_MAX];
+    s_buffer(projfile_buf, PATH_MAX, projfile_path);
     struct stat file_stat;
-    if (stat(projfile_path_str, &file_stat) == 0) {
-        char backup_path[2053];
-        snprintf(backup_path, sizeof(backup_path), "%s.bak", projfile_path_str);
-        if (rename(projfile_path_str, backup_path) != 0) {
-            prt("Error backing up file %s: %s\n", projfile_path_str, strerror(errno));
-            flush();
-            exit(1);
-        }
-    } else {
-        prt("Error accessing file %s: %s\n", projfile_path_str, strerror(errno));
-        flush();
-        exit(1);
+    if (stat(projfile_buf, &file_stat) != 0) {
+        prt("stat failed on %.*s: %s\n", len(projfile_path), projfile_path.buf, strerror(errno));
+        flush_exit(1);
     }
+    checksum old_checksum = compute_file_checksum(projfile_path);
+    int known = 0;
+    if (old_checksum.__u != 0)
+        known = checksum_is_known(old_checksum);
+    if (old_checksum.__u != 0 && !known)
+        save_external_rev(file_index, file_stat.st_ctim);
 
-    if (copy_file(rev_path_str, projfile_path_str) != 0) {
-        prt("Error copying file from %s to %s: %s\n", rev_path_str, projfile_path_str, strerror(errno));
-        flush();
-        exit(1);
+    char revpath_buf[PATH_MAX];
+    s_buffer(revpath_buf, PATH_MAX, rev_path);
+    int copy_ret = copy_file(revpath_buf, projfile_buf);
+    if (copy_ret < 0) {
+        prt("copy_file failed (%d) %.*s -> %.*s: %s\n", copy_ret, len(rev_path), rev_path.buf, len(projfile_path), projfile_path.buf, strerror(errno));
+        flush_exit(1);
     }
-
-    if (chmod(projfile_path_str, file_stat.st_mode) != 0) {
-        prt("Error setting permissions on file %s: %s\n", projfile_path_str, strerror(errno));
-        flush();
-        exit(1);
+    if (chmod(projfile_buf, file_stat.st_mode) != 0) {
+        prt("chmod failed on %.*s: %s\n", len(projfile_path), projfile_path.buf, strerror(errno));
+        flush_exit(1);
     }
+    checksum new_checksum = compute_file_checksum(projfile_path);
+    replace_known_checksum(old_checksum, new_checksum, projfile_path);
 
     if (!empty(tmp_filename)) {
-        char tmp_filename_str[2048];
-        s_buffer(tmp_filename_str, sizeof(tmp_filename_str), tmp_filename);
-        if (unlink(tmp_filename_str) != 0) {
-            prt("Error removing temporary file %s: %s\n", tmp_filename_str, strerror(errno));
-            flush();
-            exit(1);
+        char tmp_buf[PATH_MAX];
+        s_buffer(tmp_buf, PATH_MAX, tmp_filename);
+        if (unlink(tmp_buf) != 0) {
+            prt("unlink failed for %.*s: %s\n", len(tmp_filename), tmp_filename.buf, strerror(errno));
+            flush_exit(1);
         }
     }
 }
-
 
 /* #gpt_message */
 json gpt_message(span role, span message) {
