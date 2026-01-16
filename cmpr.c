@@ -1469,12 +1469,24 @@ typedef struct ui_state {
     spans outputs_filenames;
     event_entries events;
     span manual_filename;
+    span open_block_id;
+    int count_prefix;
     #define X(name) span name;
     CONFIG_FIELDS
     #undef X
 } ui_state;
 
 ui_state* state;
+/* #parse_int */
+int parse_int(span s) {
+    if (empty(s) || !isdigit(*s.buf)) {
+        prt("Error: initial characters are not digits\n");
+        flush();
+        exit(1);
+    }
+    return atoi((char *)s.buf);
+}
+
 
 
 /* #events_functions */
@@ -1672,74 +1684,124 @@ void event_query(span event_str) {
 }
 
 /* #event_recall */
-void event_recall() {
-    event_entries query = {0};
-    for (size_t i = 0; i < (size_t)state->events.n; i++) {
-        if (state->events.a[i].strength == 255) {
-            event_entry e;
-            e.event_str = state->events.a[i].event_str;
-            e.strength = state->events.a[i].strength;
-            event_entries_push(&query, e);
+void event_recall(span after_ts, span before_ts, int chronological) {
+    span events_dir = prs("%s/events", s(state->cmprdir));
+    spans files = dir_listing(events_dir);
+    if (files.n == 0) {
+        prt("No memories found in "); wrs(events_dir); terpri(); flush_exit(1);
+    }
+
+    // Filter files to those matching timestamp format
+    spans candidates = spans_alloc(files.n);
+    for (size_t i = 0; i < files.n; i++) {
+        span fname = files.a[i];
+        if (len(fname) < 15) continue; // too short for "YYYYMMDD-HHMMSS"
+        // Timestamp and nanoseconds, e.g. "20240307-142159-123456789"
+        if (!(isdigit(fname.buf[0]) && isdigit(fname.buf[1]) && isdigit(fname.buf[2]) && isdigit(fname.buf[3]) &&
+              isdigit(fname.buf[4]) && isdigit(fname.buf[5]) && isdigit(fname.buf[6]) && isdigit(fname.buf[7]) &&
+              fname.buf[8] == '-' &&
+              isdigit(fname.buf[9]) && isdigit(fname.buf[10]) && isdigit(fname.buf[11]) &&
+              isdigit(fname.buf[12]) && isdigit(fname.buf[13]) && isdigit(fname.buf[14]))) continue;
+        // after_ts/before_ts filtering
+        int after_ok = 1;
+        int before_ok = 1;
+        if (len(after_ts)) {
+            if (len(fname) < len(after_ts) || span_cmp(first_n(fname, len(after_ts)), after_ts) <= 0) after_ok = 0;
+        }
+        if (len(before_ts)) {
+            if (len(fname) < len(before_ts) || span_cmp(first_n(fname, len(before_ts)), before_ts) >= 0) before_ok = 0;
+        }
+        if (after_ok && before_ok)
+            spans_push(&candidates, fname);
+    }
+    if (candidates.n == 0) {
+        prt("No memories match timestamp criteria."); terpri(); flush_exit(1);
+    }
+
+    if (!chronological) { // newest to oldest
+        // Assume dir_listing sorts; reverse order
+        for (size_t i = 0, j = candidates.n-1; i < j; i++, j--) {
+            span t = candidates.a[i];
+            candidates.a[i] = candidates.a[j];
+            candidates.a[j] = t;
         }
     }
 
-    if (query.n == 0) {
-        prt("Cannot recall with empty query (no 255-strength events in T).\n");
-        flush_exit(1);
+    // Build set of 255-strength events in T
+    spans wanted = spans_alloc(state->events.n);
+    for (int i = 0; i < state->events.n; i++) {
+        if (state->events.a[i].strength == 255) {
+            spans_push(&wanted, state->events.a[i].event_str);
+        }
     }
 
-    if (T_debug_enabled()) T_debug_print_events("recall: query (255 only)");
-
-    span events_dir = prs("%.*s/events", len(state->cmprdir), state->cmprdir.buf);
-    spans files = dir_listing(events_dir);
-
-    if (files.n == 0) {
-        prt("No memorized snapshots found.\n");
-        flush_exit(1);
-    }
-
-    if (T_debug_enabled()) fprintf(stderr, "[T-debug] recall: searching %zu snapshots\n", files.n);
-
-    for (int i = (int)files.n - 1; i >= 0; i--) {
-        span snapshot_path = prs("%.*s/%.*s", len(events_dir), events_dir.buf, len(files.a[i]), files.a[i].buf);
-        span content = read_whole_file(snapshot_path);
-        if (empty(content)) continue;
-
-        event_entries saved = state->events;
+    // If wanted set empty, "earliest or most recent" memory
+    if (wanted.n == 0) {
+        span fname = candidates.a[0];
+        span memfile = prs("%s/%s", s(events_dir), s(fname));
+        span content = read_file_into_cmp(memfile);
         state->events.n = 0;
+        event_parse_sn(content);
+        event_save_T();
+        prt("Loaded memory "); wrs(fname); terpri();
+        flush();
+        return;
+    }
 
-        event_parse_content(content);
+    // For each memory, check if all wanted events (as 255-strength) exist in that memory
+    for (size_t i = 0; i < candidates.n; i++) {
+        span fname = candidates.a[i];
+        span memfile = prs("%s/%s", s(events_dir), s(fname));
+        span content = read_file_into_cmp(memfile);
 
-        event_entries snapshot = state->events;
-        state->events = saved;
-
+        // Parse file into a spans of event_strs with strength 255
+        spans mem255 = spans_alloc(32);
+        span temp = content;
+        while (!empty(temp)) {
+            span line = head_line(&temp);
+            span trimmed = trim(line);
+            if (empty(trimmed)) continue;
+            if (trimmed.buf[0] != '"') continue;
+            // Find last '" <digits>.' backwards
+            u8 *p = trimmed.end-1;
+            // look for '.'
+            while (p > trimmed.buf && *p != '.') p--;
+            if (p <= trimmed.buf) continue;
+            // find first digit before '.'
+            u8 *digits_start = p-1;
+            while (digits_start >= trimmed.buf && isdigit(*digits_start)) digits_start--;
+            digits_start++;
+            if (digits_start > p) continue;
+            // The quoted event string should end with '"' before the space before digits_start
+            if (digits_start <= trimmed.buf+1) continue;
+            if (*(digits_start-1) != ' ' || *(digits_start-2) != '"') continue;
+            span event = (span){trimmed.buf+1, digits_start-2};
+            span digits = (span){digits_start, p};
+            int val = parse_int(digits);
+            if (val == 255)
+                spans_push(&mem255, event);
+        }
+        // Check if ALL wanted are in mem255.
         int all_found = 1;
-        for (size_t qi = 0; qi < (size_t)query.n; qi++) {
-            int found = 0;
-            for (size_t si = 0; si < (size_t)snapshot.n; si++) {
-                if (span_eq(query.a[qi].event_str, snapshot.a[si].event_str)) {
-                    found = 1;
-                    break;
-                }
-            }
-            if (!found) {
+        for (size_t k = 0; k < wanted.n; k++) {
+            if (index_of(wanted.a[k], mem255) == -1) {
                 all_found = 0;
                 break;
             }
         }
-
         if (all_found) {
-            state->events = snapshot;
+            // Load this memory into T
+            state->events.n = 0;
+            event_parse_sn(content);
             event_save_T();
-            if (T_debug_enabled()) T_debug_print_events("recall: loaded snapshot into T");
+            prt("Loaded memory "); wrs(fname); terpri();
+            flush();
             return;
         }
     }
 
-    prt("No memorized snapshot contains all query events.\n");
-    flush_exit(1);
+    prt("No memory containing all current 255-strength events found."); terpri(); flush_exit(1);
 }
-
 
 /* #event_parse_sn */
 void event_parse_sn(span content) {
@@ -1998,6 +2060,16 @@ void read_(int argc, char** argv) {
     check_dirs();
     event_load_T();
     get_code();
+
+    // Handle open at block (cmpr #blockid)
+    if (!empty(state->open_block_id)) {
+        int idx = block_from_arg((char*)state->open_block_id.buf);
+        if (idx < 0 || idx >= state->blocks.n) {
+            prt("Failed to open %.*s\n", len(state->open_block_id), state->open_block_id.buf);
+            flush_exit(1);
+        }
+        state->curr_block_idx = idx;
+    }
 }
 
 /* #call_llm */
@@ -2331,6 +2403,7 @@ int ind_conf = 0;
 	int ind_query = 0;
 	int ind_memorize = 0;
 	int ind_recall = 0;
+	int ind_recall_first = 0;
 	int ind_T = 0;
 	int ind_map_error = 0;
 	int ind_test_block_map = 0;
@@ -2346,6 +2419,7 @@ int ind_conf = 0;
 	int ind_log_stochastic_count_joint = 0;
 	int ind_install_agent = 0;
 	int ind_file_argument = 0;
+	int ind_open_block = 0;
 
 	char *conf_filepath = NULL;
 	char *help_topic = NULL;
@@ -2359,6 +2433,7 @@ int ind_conf = 0;
 	char *arg_rewritepl = NULL;
 	char *arg_prompt = NULL;
 	char *arg_after = NULL;
+	char *arg_before = NULL;
 	char *arg_replace = NULL;
 	char *arg_replace_comment = NULL;
 	char *arg_replace_code = NULL;
@@ -2371,163 +2446,202 @@ int ind_conf = 0;
 	char *arg_learn_es2 = NULL;
 	char *arg_install_agent = NULL;
 	char *file_argument = NULL;
-	
+	char *arg_open_block = NULL;
+
 	int action_arg = 0;
-
-
 /* #handle_args_3 */
 for (int i = 1; i < argc; i++) {
-		char *arg = argv[i];
-		
-		if (strcmp(arg, "--help") == 0) {
-			ind_help = 1;
-			// Check if next argument exists and doesn't start with "--"
-			if (i + 1 < argc && argv[i + 1][0] != '-') {
-				help_topic = argv[++i];
-			}
-		} else if (strcmp(arg, "--version") == 0) {
-			ind_version = 1;
-		} else if (strcmp(arg, "--init") == 0) {
-			ind_init = 1;
-		} else if (strcmp(arg, "--conf") == 0) {
-			ind_conf = 1;
-			if (i + 1 >= argc) { prt("Missing <file> argument for --conf\n"); flush_exit(1); }
-			conf_filepath = argv[++i];
-		} else if (strcmp(arg, "--print-conf") == 0) {
-			ind_print_conf = 1;
-		} else if (strcmp(arg, "--print-block") == 0) {
-			ind_print_block = 1;
-			if (i + 1 >= argc) { prt("Missing <id> argument for --print-block\n"); flush_exit(1); }
-			arg_print_block = argv[++i];
-		} else if (strcmp(arg, "--print-comment") == 0) {
-			ind_print_comment = 1;
-			if (i + 1 >= argc) { prt("Missing <id> argument for --print-comment\n"); flush_exit(1); }
-			arg_print_comment = argv[++i];
-		} else if (strcmp(arg, "--print-code") == 0) {
-			ind_print_code = 1;
-			if (i + 1 >= argc) { prt("Missing <id> argument for --print-code\n"); flush_exit(1); }
-			arg_print_code = argv[++i];
-		} else if (strcmp(arg, "--expand-block") == 0) {
-			ind_expand_block = 1;
-			if (i + 1 >= argc) { prt("Missing <id> argument for --expand-block\n"); flush_exit(1); }
-			arg_expand_block = argv[++i];
-		} else if (strcmp(arg, "--content-index") == 0) {
-			ind_content_index = 1;
-			if (i + 1 >= argc) { prt("Missing <search> argument for --content-index\n"); flush_exit(1); }
-			content_index_search = argv[++i];
-		} else if (strcmp(arg, "--grep") == 0) {
-			ind_grep = 1;
-			if (i + 1 >= argc) { prt("Missing <pattern> argument for --grep\n"); flush_exit(1); }
-			grep_pattern = argv[++i];
-		} else if (strcmp(arg, "--count-blocks") == 0) {
-			ind_count_blocks = 1;
-		} else if (strcmp(arg, "--files-blocks") == 0) {
-			ind_files_blocks = 1;
-		} else if (strcmp(arg, "--print-all") == 0) {
-			ind_print_all = 1;
-		} else if (strcmp(arg, "--rewritepl") == 0) {
-			ind_rewritepl = 1;
-			if (i + 1 >= argc) { prt("Missing <id> argument for --rewritepl\n"); flush_exit(1); }
-			arg_rewritepl = argv[++i];
-		} else if (strcmp(arg, "--prompt") == 0) {
-			ind_prompt = 1;
-			if (i + 1 >= argc) { prt("Missing <id> argument for --prompt\n"); flush_exit(1); }
-			arg_prompt = argv[++i];
-		} else if (strcmp(arg, "--after") == 0) {
-			ind_after = 1;
-			if (i + 1 >= argc) { prt("Missing <id> argument for --after\n"); flush_exit(1); }
-			arg_after = argv[++i];
-		} else if (strcmp(arg, "--replace") == 0) {
-			ind_replace = 1;
-			if (i + 1 >= argc) { prt("Missing <id> argument for --replace\n"); flush_exit(1); }
-			arg_replace = argv[++i];
-		} else if (strcmp(arg, "--replace-comment") == 0) {
-			ind_replace_comment = 1;
-			if (i + 1 >= argc) { prt("Missing <id> argument for --replace-comment\n"); flush_exit(1); }
-			arg_replace_comment = argv[++i];
-		} else if (strcmp(arg, "--replace-code") == 0) {
-			ind_replace_code = 1;
-			if (i + 1 >= argc) { prt("Missing <id> argument for --replace-code\n"); flush_exit(1); }
-			arg_replace_code = argv[++i];
-		} else if (strcmp(arg, "--run") == 0) {
-			ind_run = 1;
-			if (i + 1 >= argc) { prt("Missing <id> argument for --run\n"); flush_exit(1); }
-			run_block_id = argv[++i];
-		} else if (strcmp(arg, "--agents") == 0) {
-			ind_agents = 1;
-		} else if (strcmp(arg, "--install-agent") == 0) {
-			ind_install_agent = 1;
-			if (i + 1 >= argc) { prt("Missing <name> argument for --install-agent\n"); flush_exit(1); }
-			arg_install_agent = argv[++i];
-		} else if (strcmp(arg, "--checksum") == 0) {
-			ind_checksum = 1;
-		} else if (strcmp(arg, "--T0") == 0) {
-			ind_T0 = 1;
-		} else if (strcmp(arg, "--event") == 0) {
-			ind_event = 1;
-			if (i + 1 >= argc) { prt("Missing <string> argument for --event\n"); flush_exit(1); }
-			event_string = argv[++i];
-		} else if (strcmp(arg, "--strength") == 0) {
-			ind_strength = 1;
-			if (i + 1 >= argc) { prt("Missing <value> argument for --strength\n"); flush_exit(1); }
-			event_strength_str = argv[++i];
-		} else if (strcmp(arg, "--query") == 0) {
-			ind_query = 1;
-			if (i + 1 >= argc) { prt("Missing <string> argument for --query\n"); flush_exit(1); }
-			query_string = argv[++i];
-		} else if (strcmp(arg, "--memorize") == 0) {
-			ind_memorize = 1;
-		} else if (strcmp(arg, "--recall") == 0) {
-			ind_recall = 1;
-		} else if (strcmp(arg, "--T") == 0) {
-			ind_T = 1;
-		} else if (strcmp(arg, "--snapshot-join") == 0) {
-			ind_snapshot_join = 1;
-			if (i + 1 >= argc) { prt("Missing <ES1> argument for --snapshot-join\n"); flush_exit(1); }
-			arg_snapshot_join_es1 = argv[++i];
-			if (i + 1 >= argc) { prt("Missing <ES2> argument for --snapshot-join\n"); flush_exit(1); }
-			arg_snapshot_join_es2 = argv[++i];
-		} else if (strcmp(arg, "--learn") == 0) {
-			ind_learn = 1;
-			if (i + 1 >= argc) { prt("Missing <ES1> argument for --learn\n"); flush_exit(1); }
-			arg_learn_es1 = argv[++i];
-			if (i + 1 >= argc) { prt("Missing <ES2> argument for --learn\n"); flush_exit(1); }
-			arg_learn_es2 = argv[++i];
-		} else if (strcmp(arg, "--log-stochastic-count-joint") == 0) {
-			ind_log_stochastic_count_joint = 1;
-		} else if (strcmp(arg, "--map-error") == 0) {
-			ind_map_error = 1;
-		} else if (strcmp(arg, "--test-block-map") == 0) {
-			ind_test_block_map = 1;
-		} else if (strcmp(arg, "--wants") == 0) {
-			ind_wants = 1;
-		} else if (strcmp(arg, "--wants-status") == 0) {
-			ind_wants_status = 1;
-		} else if (strcmp(arg, "--agents-wants") == 0) {
-			ind_agents_wants = 1;
-		} else if (strcmp(arg, "--wants-dashboard") == 0) {
-			ind_wants_dashboard = 1;
-		} else if (strcmp(arg, "--event-report") == 0) {
-			ind_event_report = 1;
-		} else if (strcmp(arg, "--es") == 0) {
-			ind_es = 1;
-		} else if (strcmp(arg, "--export-docs") == 0) {
-			ind_export_docs = 1;
-		} else if (arg[0] == '-' && arg[1] == '-') {
-			prt("Unknown flag: "); prt(arg); prt("\n");
-			flush_exit(1);
-		} else {
-                        // handle file arguments
-                        ind_file_argument = 1;
-                        file_argument = arg;
-                }
-	}
+    char *arg = argv[i];
+    if (!strcmp(arg, "--conf")) {
+        ind_conf = 1;
+        if (i + 1 >= argc) { prt("Missing <filepath> argument for --conf\n"); flush(); exit(1); }
+        conf_filepath = argv[++i];
+    } else if (!strcmp(arg, "--print-conf")) {
+        ind_print_conf = 1;
+    } else if (!strcmp(arg, "--help")) {
+        ind_help = 1;
+        // If help topic present, must not start with --
+        if (i + 1 < argc && strncmp(argv[i+1], "--", 2) != 0) {
+            help_topic = argv[++i];
+        }
+    } else if (!strcmp(arg, "--init")) {
+        ind_init = 1;
+    } else if (!strcmp(arg, "--version")) {
+        ind_version = 1;
+    } else if (!strcmp(arg, "--print-block")) {
+        ind_print_block = 1;
+        if (i + 1 >= argc) { prt("Missing <index> argument for --print-block\n"); flush(); exit(1); }
+        arg_print_block = argv[++i];
+    } else if (!strcmp(arg, "--print-comment")) {
+        ind_print_comment = 1;
+        if (i + 1 >= argc) { prt("Missing <index> argument for --print-comment\n"); flush(); exit(1); }
+        arg_print_comment = argv[++i];
+    } else if (!strcmp(arg, "--print-code")) {
+        ind_print_code = 1;
+        if (i + 1 >= argc) { prt("Missing <index> argument for --print-code\n"); flush(); exit(1); }
+        arg_print_code = argv[++i];
+    } else if (!strcmp(arg, "--expand-block")) {
+        ind_expand_block = 1;
+        if (i + 1 >= argc) { prt("Missing <id> argument for --expand-block\n"); flush(); exit(1); }
+        arg_expand_block = argv[++i];
+    } else if (!strcmp(arg, "--rewritepl")) {
+        ind_rewritepl = 1;
+        if (i + 1 >= argc) { prt("Missing <id> argument for --rewritepl\n"); flush(); exit(1); }
+        arg_rewritepl = argv[++i];
+    } else if (!strcmp(arg, "--prompt")) {
+        ind_prompt = 1;
+        if (i + 1 >= argc) { prt("Missing <id> argument for --prompt\n"); flush(); exit(1); }
+        arg_prompt = argv[++i];
+    } else if (!strcmp(arg, "--after")) {
+        ind_after = 1;
+        if (i + 1 >= argc) { prt("Missing <id> argument for --after\n"); flush(); exit(1); }
+        arg_after = argv[++i];
+    } else if (!strcmp(arg, "--before")) {
+        if (i + 1 >= argc) { prt("Missing <ts> argument for --before\n"); flush(); exit(1); }
+        arg_before = argv[++i];
+    } else if (!strcmp(arg, "--replace")) {
+        ind_replace = 1;
+        if (i + 1 >= argc) { prt("Missing <id> argument for --replace\n"); flush(); exit(1); }
+        arg_replace = argv[++i];
+    } else if (!strcmp(arg, "--replace-comment")) {
+        ind_replace_comment = 1;
+        if (i + 1 >= argc) { prt("Missing <id> argument for --replace-comment\n"); flush(); exit(1); }
+        arg_replace_comment = argv[++i];
+    } else if (!strcmp(arg, "--replace-code")) {
+        ind_replace_code = 1;
+        if (i + 1 >= argc) { prt("Missing <id> argument for --replace-code\n"); flush(); exit(1); }
+        arg_replace_code = argv[++i];
+    } else if (!strcmp(arg, "--content-index")) {
+        ind_content_index = 1;
+        if (i + 1 >= argc) { prt("Missing <search> argument for --content-index\n"); flush(); exit(1); }
+        content_index_search = argv[++i];
+    } else if (!strcmp(arg, "--grep")) {
+        ind_grep = 1;
+        if (i + 1 >= argc) { prt("Missing <pattern> argument for --grep\n"); flush(); exit(1); }
+        grep_pattern = argv[++i];
+    } else if (!strcmp(arg, "--count-blocks")) {
+        ind_count_blocks = 1;
+    } else if (!strcmp(arg, "--files-blocks")) {
+        ind_files_blocks = 1;
+    } else if (!strcmp(arg, "--print-all")) {
+        ind_print_all = 1;
+    } else if (!strcmp(arg, "--run")) {
+        ind_run = 1;
+        if (i + 1 >= argc) { prt("Missing <block_id> argument for --run\n"); flush(); exit(1); }
+        run_block_id = argv[++i];
+    } else if (!strcmp(arg, "--agents")) {
+        ind_agents = 1;
+    } else if (!strcmp(arg, "--checksum")) {
+        ind_checksum = 1;
+    } else if (!strcmp(arg, "--T0")) {
+        ind_T0 = 1;
+    } else if (!strcmp(arg, "--event")) {
+        ind_event = 1;
+        if (i + 1 >= argc) { prt("Missing <string> argument for --event\n"); flush(); exit(1); }
+        event_string = argv[++i];
+    } else if (!strcmp(arg, "--strength")) {
+        ind_strength = 1;
+        if (i + 1 >= argc) { prt("Missing <value> argument for --strength\n"); flush(); exit(1); }
+        event_strength_str = argv[++i];
+    } else if (!strcmp(arg, "--query")) {
+        ind_query = 1;
+        if (i + 1 >= argc) { prt("Missing <string> argument for --query\n"); flush(); exit(1); }
+        query_string = argv[++i];
+    } else if (!strcmp(arg, "--memorize")) {
+        ind_memorize = 1;
+    } else if (!strcmp(arg, "--recall")) {
+        ind_recall = 1;
+    } else if (!strcmp(arg, "--recall-first")) {
+        ind_recall_first = 1;
+    } else if (!strcmp(arg, "--T")) {
+        ind_T = 1;
+    } else if (!strcmp(arg, "--event-spaces") || !strcmp(arg, "--es")) {
+        ind_es = 1;
+    } else if (!strcmp(arg, "--wants")) {
+        ind_wants = 1;
+    } else if (!strcmp(arg, "--wants-status")) {
+        ind_wants_status = 1;
+    } else if (!strcmp(arg, "--agents-wants")) {
+        ind_agents_wants = 1;
+    } else if (!strcmp(arg, "--wants-dashboard")) {
+        ind_wants_dashboard = 1;
+    } else if (!strcmp(arg, "--event-report")) {
+        ind_event_report = 1;
+    } else if (!strcmp(arg, "--export-docs")) {
+        ind_export_docs = 1;
+    } else if (strncmp(arg, "--", 2) == 0) {
+        prt("Unknown flag: %s\n", arg); flush(); exit(1);
+    } else {
+        file_argument = arg; ind_file_argument = 1;
+    }
+}
 
+
+/* #handle_args_events */
+// Event system commands - handle BEFORE general action dispatch
+	// because --after/--before mean timestamps here, not block ids
+	if (ind_T0 || ind_event || ind_strength || ind_query || ind_memorize || ind_recall || ind_recall_first || ind_T) {
+		if (ind_event && !ind_strength) {
+			prt("Error: --event requires --strength\n");
+			flush_exit(1);
+		}
+		if (ind_strength && !ind_event) {
+			prt("Error: --strength must be used with --event\n");
+			flush_exit(1);
+		}
+		
+		int event_actions = ind_T0 + ind_event + ind_query + ind_memorize + ind_recall + ind_recall_first + ind_T;
+		if (event_actions > 1) {
+			prt("Error: --T0, --event, --query, --memorize, --recall, --recall-first, and --T cannot be combined\n");
+			flush_exit(1);
+		}
+		
+		check_conf_vars();
+		check_dirs();
+		event_load_T();
+		
+		if (ind_T0) {
+			event_T0();
+			flush_exit(0);
+		}
+		if (ind_event) {
+			span event_span = { (u8 *)event_string, (u8 *)event_string + strlen(event_string) };
+			int strength_value = event_strength_str ? atoi(event_strength_str) : 255;
+			event_add(event_span, (unsigned char)strength_value);
+			flush_exit(0);
+		}
+		if (ind_memorize) {
+			event_memorize();
+			flush_exit(0);
+		}
+		if (ind_recall) {
+			event_recall(arg_after ? S(arg_after) : nullspan(), arg_before ? S(arg_before) : nullspan(), 0);
+			flush_exit(0);
+		}
+		if (ind_recall_first) {
+			event_recall(arg_after ? S(arg_after) : nullspan(), arg_before ? S(arg_before) : nullspan(), 1);
+			flush_exit(0);
+		}
+		if (ind_T) {
+			event_print_T();
+			flush_exit(0);
+		}
+		if (ind_query) {
+			span query_span = { (u8 *)query_string, (u8 *)query_string + strlen(query_string) };
+			event_query(query_span);
+			flush_exit(0);
+		}
+	}
 
 /* #handle_args_4 */
 if (ind_file_argument) {
-                state->manual_filename = S(file_argument);
-        }
+		state->manual_filename = S(file_argument);
+	}
+
+	// Handle open at block (cmpr #blockid) - store the ID, read_() will navigate after get_code()
+	if (ind_open_block) {
+		state->open_block_id = S(arg_open_block);
+	}
 
 // Handle --help, --version, --init first
 	if (ind_help) {
@@ -2739,7 +2853,7 @@ if (ind_file_argument) {
 	}
 	
 	// Event system commands (have special validation)
-	if (ind_T0 || ind_event || ind_strength || ind_query || ind_memorize || ind_recall || ind_T) {
+	if (ind_T0 || ind_event || ind_strength || ind_query || ind_memorize || ind_recall || ind_recall_first || ind_T) {
 		if (ind_event && !ind_strength) {
 			prt("Error: --event requires --strength\n");
 			flush_exit(1);
@@ -2749,9 +2863,9 @@ if (ind_file_argument) {
 			flush_exit(1);
 		}
 		
-		int event_actions = ind_T0 + ind_event + ind_query + ind_memorize + ind_recall + ind_T;
+		int event_actions = ind_T0 + ind_event + ind_query + ind_memorize + ind_recall + ind_recall_first + ind_T;
 		if (event_actions > 1) {
-			prt("Error: --T0, --event, --query, --memorize, --recall, and --T cannot be combined\n");
+			prt("Error: --T0, --event, --query, --memorize, --recall, --recall-first, and --T cannot be combined\n");
 			flush_exit(1);
 		}
 		
@@ -2774,7 +2888,11 @@ if (ind_file_argument) {
 			flush_exit(0);
 		}
 		if (ind_recall) {
-			event_recall();
+			event_recall(arg_after ? S(arg_after) : nullspan(), arg_before ? S(arg_before) : nullspan(), 0);
+			flush_exit(0);
+		}
+		if (ind_recall_first) {
+			event_recall(arg_after ? S(arg_after) : nullspan(), arg_before ? S(arg_before) : nullspan(), 1);
 			flush_exit(0);
 		}
 		if (ind_T) {
@@ -2835,7 +2953,6 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
-
 
 /* #handle_snapshot_join */
 void handle_snapshot_join(span es1, span es2) {
@@ -3644,18 +3761,6 @@ int scan_int(span* sp) {
 }
 
 
-/* #parse_int */
-int parse_int(span s) {
-    if (empty(s) || !isdigit(*s.buf)) {
-        prt("Error: initial characters are not digits\n");
-        flush();
-        exit(1);
-    }
-    return atoi((char *)s.buf);
-}
-
-
-
 /* #scan_hex */
 int scan_hex(span* s) {
     char* start = (char*)s->buf;
@@ -4084,8 +4189,6 @@ int refs_menu(int block_idx) {
             terpri();
         }
         for(int i=0; i<num_in; i++) {
-            int index = num_out + ((num_out>0&&num_in>0)?1:0) + i; // account for possible divider
-            int sel_index = (num_out>0&&num_in>0)?(sel-num_out-1):(sel-num_out);
             if(num_out>0&&num_in>0) {
                 if(sel == (num_out+1+i)) set_highlight();
             } else {
@@ -4166,7 +4269,6 @@ int refs_menu(int block_idx) {
         }
     }
 }
-
 /* #sbv_display */
 void sbv_display(sbv_state* sbvs) {
     char offset[32];
@@ -4564,6 +4666,7 @@ char getch(void) {
 /* #main_loop */
 void main_loop() {
     state->marked_index = -1;
+    state->count_prefix = 0;
 
     while (1) {
         check_conf_vars();
@@ -4574,11 +4677,15 @@ void main_loop() {
         char ch = getch();
         clock_gettime(CLOCK_REALTIME, &state->now);
 
+        if ((ch >= '1' && ch <= '9') || (ch == '0' && state->count_prefix > 0)) {
+            state->count_prefix = state->count_prefix * 10 + (ch - '0');
+            continue;
+        }
+
         handle_keystroke(ch);
+        state->count_prefix = 0;
     }
 }
-
-
 /* #count_physical_lines */
 span count_physical_lines(span input, int *max_physical_lines) {
     span result = input;
@@ -4819,6 +4926,12 @@ void handle_keystroke(char input) {
         case 'e':
             edit_current_block();
             break;
+        case 'o':
+            insert_block_after();
+            break;
+        case 'O':
+            insert_block_before();
+            break;
         // case ''':
             // prompt_palette();
             break;
@@ -4867,6 +4980,15 @@ void handle_keystroke(char input) {
         case '@':
             block_refs_jump();
             break;
+        case 'd':
+            delete_block();
+            break;
+        case 'p':
+            paste_after();
+            break;
+        case 'P':
+            paste_before();
+            break;
         case '?':
             keyboard_help();
             break;
@@ -4879,6 +5001,182 @@ void handle_keystroke(char input) {
             break;
     }
 }
+/* #delete_block */
+void delete_block() {
+    if (state->curr_block_idx == -1) {
+        prt("No block to delete\n");
+        return;
+    }
+
+    int count = state->count_prefix > 0 ? state->count_prefix : 1;
+    int deleted = 0;
+
+    for (int i = 0; i < count && state->curr_block_idx != -1; i++) {
+        span block = state->blocks.a[state->curr_block_idx];
+        int file_idx = file_for_block(block);
+
+        // Find block ID if any (first #token on first line)
+        span block_copy = block;
+        span line = next_line(&block_copy);
+        span block_id = nullspan();
+        if (len(line) > 0 && line.buf[0] != '#') {  // not markdown
+            spans tokens = split_whitespace(line);
+            for (int t = 0; t < tokens.n; t++) {
+                if (tokens.a[t].buf[0] == '#') {
+                    block_id = tokens.a[t];
+                    break;
+                }
+            }
+        }
+
+        projfile *pf = &state->files.a[file_idx];
+
+        size_t block_len = len(block);
+        u8 *block_start = block.buf;
+        u8 *block_end = block.end;
+        size_t tail_len = inp.end - block_end;
+
+        memmove(block_start, block_end, tail_len);
+        inp.end -= block_len;
+        pf->contents.end -= block_len;
+
+        for (int j = file_idx + 1; j < state->files.n; j++) {
+            state->files.a[j].contents.buf -= block_len;
+            state->files.a[j].contents.end -= block_len;
+        }
+
+        new_rev(S(""), file_idx);
+        ingest();
+
+        deleted++;
+
+        if (len(block_id) > 0) {
+            prt("Deleted %.*s\n", len(block_id), block_id.buf);
+        } else {
+            prt("Deleted block %d\n", state->curr_block_idx + 1);
+        }
+
+        // Adjust cursor: stay at same index if there's a next block, else go to previous
+        if (state->curr_block_idx >= state->blocks.n) {
+            state->curr_block_idx = state->blocks.n - 1;
+        }
+        // Update file index for new current block
+        if (state->curr_block_idx >= 0) {
+            state->curr_file_idx = file_for_block(state->blocks.a[state->curr_block_idx]);
+        }
+    }
+
+    if (deleted > 1) {
+        prt("Deleted %d blocks total\n", deleted);
+    }
+
+    state->scrolled_lines = 0;
+}
+/* #find_last_deleted_block */
+span find_last_deleted_block() {
+    prt("DEBUG find_last_deleted_block: n_revblocks=%d\n", state->revs.n_revblocks);
+    for (int i = state->revs.n_revblocks - 1; i >= 0; --i) {
+        rev_block *rb = &state->revs.revblocks[i];
+        prt("DEBUG i=%d timestamp=%ld ids.n=%d", i, (long)rb->timestamp, rb->ids.n);
+        if (rb->ids.n > 0) {
+            prt(" first_id=%.*s", (int)len(rb->ids.a[0]), rb->ids.a[0].buf);
+        }
+        prt("\n");
+        if (rb->ids.n == 0) continue;
+        int found_in_current = 0;
+        for (int j = 0; j < rb->ids.n; ++j) {
+            for (int k = 0; k < state->block_idx.n; ++k) {
+                if (span_eq(rb->ids.a[j], state->block_idx.a[k])) {
+                    found_in_current = 1;
+                    break;
+                }
+            }
+            if (found_in_current) break;
+        }
+        prt("DEBUG   found_in_current=%d\n", found_in_current);
+        if (!found_in_current) {
+            prt("DEBUG   RETURNING this block\n");
+            return rb->contents;
+        }
+    }
+    prt("DEBUG   returning nullspan\n");
+    return nullspan();
+}
+/* #paste_after */
+void paste_after() {
+    if (state->curr_block_idx == -1 || state->blocks.n == 0) {
+        prt("No current block\n");
+        return;
+    }
+
+    get_revs();
+    span deleted = find_last_deleted_block();
+    if (len(deleted) == 0) {
+        prt("Nothing to paste\n");
+        return;
+    }
+
+    span block = state->blocks.a[state->curr_block_idx];
+    int file_idx = file_for_block(block);
+    projfile *pf = &state->files.a[file_idx];
+    u8 *after_block = block.end;
+    size_t tail_len = inp.end - after_block;
+
+    memmove(after_block + len(deleted), after_block, tail_len);
+    inp.end += len(deleted);
+    memcpy(after_block, deleted.buf, len(deleted));
+
+    pf->contents.end += len(deleted);
+    for (int i = file_idx + 1; i < state->files.n; ++i) {
+        state->files.a[i].contents.buf += len(deleted);
+        state->files.a[i].contents.end += len(deleted);
+    }
+
+    new_rev(S(""), file_idx);
+    ingest();
+
+    state->curr_block_idx += 1;
+    state->scrolled_lines = 0;
+    prt("Pasted after current block\n");
+}
+/* #paste_before */
+void paste_before() {
+    if (state->curr_block_idx == -1 || state->blocks.n == 0) {
+        prt("No current block\n");
+        return;
+    }
+
+    get_revs();
+    span deleted = find_last_deleted_block();
+    if (len(deleted) == 0) {
+        prt("Nothing to paste\n");
+        return;
+    }
+
+    span block = state->blocks.a[state->curr_block_idx];
+    int file_idx = file_for_block(block);
+    projfile *pf = &state->files.a[file_idx];
+    u8 *before_block = block.buf;
+    size_t tail_len = inp.end - before_block;
+
+    memmove(before_block + len(deleted), before_block, tail_len);
+    inp.end += len(deleted);
+    memcpy(before_block, deleted.buf, len(deleted));
+
+    pf->contents.end += len(deleted);
+    for (int i = file_idx + 1; i < state->files.n; ++i) {
+        state->files.a[i].contents.buf += len(deleted);
+        state->files.a[i].contents.end += len(deleted);
+    }
+
+    new_rev(S(""), file_idx);
+    ingest();
+
+    // curr_block_idx stays the same - points to original block which moved down
+    state->curr_block_idx += 1;
+    state->scrolled_lines = 0;
+    prt("Pasted before current block\n");
+}
 /* #keyboard_help */
 void keyboard_help() {
     clear_display();
@@ -4888,6 +5186,8 @@ void keyboard_help() {
     prt("g    - Go to the first block\n");
     prt("G    - Go to the last block\n");
     prt("e    - Edit the current block in $EDITOR\n");
+    prt("o    - Insert a new block after the current block\n");
+    prt("O    - Insert a new block before the current block\n");
     prt("'    - Open the prompt palette\n");
     prt("r    - Rewrite code part based on comment part; clipboard updated\n");
     prt("R    - Replace code part with clipboard contents\n");
@@ -4909,33 +5209,38 @@ void keyboard_help() {
     flush();
     getch();
 }
+
 /* #handle_jkgG */
 void handle_j() {
     if (state->curr_file_idx == -1) return;
     
-    if (state->curr_block_idx == -1) {
-        if (state->curr_file_idx + 1 < state->files.n) {
-            state->curr_file_idx += 1;
-            if (empty(state->files.a[state->curr_file_idx].contents))
-                return;
-            state->curr_block_idx = first_block_in_file(state->curr_file_idx);
-            state->scrolled_lines = 0;
-        }
-    } else {
-        if (state->blocks.a[state->curr_block_idx].end == state->files.a[state->curr_file_idx].contents.end) {
+    int count = state->count_prefix > 0 ? state->count_prefix : 1;
+    
+    for (int i = 0; i < count; i++) {
+        if (state->curr_block_idx == -1) {
             if (state->curr_file_idx + 1 < state->files.n) {
                 state->curr_file_idx += 1;
-                if (empty(state->files.a[state->curr_file_idx].contents)) {
-                    state->curr_block_idx = -1;
+                if (empty(state->files.a[state->curr_file_idx].contents))
                     return;
-                }
                 state->curr_block_idx = first_block_in_file(state->curr_file_idx);
-              state->scrolled_lines = 0;
+                state->scrolled_lines = 0;
             }
         } else {
-            if (state->curr_block_idx + 1 < state->blocks.n) {
-                state->curr_block_idx += 1;
-                state->scrolled_lines = 0;
+            if (state->blocks.a[state->curr_block_idx].end == state->files.a[state->curr_file_idx].contents.end) {
+                if (state->curr_file_idx + 1 < state->files.n) {
+                    state->curr_file_idx += 1;
+                    if (empty(state->files.a[state->curr_file_idx].contents)) {
+                        state->curr_block_idx = -1;
+                        return;
+                    }
+                    state->curr_block_idx = first_block_in_file(state->curr_file_idx);
+                    state->scrolled_lines = 0;
+                }
+            } else {
+                if (state->curr_block_idx + 1 < state->blocks.n) {
+                    state->curr_block_idx += 1;
+                    state->scrolled_lines = 0;
+                }
             }
         }
     }
@@ -4944,28 +5249,32 @@ void handle_j() {
 void handle_k() {
     if (state->curr_file_idx == -1) return;
     
-    if (state->curr_block_idx == -1) {
-        if (state->curr_file_idx - 1 >= 0) {
-            state->curr_file_idx -= 1;
-            if (empty(state->files.a[state->curr_file_idx].contents))
-                return;
-            state->curr_block_idx = last_block_in_file(state->curr_file_idx);
-            state->scrolled_lines = 0;
-        }
-    } else {
-        if (state->blocks.a[state->curr_block_idx].buf == state->files.a[state->curr_file_idx].contents.buf) {
+    int count = state->count_prefix > 0 ? state->count_prefix : 1;
+    
+    for (int i = 0; i < count; i++) {
+        if (state->curr_block_idx == -1) {
             if (state->curr_file_idx - 1 >= 0) {
                 state->curr_file_idx -= 1;
-                if (empty(state->files.a[state->curr_file_idx].contents)) {
-                    state->curr_block_idx = -1;
+                if (empty(state->files.a[state->curr_file_idx].contents))
                     return;
-                }
                 state->curr_block_idx = last_block_in_file(state->curr_file_idx);
                 state->scrolled_lines = 0;
             }
         } else {
-            state->curr_block_idx -= 1;
-            state->scrolled_lines = 0;
+            if (state->blocks.a[state->curr_block_idx].buf == state->files.a[state->curr_file_idx].contents.buf) {
+                if (state->curr_file_idx - 1 >= 0) {
+                    state->curr_file_idx -= 1;
+                    if (empty(state->files.a[state->curr_file_idx].contents)) {
+                        state->curr_block_idx = -1;
+                        return;
+                    }
+                    state->curr_block_idx = last_block_in_file(state->curr_file_idx);
+                    state->scrolled_lines = 0;
+                }
+            } else {
+                state->curr_block_idx -= 1;
+                state->scrolled_lines = 0;
+            }
         }
     }
 }
@@ -4985,17 +5294,29 @@ void handle_g() {
 void handle_G() {
     if (state->files.n == 0) return;
 
-    state->curr_file_idx = state->files.n - 1;
-    if (empty(state->files.a[state->files.n - 1].contents)) {
-        state->curr_block_idx = -1;
-    } else {
-        state->curr_block_idx = state->blocks.n - 1;
+    if (state->count_prefix > 0) {
+        // NG goes to block N (1-indexed)
+        int target = state->count_prefix - 1;
+        if (target >= state->blocks.n) {
+            target = state->blocks.n - 1;
+        }
+        if (target < 0) {
+            target = 0;
+        }
+        state->curr_block_idx = target;
+        state->curr_file_idx = file_for_block(state->blocks.a[target]);
         state->scrolled_lines = 0;
+    } else {
+        // G with no count goes to last block
+        state->curr_file_idx = state->files.n - 1;
+        if (empty(state->files.a[state->files.n - 1].contents)) {
+            state->curr_block_idx = -1;
+        } else {
+            state->curr_block_idx = state->blocks.n - 1;
+            state->scrolled_lines = 0;
+        }
     }
 }
-
-
-
 /* #first_block_in_file */
 int first_block_in_file(int file_idx) {
     for (int i = 0; i < state->blocks.n; ++i) {
@@ -5326,6 +5647,10 @@ void print_ruler() {
     int block_count = state->blocks.n;
     int current_block_number = (state->curr_block_idx != -1) ? state->curr_block_idx + 1 : 0;
 
+    if (state->count_prefix > 0) {
+        prt("%d ", state->count_prefix);
+    }
+
     if (state->curr_file_idx == -1 && state->curr_block_idx == -1) {
         prt("Block -/0, Line -, File -, Model %.*s", len(model), model.buf);
     } else if (state->curr_block_idx == -1) {
@@ -5343,8 +5668,6 @@ void print_ruler() {
 
     flush();
 }
-
-
 /* #get_debug_info */
 span get_debug_info() {
     span result = nullspan();
@@ -5635,23 +5958,13 @@ void check_dirs() {
 }
 /* #check_conf_vars */
 void check_conf_vars() {
-    int confChanged = 0;
-
     if (empty(state->cmprdir)) {
       state->cmprdir = S(".cmpr/");
-      confChanged = 1;
     }
     if (empty(state->model)) {
       state->model = S("clipboard");
-      confChanged = 1;
-    }
-
-    if (confChanged) {
-        save_conf();
     }
 }
-
-
 /* #ensure_conf_var */
 void ensure_conf_var(span* var, span message, span default_value) {
     if (!empty(*var)) return; // If the configuration variable is already set, return immediately
@@ -5703,6 +6016,110 @@ void edit_current_block() {
 
 
 
+/* #insert_block_after */
+void insert_block_after() {
+    if (state->curr_block_idx == -1 || state->blocks.n == 0) {
+        return;
+    }
+
+    span tmp_file = tmp_filename();
+    write_to_file_span(nullspan(), tmp_file, 0);
+    prt("Temp file %.*s written for editing.\n", (int)len(tmp_file), tmp_file.buf);
+    flush();
+
+    if (launch_editor(s(tmp_file)) == 0) {
+        span new_content = read_file_into_cmp(tmp_file);
+        if (len(new_content) == 0) {
+            prt("No content added, cancelled.\n");
+            flush();
+            getch();
+            return;
+        }
+        prt("Editor exited successfully, creating rev.\n");
+        flush();
+
+        span block = state->blocks.a[state->curr_block_idx];
+        int file_idx = file_for_block(block);
+        projfile *pf = &state->files.a[file_idx];
+        u8 *after_block = block.end;
+        size_t tail_len = inp.end - after_block;
+
+        memmove(after_block + len(new_content), after_block, tail_len);
+        inp.end += len(new_content);
+        memcpy(after_block, new_content.buf, len(new_content));
+
+        pf = &state->files.a[file_idx];
+        pf->contents.end += len(new_content);
+        for (int i = file_idx + 1; i < state->files.n; ++i) {
+            state->files.a[i].contents.buf += len(new_content);
+            state->files.a[i].contents.end += len(new_content);
+        }
+
+        size_t old_blocks_n = state->blocks.n;
+        ingest();
+
+        new_rev(S(""), file_idx);
+
+        if (state->blocks.n > old_blocks_n) {
+            state->curr_block_idx += 1;
+        }
+        state->scrolled_lines = 0;
+    } else {
+        prt("Editor exited with error, changes not saved.\n");
+        flush();
+        getch();
+    }
+}
+/* #insert_block_before */
+void insert_block_before() {
+    if (state->curr_block_idx == -1 || state->blocks.n == 0) {
+        return;
+    }
+
+    span tmp_file = tmp_filename();
+    write_to_file_span(nullspan(), tmp_file, 0);
+    prt("Temp file %.*s written for editing.\n", (int)len(tmp_file), tmp_file.buf);
+    flush();
+
+    if (launch_editor(s(tmp_file)) == 0) {
+        span new_content = read_file_into_cmp(tmp_file);
+        if (len(new_content) == 0) {
+            prt("No content added, cancelled.\n");
+            flush();
+            getch();
+            return;
+        }
+        prt("Editor exited successfully, creating rev.\n");
+        flush();
+
+        span block = state->blocks.a[state->curr_block_idx];
+        int file_idx = file_for_block(block);
+        projfile *pf = &state->files.a[file_idx];
+        u8 *before_block = block.buf;
+        size_t tail_len = inp.end - before_block;
+
+        memmove(before_block + len(new_content), before_block, tail_len);
+        inp.end += len(new_content);
+        memcpy(before_block, new_content.buf, len(new_content));
+
+        pf = &state->files.a[file_idx];
+        pf->contents.end += len(new_content);
+        for (int i = file_idx + 1; i < state->files.n; ++i) {
+            state->files.a[i].contents.buf += len(new_content);
+            state->files.a[i].contents.end += len(new_content);
+        }
+
+        ingest();
+
+        new_rev(S(""), file_idx);
+
+        state->scrolled_lines = 0;
+    } else {
+        prt("Editor exited with error, changes not saved.\n");
+        flush();
+        getch();
+    }
+}
 /* #tmp_filename */
 span tmp_filename() {
     time_t now = time(NULL);
