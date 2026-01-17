@@ -1477,6 +1477,7 @@ typedef struct ui_state {
 } ui_state;
 
 ui_state* state;
+
 /* #parse_int */
 int parse_int(span s) {
     if (empty(s) || !isdigit(*s.buf)) {
@@ -2391,6 +2392,7 @@ int ind_conf = 0;
 	int ind_rewritepl = 0;
 	int ind_prompt = 0;
 	int ind_after = 0;
+	int ind_before = 0;
 	int ind_replace = 0;
 	int ind_replace_comment = 0;
 	int ind_replace_code = 0;
@@ -2420,6 +2422,7 @@ int ind_conf = 0;
 	int ind_install_agent = 0;
 	int ind_file_argument = 0;
 	int ind_open_block = 0;
+	int ind_find_deleted = 0;
 
 	char *conf_filepath = NULL;
 	char *help_topic = NULL;
@@ -2451,131 +2454,122 @@ int ind_conf = 0;
 	int action_arg = 0;
 /* #handle_args_3 */
 for (int i = 1; i < argc; i++) {
-    char *arg = argv[i];
-    if (!strcmp(arg, "--conf")) {
-        ind_conf = 1;
-        if (i + 1 >= argc) { prt("Missing <filepath> argument for --conf\n"); flush(); exit(1); }
-        conf_filepath = argv[++i];
-    } else if (!strcmp(arg, "--print-conf")) {
-        ind_print_conf = 1;
-    } else if (!strcmp(arg, "--help")) {
-        ind_help = 1;
-        // If help topic present, must not start with --
-        if (i + 1 < argc && strncmp(argv[i+1], "--", 2) != 0) {
-            help_topic = argv[++i];
-        }
-    } else if (!strcmp(arg, "--init")) {
-        ind_init = 1;
-    } else if (!strcmp(arg, "--version")) {
-        ind_version = 1;
-    } else if (!strcmp(arg, "--print-block")) {
-        ind_print_block = 1;
-        if (i + 1 >= argc) { prt("Missing <index> argument for --print-block\n"); flush(); exit(1); }
-        arg_print_block = argv[++i];
-    } else if (!strcmp(arg, "--print-comment")) {
-        ind_print_comment = 1;
-        if (i + 1 >= argc) { prt("Missing <index> argument for --print-comment\n"); flush(); exit(1); }
-        arg_print_comment = argv[++i];
-    } else if (!strcmp(arg, "--print-code")) {
-        ind_print_code = 1;
-        if (i + 1 >= argc) { prt("Missing <index> argument for --print-code\n"); flush(); exit(1); }
-        arg_print_code = argv[++i];
-    } else if (!strcmp(arg, "--expand-block")) {
-        ind_expand_block = 1;
-        if (i + 1 >= argc) { prt("Missing <id> argument for --expand-block\n"); flush(); exit(1); }
-        arg_expand_block = argv[++i];
-    } else if (!strcmp(arg, "--rewritepl")) {
-        ind_rewritepl = 1;
-        if (i + 1 >= argc) { prt("Missing <id> argument for --rewritepl\n"); flush(); exit(1); }
-        arg_rewritepl = argv[++i];
-    } else if (!strcmp(arg, "--prompt")) {
-        ind_prompt = 1;
-        if (i + 1 >= argc) { prt("Missing <id> argument for --prompt\n"); flush(); exit(1); }
-        arg_prompt = argv[++i];
-    } else if (!strcmp(arg, "--after")) {
-        ind_after = 1;
-        if (i + 1 >= argc) { prt("Missing <id> argument for --after\n"); flush(); exit(1); }
-        arg_after = argv[++i];
-    } else if (!strcmp(arg, "--before")) {
-        if (i + 1 >= argc) { prt("Missing <ts> argument for --before\n"); flush(); exit(1); }
-        arg_before = argv[++i];
-    } else if (!strcmp(arg, "--replace")) {
-        ind_replace = 1;
-        if (i + 1 >= argc) { prt("Missing <id> argument for --replace\n"); flush(); exit(1); }
-        arg_replace = argv[++i];
-    } else if (!strcmp(arg, "--replace-comment")) {
-        ind_replace_comment = 1;
-        if (i + 1 >= argc) { prt("Missing <id> argument for --replace-comment\n"); flush(); exit(1); }
-        arg_replace_comment = argv[++i];
-    } else if (!strcmp(arg, "--replace-code")) {
-        ind_replace_code = 1;
-        if (i + 1 >= argc) { prt("Missing <id> argument for --replace-code\n"); flush(); exit(1); }
-        arg_replace_code = argv[++i];
-    } else if (!strcmp(arg, "--content-index")) {
-        ind_content_index = 1;
-        if (i + 1 >= argc) { prt("Missing <search> argument for --content-index\n"); flush(); exit(1); }
-        content_index_search = argv[++i];
-    } else if (!strcmp(arg, "--grep")) {
-        ind_grep = 1;
-        if (i + 1 >= argc) { prt("Missing <pattern> argument for --grep\n"); flush(); exit(1); }
-        grep_pattern = argv[++i];
-    } else if (!strcmp(arg, "--count-blocks")) {
-        ind_count_blocks = 1;
-    } else if (!strcmp(arg, "--files-blocks")) {
-        ind_files_blocks = 1;
-    } else if (!strcmp(arg, "--print-all")) {
-        ind_print_all = 1;
-    } else if (!strcmp(arg, "--run")) {
-        ind_run = 1;
-        if (i + 1 >= argc) { prt("Missing <block_id> argument for --run\n"); flush(); exit(1); }
-        run_block_id = argv[++i];
-    } else if (!strcmp(arg, "--agents")) {
-        ind_agents = 1;
-    } else if (!strcmp(arg, "--checksum")) {
-        ind_checksum = 1;
-    } else if (!strcmp(arg, "--T0")) {
-        ind_T0 = 1;
-    } else if (!strcmp(arg, "--event")) {
-        ind_event = 1;
-        if (i + 1 >= argc) { prt("Missing <string> argument for --event\n"); flush(); exit(1); }
-        event_string = argv[++i];
-    } else if (!strcmp(arg, "--strength")) {
-        ind_strength = 1;
-        if (i + 1 >= argc) { prt("Missing <value> argument for --strength\n"); flush(); exit(1); }
-        event_strength_str = argv[++i];
-    } else if (!strcmp(arg, "--query")) {
-        ind_query = 1;
-        if (i + 1 >= argc) { prt("Missing <string> argument for --query\n"); flush(); exit(1); }
-        query_string = argv[++i];
-    } else if (!strcmp(arg, "--memorize")) {
-        ind_memorize = 1;
-    } else if (!strcmp(arg, "--recall")) {
-        ind_recall = 1;
-    } else if (!strcmp(arg, "--recall-first")) {
-        ind_recall_first = 1;
-    } else if (!strcmp(arg, "--T")) {
-        ind_T = 1;
-    } else if (!strcmp(arg, "--event-spaces") || !strcmp(arg, "--es")) {
-        ind_es = 1;
-    } else if (!strcmp(arg, "--wants")) {
-        ind_wants = 1;
-    } else if (!strcmp(arg, "--wants-status")) {
-        ind_wants_status = 1;
-    } else if (!strcmp(arg, "--agents-wants")) {
-        ind_agents_wants = 1;
-    } else if (!strcmp(arg, "--wants-dashboard")) {
-        ind_wants_dashboard = 1;
-    } else if (!strcmp(arg, "--event-report")) {
-        ind_event_report = 1;
-    } else if (!strcmp(arg, "--export-docs")) {
-        ind_export_docs = 1;
-    } else if (strncmp(arg, "--", 2) == 0) {
-        prt("Unknown flag: %s\n", arg); flush(); exit(1);
-    } else {
-        file_argument = arg; ind_file_argument = 1;
-    }
-}
-
+		char *arg = argv[i];
+		if (strcmp(arg, "--conf") == 0) {
+			if (i+1 >= argc) { prt("Missing <filepath> argument for --conf\n"); flush(); exit(1); }
+			ind_conf = 1; conf_filepath = argv[++i];
+		} else if (strcmp(arg, "--print-conf") == 0) {
+			ind_print_conf = 1; action_arg = 1;
+		} else if (strcmp(arg, "--help") == 0) {
+			ind_help = 1; action_arg = 1;
+			if (i+1 < argc && strncmp(argv[i+1], "--", 2) != 0) {
+				help_topic = argv[++i];
+			}
+		} else if (strcmp(arg, "--init") == 0) {
+			ind_init = 1; action_arg = 1;
+		} else if (strcmp(arg, "--version") == 0) {
+			ind_version = 1; action_arg = 1;
+		} else if (strcmp(arg, "--print-block") == 0) {
+			if (i+1 >= argc) { prt("Missing <index> argument for --print-block\n"); flush(); exit(1); }
+			ind_print_block = 1; arg_print_block = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--print-comment") == 0) {
+			if (i+1 >= argc) { prt("Missing <index> argument for --print-comment\n"); flush(); exit(1); }
+			ind_print_comment = 1; arg_print_comment = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--print-code") == 0) {
+			if (i+1 >= argc) { prt("Missing <index> argument for --print-code\n"); flush(); exit(1); }
+			ind_print_code = 1; arg_print_code = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--expand-block") == 0) {
+			if (i+1 >= argc) { prt("Missing <id> argument for --expand-block\n"); flush(); exit(1); }
+			ind_expand_block = 1; arg_expand_block = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--rewritepl") == 0) {
+			if (i+1 >= argc) { prt("Missing <id> argument for --rewritepl\n"); flush(); exit(1); }
+			ind_rewritepl = 1; arg_rewritepl = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--prompt") == 0) {
+			if (i+1 >= argc) { prt("Missing <id> argument for --prompt\n"); flush(); exit(1); }
+			ind_prompt = 1; arg_prompt = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--after") == 0) {
+			if (i+1 >= argc) { prt("Missing <id> argument for --after\n"); flush(); exit(1); }
+			ind_after = 1; arg_after = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--before") == 0) {
+			if (i+1 >= argc) { prt("Missing <ts> argument for --before\n"); flush(); exit(1); }
+			ind_before = 1; arg_before = argv[++i];
+		} else if (strcmp(arg, "--replace") == 0) {
+			if (i+1 >= argc) { prt("Missing <id> argument for --replace\n"); flush(); exit(1); }
+			ind_replace = 1; arg_replace = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--replace-comment") == 0) {
+			if (i+1 >= argc) { prt("Missing <id> argument for --replace-comment\n"); flush(); exit(1); }
+			ind_replace_comment = 1; arg_replace_comment = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--replace-code") == 0) {
+			if (i+1 >= argc) { prt("Missing <id> argument for --replace-code\n"); flush(); exit(1); }
+			ind_replace_code = 1; arg_replace_code = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--content-index") == 0) {
+			if (i+1 >= argc) { prt("Missing <search> argument for --content-index\n"); flush(); exit(1); }
+			ind_content_index = 1; content_index_search = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--grep") == 0) {
+			if (i+1 >= argc) { prt("Missing <pattern> argument for --grep\n"); flush(); exit(1); }
+			ind_grep = 1; grep_pattern = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--count-blocks") == 0) {
+			ind_count_blocks = 1; action_arg = 1;
+		} else if (strcmp(arg, "--files-blocks") == 0) {
+			ind_files_blocks = 1; action_arg = 1;
+		} else if (strcmp(arg, "--print-all") == 0) {
+			ind_print_all = 1; action_arg = 1;
+		} else if (strcmp(arg, "--run") == 0) {
+			if (i+1 >= argc) { prt("Missing <block_id> argument for --run\n"); flush(); exit(1); }
+			ind_run = 1; run_block_id = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--agents") == 0) {
+			ind_agents = 1; action_arg = 1;
+		} else if (strcmp(arg, "--agent-run") == 0) {
+			// Not implemented in this parse table since it takes two arguments; skipping for now.
+			prt("Unknown flag: --agent-run\n"); flush(); exit(1);
+		} else if (strcmp(arg, "--checksum") == 0) {
+			ind_checksum = 1; action_arg = 1;
+		} else if (strcmp(arg, "--T0") == 0) {
+			ind_T0 = 1; action_arg = 1;
+		} else if (strcmp(arg, "--event") == 0) {
+			if (i+1 >= argc) { prt("Missing <string> argument for --event\n"); flush(); exit(1); }
+			ind_event = 1; event_string = argv[++i];
+		} else if (strcmp(arg, "--strength") == 0) {
+			if (i+1 >= argc) { prt("Missing <value> argument for --strength\n"); flush(); exit(1); }
+			ind_strength = 1; event_strength_str = argv[++i];
+		} else if (strcmp(arg, "--query") == 0) {
+			if (i+1 >= argc) { prt("Missing <string> argument for --query\n"); flush(); exit(1); }
+			ind_query = 1; query_string = argv[++i];
+		} else if (strcmp(arg, "--memorize") == 0) {
+			ind_memorize = 1; action_arg = 1;
+		} else if (strcmp(arg, "--recall") == 0) {
+			ind_recall = 1; action_arg = 1;
+		} else if (strcmp(arg, "--recall-first") == 0) {
+			ind_recall_first = 1; action_arg = 1;
+		} else if (strcmp(arg, "--T") == 0) {
+			ind_T = 1; action_arg = 1;
+		} else if (strcmp(arg, "--event-spaces") == 0 || strcmp(arg, "--es") == 0) {
+			ind_es = 1; action_arg = 1;
+		} else if (strcmp(arg, "--wants") == 0) {
+			ind_wants = 1; action_arg = 1;
+		} else if (strcmp(arg, "--wants-status") == 0) {
+			ind_wants_status = 1; action_arg = 1;
+		} else if (strcmp(arg, "--agents-wants") == 0) {
+			ind_agents_wants = 1; action_arg = 1;
+		} else if (strcmp(arg, "--wants-dashboard") == 0) {
+			ind_wants_dashboard = 1; action_arg = 1;
+		} else if (strcmp(arg, "--event-report") == 0) {
+			ind_event_report = 1; action_arg = 1;
+		} else if (strcmp(arg, "--export-docs") == 0) {
+			ind_export_docs = 1; action_arg = 1;
+		} else if (strcmp(arg, "--find-deleted") == 0) {
+			ind_find_deleted = 1; action_arg = 1;
+		} else if (arg[0] == '-' && arg[1] == '-') {
+			prt("Unknown flag: %s\n", arg); flush(); exit(1);
+		} else {
+			// Treat as file argument or positional (file or "-")
+			if (ind_file_argument) {
+				prt("Multiple file arguments provided: %s\n", arg); flush(); exit(1);
+			}
+			ind_file_argument = 1;
+			file_argument = arg;
+		}
+	}
 
 /* #handle_args_events */
 // Event system commands - handle BEFORE general action dispatch
@@ -2632,6 +2626,7 @@ for (int i = 1; i < argc; i++) {
 			flush_exit(0);
 		}
 	}
+
 
 /* #handle_args_4 */
 if (ind_file_argument) {
@@ -2699,6 +2694,7 @@ if (ind_file_argument) {
 	             ind_event_report +
 	             ind_es +
 	             ind_export_docs +
+	             ind_find_deleted +
 	             ind_snapshot_join +
 	             ind_learn +
 	             ind_log_stochastic_count_joint;
@@ -2707,7 +2703,7 @@ if (ind_file_argument) {
 		prt("Error: Only one action argument may be used at a time.\n");
 		flush_exit(1);
 	}
-	
+
 	// Get code database if needed (for most commands)
 	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es) {
 		get_code();
@@ -2941,6 +2937,17 @@ if (ind_file_argument) {
 		flush_exit(0);
 	}
 
+	if (ind_find_deleted) {
+		get_revs();
+		span deleted = find_last_deleted_block();
+		if (len(deleted) == 0) {
+			prt("No deleted block found\n");
+		} else {
+			prt("%.*s", (int)len(deleted), deleted.buf);
+		}
+		flush_exit(0);
+	}
+
 	if (ind_event_report) {
 		handle_event_report();
 		flush_exit(0);
@@ -2955,123 +2962,6 @@ if (ind_file_argument) {
 }
 
 /* #handle_snapshot_join */
-void handle_snapshot_join(span es1, span es2) {
-    // Build filter paths
-    char es1_path[256], es2_path[256];
-    snprintf(es1_path, sizeof(es1_path), ".cmpr/es/%.*s", len(es1), es1.buf);
-    snprintf(es2_path, sizeof(es2_path), ".cmpr/es/%.*s", len(es2), es2.buf);
-    
-    // Check filters exist and are executable
-    if (access(es1_path, X_OK) != 0) {
-        prt("Error: Event space filter not found: %s\n", es1_path);
-        flush();
-        exit(1);
-    }
-    if (access(es2_path, X_OK) != 0) {
-        prt("Error: Event space filter not found: %s\n", es2_path);
-        flush();
-        exit(1);
-    }
-    
-    // Open events directory
-    DIR *dir = opendir(".cmpr/events");
-    if (!dir) {
-        flush();
-        return;
-    }
-    
-    // Collect snapshot filenames
-    char *snapshots[4096];
-    int n = 0;
-    struct dirent *de;
-    while ((de = readdir(dir)) != NULL && n < 4096) {
-        if (de->d_name[0] == '.') continue;
-        snapshots[n++] = strdup(de->d_name);
-    }
-    closedir(dir);
-    
-    if (n == 0) {
-        flush();
-        return;
-    }
-    
-    // Sort newest first (reverse strcmp)
-    for (int i = 0; i < n - 1; i++) {
-        for (int j = i + 1; j < n; j++) {
-            if (strcmp(snapshots[i], snapshots[j]) < 0) {
-                char *tmp = snapshots[i];
-                snapshots[i] = snapshots[j];
-                snapshots[j] = tmp;
-            }
-        }
-    }
-    
-    // Process each snapshot
-    for (int i = 0; i < n; i++) {
-        char snap_path[512];
-        snprintf(snap_path, sizeof(snap_path), ".cmpr/events/%s", snapshots[i]);
-        
-        // Run through ES1 filter
-        char cmd1[1024];
-        snprintf(cmd1, sizeof(cmd1), "cat '%s' | '%s'", snap_path, es1_path);
-        FILE *fp1 = popen(cmd1, "r");
-        char *es1_lines[1024];
-        int es1_n = 0;
-        if (fp1) {
-            char buf[4096];
-            while (fgets(buf, sizeof(buf), fp1) && es1_n < 1024) {
-                size_t l = strlen(buf);
-                if (l > 0 && buf[l-1] == '\n') buf[l-1] = 0;
-                if (buf[0]) es1_lines[es1_n++] = strdup(buf);
-            }
-            pclose(fp1);
-        }
-        
-        // Run through ES2 filter
-        char cmd2[1024];
-        snprintf(cmd2, sizeof(cmd2), "cat '%s' | '%s'", snap_path, es2_path);
-        FILE *fp2 = popen(cmd2, "r");
-        char *es2_lines[1024];
-        int es2_n = 0;
-        if (fp2) {
-            char buf[4096];
-            while (fgets(buf, sizeof(buf), fp2) && es2_n < 1024) {
-                size_t l = strlen(buf);
-                if (l > 0 && buf[l-1] == '\n') buf[l-1] = 0;
-                if (buf[0]) es2_lines[es2_n++] = strdup(buf);
-            }
-            pclose(fp2);
-        }
-        
-        // Check for strength 255 in each
-        int es1_has_255 = 0, es2_has_255 = 0;
-        for (int j = 0; j < es1_n; j++) {
-            char *p = strrchr(es1_lines[j], ' ');
-            if (p && atoi(p+1) == 255) { es1_has_255 = 1; break; }
-        }
-        for (int j = 0; j < es2_n; j++) {
-            char *p = strrchr(es2_lines[j], ' ');
-            if (p && atoi(p+1) == 255) { es2_has_255 = 1; break; }
-        }
-        
-        // Output if both have 255
-        if (es1_has_255 && es2_has_255) {
-            prt("%s\n", snapshots[i]);
-            for (int j = 0; j < es1_n; j++) prt("%s\n", es1_lines[j]);
-            for (int j = 0; j < es2_n; j++) prt("%s\n", es2_lines[j]);
-            prt("\n");
-        }
-        
-        // Free lines
-        for (int j = 0; j < es1_n; j++) free(es1_lines[j]);
-        for (int j = 0; j < es2_n; j++) free(es2_lines[j]);
-    }
-    
-    // Free snapshots
-    for (int i = 0; i < n; i++) free(snapshots[i]);
-    flush();
-}
-
 /* #help_text_nl2pl */
 /* #print_physical_lines */
 void print_physical_lines(span block, int lines_to_print) {
@@ -3867,53 +3757,33 @@ void parse_section_header_line(int *failure, int *section_type, int *block_numbe
 
 /* #parse_blocks_lines */
 void parse_blocks_lines(int *failure, time_t timestamp, int n_blocks, span rev_contents, span* rev_cache) {
-    span line;
-    int lines_handled = 0;
-
+    int count = 0;
     while (!empty(*rev_cache)) {
-        line = next_line(rev_cache);
-        if (empty(line)) break;
-
-        int comma_pos = find_char(line, ',');
-        if (comma_pos == -1) {
-            *failure = 1;
-            return;
+        span line = next_line(rev_cache);
+        if (empty(trim(line))) break;
+        int comma = find_char(line, ',');
+        if (comma < 0) { *failure = 1; return; }
+        span start_s = first_n(line, comma);
+        span end_s = skip_n(line, comma + 1);
+        int start = parse_int(trim(start_s));
+        int end = parse_int(trim(end_s));
+        if (start < 0 || end < start || end > len(rev_contents)) { *failure = 1; return; }
+        if (state->revs.n_revblocks == state->revs.cap_revblocks) {
+            size_t newcap = state->revs.cap_revblocks ? 2 * state->revs.cap_revblocks : 4;
+            state->revs.revblocks = realloc(state->revs.revblocks, newcap * sizeof(rev_block));
+            state->revs.cap_revblocks = newcap;
         }
-
-        span first_int_span = take_n(comma_pos, &line);
-        span second_int_span = skip_n(line, 1);
-
-        int start_offset = parse_int(first_int_span);
-        int end_offset = parse_int(second_int_span);
-
-        if (lines_handled >= n_blocks) {
-            *failure = 1;
-            return;
-        }
-
-        if (state->revs.cap_revblocks == 0) {
-            state->revs.cap_revblocks = 256;
-            state->revs.revblocks = realloc(state->revs.revblocks, state->revs.cap_revblocks * sizeof(rev_block));
-        } else if (state->revs.n_revblocks >= state->revs.cap_revblocks) {
-            state->revs.cap_revblocks *= 2;
-            state->revs.revblocks = realloc(state->revs.revblocks, state->revs.cap_revblocks * sizeof(rev_block));
-        }
-
-        span block_span = (span){ .buf = rev_contents.buf + start_offset, .end = rev_contents.buf + end_offset };
-
-        state->revs.revblocks[state->revs.n_revblocks].contents = block_span;
-        state->revs.revblocks[state->revs.n_revblocks].timestamp = timestamp;
-        // XXX bugfix!!
-        state->revs.revblocks[state->revs.n_revblocks].ids = spans_alloc(0);
-        state->revs.n_revblocks++;
-        lines_handled++;
+        rev_block *b = &state->revs.revblocks[state->revs.n_revblocks++];
+        b->contents.buf = rev_contents.buf + start;
+        b->contents.end = rev_contents.buf + end;
+        b->timestamp = timestamp;
+        b->ids.n = -1;
+        b->ids.a = NULL;
+        b->ids.cap = 0;
+        ++count;
     }
-
-    if (lines_handled != n_blocks) {
-        *failure = 1;
-    }
+    if (count != n_blocks) { *failure = 1; return; }
 }
-
 
 /* #parse_scs_lines */
 void parse_scs_lines(int *failure, int rev_block_idx, span* rev_cache) {
@@ -3929,42 +3799,17 @@ void parse_scs_lines(int *failure, int rev_block_idx, span* rev_cache) {
 
 /* #parse_ids_lines */
 void parse_ids_lines(int *failure, int rev_block_idx, span* rev_cache) {
-    span cache_copy = *rev_cache;
-    int id_count = 0;
-    while (!empty(cache_copy)) {
-        span line = next_line(&cache_copy);
-        if (empty(trim(line))) break;
-        id_count++;
-    }
+    // Set sentinel to indicate IDs not loaded
+    state->revs.revblocks[rev_block_idx].ids.n = -1;
+    state->revs.revblocks[rev_block_idx].ids.a = NULL;
+    state->revs.revblocks[rev_block_idx].ids.cap = 0;
 
-    // XXX: same bugfix!!
-    //state->revs.revblocks[rev_block_idx].ids = spans_alloc(id_count);
-    span contents = state->revs.revblocks[rev_block_idx].contents;
-
+    // Consume the lines without parsing
     while (!empty(*rev_cache)) {
         span line = next_line(rev_cache);
         if (empty(trim(line))) break;
-
-        int comma_idx = find_char(line, ',');
-        if (comma_idx == -1) {
-            *failure = 1;
-            return;
-        }
-
-        span before_comma = first_n(line, comma_idx);
-        span after_comma = skip_n(line, comma_idx + 1);
-
-        int start = parse_int(before_comma);
-        int end = parse_int(after_comma);
-
-        span id_span = { contents.buf + start, contents.buf + end };
-        spans_push(&state->revs.revblocks[rev_block_idx].ids, id_span);
     }
 }
-
-
-
-
 /* #get_revs_cache_put */
 void get_revs_cache_put(checksums* working_set, span bname, span content) {
     if (empty(content))
@@ -4362,6 +4207,112 @@ checksums load_revblock_checksums(int revblock_idx) {
 
     cmp.end = old_end;
     return cksums;
+}
+
+/* #load_revblock_ids */
+spans load_revblock_ids(int revblock_idx) {
+    rev_block* rb = &state->revs.revblocks[revblock_idx];
+    // Get timestamp string for cache filename
+    char timestamp_str[17];
+    time_t ts = rb->timestamp;
+    strftime(timestamp_str, sizeof(timestamp_str), "%Y%m%d-%H%M%S", localtime(&ts));
+    span cmprdir = state->cmprdir;
+    span cache_path = prs("%.*s/cache/v8/revs/%s", (int)len(cmprdir), cmprdir.buf, timestamp_str);
+
+    if (!readable_file(cache_path)) {
+        spans empty = { .n = 0, .a = NULL, .cap = 0 };
+        return empty;
+    }
+
+    u8* cmp_save = cmp.end;
+    span cache_contents = read_file_into_cmp(cache_path);
+
+    // Determine which block number this is in the rev file
+    int n_block = 0;
+    time_t want_ts = rb->timestamp;
+    for (int i = 0; i <= revblock_idx; ++i)
+        if (state->revs.revblocks[i].timestamp == want_ts)
+            ++n_block;
+
+    span want_section = prs("block %d ids", n_block);
+    // Scan to our section
+    span input = cache_contents;
+    span line;
+    int found_section = 0;
+    int num_lines = 0;
+
+    // skip header
+    while (!empty(input)) {
+        line = next_line(&input);
+        if (empty(trim(line))) break;
+    }
+
+    // search for section
+    while (!empty(input)) {
+        span sectline = next_line(&input);
+        if (span_eq(trim(sectline), want_section)) {
+            found_section = 1;
+            break;
+        }
+    }
+    if (!found_section) {
+        cmp.end = cmp_save;
+        spans empty = { .n = 0, .a = NULL, .cap = 0 };
+        return empty;
+    }
+
+    span content = rb->contents;
+    // Count lines in this section until blank line or end
+    u8* pos = input.buf;
+    u8* end = input.end;
+    for (;;) {
+        // find next '\n' or end
+        u8* nl = memchr(pos, '\n', end - pos);
+        span thisline;
+        if (nl)
+            thisline = (span){.buf = pos, .end = nl};
+        else
+            thisline = (span){.buf = pos, .end = end};
+        if (empty(trim(thisline))) break;
+        ++num_lines;
+        if (!nl) break;
+        pos = nl + 1;
+    }
+
+    spans ids = spans_alloc(num_lines);
+    input = cache_contents;
+    // skip header again
+    while (!empty(input)) {
+        line = next_line(&input);
+        if (empty(trim(line))) break;
+    }
+    // go to section again
+    while (!empty(input)) {
+        span sectline = next_line(&input);
+        if (span_eq(trim(sectline), want_section)) {
+            break;
+        }
+    }
+
+    // Parse the section lines
+    while (!empty(input) && num_lines > 0) {
+        span sid = next_line(&input);
+        if (empty(trim(sid))) break;
+        // parse start,end
+        int comma = find_char(sid, ',');
+        if (comma < 0) continue;
+        span s_start = (span){sid.buf, sid.buf + comma};
+        span s_end = (span){sid.buf + comma + 1, sid.end};
+        int start = parse_int(s_start);
+        int endval = parse_int(s_end);
+        if (start > endval || start < 0 || endval > len(content)) continue;
+        span idspan = (span){content.buf + start, content.buf + endval};
+        spans_push(&ids, idspan);
+        --num_lines;
+    }
+
+    cmp.end = cmp_save;
+    return ids;
 }
 
 /* #sbv_populate */
@@ -5158,23 +5109,43 @@ void delete_block() {
 }
 /* #find_last_deleted_block */
 span find_last_deleted_block() {
-    for (int i = 0; i < state->revs.n_revblocks; ++i) {
+    for(int i = 0; i < state->revs.n_revblocks; ++i) {
         rev_block *rb = &state->revs.revblocks[i];
-        if (rb->ids.n == 0) continue;
+        if(rb->ids.n == -1) {
+            spans_arena_push();
+            spans ids = load_revblock_ids(i);
+            int found_in_current = 0;
+            for(int j = 0; j < ids.n && !found_in_current; ++j) {
+                for(int k = 0; k < state->block_idx.n; ++k) {
+                    if(span_eq(ids.a[j], state->block_idx.a[k])) {
+                        found_in_current = 1;
+                        break;
+                    }
+                }
+            }
+            spans_arena_pop();
+            if(!found_in_current && ids.n > 0) {
+                return rb->contents;
+            }
+            continue;
+        }
+        if(rb->ids.n == 0) continue;
         int found_in_current = 0;
-        for (int j = 0; j < rb->ids.n; ++j) {
-            for (int k = 0; k < state->block_idx.n; ++k) {
-                if (span_eq(rb->ids.a[j], state->block_idx.a[k])) {
+        for(int j = 0; j < rb->ids.n && !found_in_current; ++j) {
+            for(int k = 0; k < state->block_idx.n; ++k) {
+                if(span_eq(rb->ids.a[j], state->block_idx.a[k])) {
                     found_in_current = 1;
                     break;
                 }
             }
-            if (found_in_current) break;
         }
-        if (!found_in_current) return rb->contents;
+        if(!found_in_current) {
+            return rb->contents;
+        }
     }
     return nullspan();
 }
+
 /* #paste_after */
 void paste_after() {
     if (state->curr_block_idx == -1 || state->blocks.n == 0) {
@@ -6997,6 +6968,10 @@ void print_code(int index) {
     if (index < 0 || index >= state->blocks.n) return;
     span block = state->blocks.a[index];
     span comment_part = block_comment_part(block);
+    if (comment_part.end == NULL) {
+        prt("Warning: block %d has no comment terminator (malformed block)\n", index + 1);
+        return;
+    }
     span code_part = block;
     code_part.buf = comment_part.end;
     wrs(code_part);

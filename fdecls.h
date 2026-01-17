@@ -7,6 +7,7 @@ spans dir_listing(span dirname);
 void event_parse_sn(span content);
 void event_parse_sn(span);
 checksums load_revblock_checksums(int revblock_idx);
+spans load_revblock_ids(int revblock_idx);
 Partial partial_sp_sp(span, void(*)(span,span));
 Partial partial_0_sp(void(*)(span));
 void apply_partial(Partial,span);
