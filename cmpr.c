@@ -2391,6 +2391,7 @@ int ind_conf = 0;
 	int ind_print_all = 0;
 	int ind_rewritepl = 0;
 	int ind_prompt = 0;
+	int ind_llm = 0;
 	int ind_after = 0;
 	int ind_before = 0;
 	int ind_replace = 0;
@@ -2487,6 +2488,8 @@ for (int i = 1; i < argc; i++) {
 		} else if (strcmp(arg, "--prompt") == 0) {
 			if (i+1 >= argc) { prt("Missing <id> argument for --prompt\n"); flush(); exit(1); }
 			ind_prompt = 1; arg_prompt = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--llm") == 0) {
+			ind_llm = 1; action_arg = 1;
 		} else if (strcmp(arg, "--after") == 0) {
 			if (i+1 >= argc) { prt("Missing <id> argument for --after\n"); flush(); exit(1); }
 			ind_after = 1; arg_after = argv[++i]; action_arg = 1;
@@ -2570,7 +2573,6 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
-
 /* #handle_args_events */
 // Event system commands - handle BEFORE general action dispatch
 	// because --after/--before mean timestamps here, not block ids
@@ -2684,7 +2686,7 @@ if (ind_file_argument) {
 	// Count action flags (excluding event-related flags which are handled separately)
 	action_arg = ind_print_block + ind_print_comment + ind_print_code + ind_expand_block +
 	             ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all +
-	             ind_rewritepl + ind_prompt + ind_after + ind_replace + ind_replace_comment + ind_replace_code +
+	             ind_rewritepl + ind_prompt + ind_llm + ind_after + ind_replace + ind_replace_comment + ind_replace_code +
 	             ind_run + ind_agents + ind_checksum +
 	             ind_map_error + ind_test_block_map +
 	             ind_wants +
@@ -2705,7 +2707,7 @@ if (ind_file_argument) {
 	}
 
 	// Get code database if needed (for most commands)
-	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es) {
+	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es) {
 		get_code();
 	}
 	
@@ -2795,6 +2797,11 @@ if (ind_file_argument) {
 			flush_exit(1);
 		}
 		handle_prompt(idx);
+		flush_exit(0);
+	}
+	
+	if (ind_llm) {
+		handle_llm();
 		flush_exit(0);
 	}
 	
@@ -2960,7 +2967,6 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
-
 /* #handle_snapshot_join */
 /* #help_text_nl2pl */
 /* #print_physical_lines */
@@ -6522,6 +6528,24 @@ void send_to_llm(span prompt, llm_message_handler cb) {
     call_llm(state->model, messages, cb);
 }
 
+
+
+/* #llm_stdout_handler */
+void llm_stdout_handler(span response) {
+    prt("%.*s", len(response), response.buf);
+    flush();
+}
+
+/* #handle_llm */
+void handle_llm(void) {
+    span input = read_stdin_into_cmp();
+    if (len(input) == 0) {
+        prt("No input provided\n");
+        flush_err();
+        exit(1);
+    }
+    send_to_llm(input, simple_message_handler(llm_stdout_handler));
+}
 
 /* #handle_openai_response */
 void handle_openai_response(span response, llm_message_handler cb) {

@@ -163,6 +163,8 @@ void handle_edited_file(char *filename);
 void new_rev(span tmp_filename, int file_index);
 void update_projfile(int file_index, span tmp_filename, span rev_path);
 void send_to_llm(span, llm_message_handler cb);
+void llm_stdout_handler(span);
+void handle_llm(void);
 void handle_openai_response(span response, llm_message_handler cb);
 void handle_ollama_response(span response, llm_message_handler cb);
 void handle_anthropic_response(span response, llm_message_handler cb);
