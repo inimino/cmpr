@@ -1471,13 +1471,15 @@ typedef struct ui_state {
     span manual_filename;
     span open_block_id;
     int count_prefix;
+    int inbox_mode;
+    int inbox_start_idx;
+    int inbox_end_idx;
     #define X(name) span name;
     CONFIG_FIELDS
     #undef X
 } ui_state;
 
 ui_state* state;
-
 /* #parse_int */
 int parse_int(span s) {
     if (empty(s) || !isdigit(*s.buf)) {
@@ -1616,7 +1618,7 @@ void event_add(span event_str, unsigned char strength) {
     snprintf(new_depth, sizeof(new_depth), "%d", depth + 1);
     setenv("CMPR_PATTERN_DEPTH", new_depth, 1);
 
-    system("scripts/patterns");
+    system(".cmpr/scripts/patterns");
 
     if (depth_str) {
         setenv("CMPR_PATTERN_DEPTH", depth_str, 1);
@@ -1624,6 +1626,7 @@ void event_add(span event_str, unsigned char strength) {
         unsetenv("CMPR_PATTERN_DEPTH");
     }
 }
+
 
 /* #event_memorize */
 void event_memorize() {
@@ -2077,8 +2080,28 @@ void read_(int argc, char** argv) {
         }
         state->curr_block_idx = idx;
     }
-}
 
+    // Handle inbox mode (--inbox)
+    if (state->inbox_mode) {
+        int inbox_idx = block_from_arg("#INBOX");
+        int end_inbox_idx = block_from_arg("#END_INBOX");
+        if (inbox_idx < 0 || inbox_idx >= state->blocks.n) {
+            prt("Error: #INBOX block not found. See `cmpr --help inbox` for setup.\n");
+            flush_exit(1);
+        }
+        if (end_inbox_idx < 0 || end_inbox_idx >= state->blocks.n) {
+            prt("Error: #END_INBOX block not found. See `cmpr --help inbox` for setup.\n");
+            flush_exit(1);
+        }
+        if (end_inbox_idx <= inbox_idx) {
+            prt("Error: #END_INBOX must come after #INBOX\n");
+            flush_exit(1);
+        }
+        state->inbox_start_idx = inbox_idx;
+        state->inbox_end_idx = end_inbox_idx;
+        state->curr_block_idx = inbox_idx;
+    }
+}
 /* #call_llm */
 void call_llm(span model, json messages, llm_message_handler cb) {
     network_ret ret;
@@ -2396,11 +2419,11 @@ int ind_conf = 0;
 	int ind_count_blocks = 0;
 	int ind_files_blocks = 0;
 	int ind_print_all = 0;
+	int ind_inbox = 0;
 	int ind_rewritepl = 0;
 	int ind_prompt = 0;
 	int ind_llm = 0;
 	int ind_after = 0;
-	int ind_before = 0;
 	int ind_replace = 0;
 	int ind_replace_comment = 0;
 	int ind_replace_code = 0;
@@ -2434,6 +2457,7 @@ int ind_conf = 0;
 	int ind_file_argument = 0;
 	int ind_open_block = 0;
 	int ind_find_deleted = 0;
+	int ind_status = 0;
 
 	char *conf_filepath = NULL;
 	char *help_topic = NULL;
@@ -2465,6 +2489,7 @@ int ind_conf = 0;
 	char *arg_open_block = NULL;
 
 	int action_arg = 0;
+
 /* #handle_args_3 */
 for (int i = 1; i < argc; i++) {
 		char *arg = argv[i];
@@ -2507,7 +2532,7 @@ for (int i = 1; i < argc; i++) {
 			ind_after = 1; arg_after = argv[++i]; action_arg = 1;
 		} else if (strcmp(arg, "--before") == 0) {
 			if (i+1 >= argc) { prt("Missing <ts> argument for --before\n"); flush(); exit(1); }
-			ind_before = 1; arg_before = argv[++i];
+			arg_before = argv[++i];
 		} else if (strcmp(arg, "--replace") == 0) {
 			if (i+1 >= argc) { prt("Missing <id> argument for --replace\n"); flush(); exit(1); }
 			ind_replace = 1; arg_replace = argv[++i]; action_arg = 1;
@@ -2529,6 +2554,8 @@ for (int i = 1; i < argc; i++) {
 			ind_files_blocks = 1; action_arg = 1;
 		} else if (strcmp(arg, "--print-all") == 0) {
 			ind_print_all = 1; action_arg = 1;
+		} else if (strcmp(arg, "--inbox") == 0) {
+			ind_inbox = 1;
 		} else if (strcmp(arg, "--run") == 0) {
 			if (i+1 >= argc) { prt("Missing <block_id> argument for --run\n"); flush(); exit(1); }
 			ind_run = 1; run_block_id = argv[++i]; action_arg = 1;
@@ -2579,6 +2606,8 @@ for (int i = 1; i < argc; i++) {
 			ind_export_docs = 1; action_arg = 1;
 		} else if (strcmp(arg, "--find-deleted") == 0) {
 			ind_find_deleted = 1; action_arg = 1;
+		} else if (strcmp(arg, "--status") == 0) {
+			ind_status = 1; action_arg = 1;
 		} else if (strcmp(arg, "--install-script") == 0) {
 			if (i+1 >= argc) { prt("Missing <name> argument for --install-script\n"); flush(); exit(1); }
 			ind_install_script = 1; arg_install_script = argv[++i]; action_arg = 1;
@@ -2600,6 +2629,9 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
+
+
 
 
 
@@ -2678,6 +2710,11 @@ if (ind_file_argument) {
 		state->open_block_id = S(arg_open_block);
 	}
 
+	// Handle --inbox (TUI filtered to inbox region)
+	if (ind_inbox) {
+		state->inbox_mode = 1;
+	}
+
 // Handle --help, --version, --init first
 	if (ind_help) {
 		//get_code();
@@ -2738,6 +2775,7 @@ if (ind_file_argument) {
 	             ind_agents_wants +
 	             ind_wants_dashboard +
 	             ind_event_report +
+	             ind_status +
 	             ind_es +
 	             ind_export_docs +
 	             ind_find_deleted +
@@ -3014,6 +3052,11 @@ if (ind_file_argument) {
 		flush_exit(0);
 	}
 
+	if (ind_status) {
+		handle_status();
+		flush_exit(0);
+	}
+
 	if (ind_es) {
 		handle_es();
 		flush_exit(0);
@@ -3021,6 +3064,8 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
+
+
 
 
 /* #handle_snapshot_join */
@@ -5321,9 +5366,17 @@ void handle_j() {
     if (state->curr_file_idx == -1) return;
     
     int count = state->count_prefix > 0 ? state->count_prefix : 1;
+    int max_idx = state->inbox_mode ? state->inbox_end_idx : state->blocks.n - 1;
     
     for (int i = 0; i < count; i++) {
         if (state->curr_block_idx == -1) {
+            // Empty file state - in inbox mode, go to inbox_start
+            if (state->inbox_mode) {
+                state->curr_block_idx = state->inbox_start_idx;
+                state->curr_file_idx = file_for_block(state->blocks.a[state->curr_block_idx]);
+                state->scrolled_lines = 0;
+                return;
+            }
             if (state->curr_file_idx + 1 < state->files.n) {
                 state->curr_file_idx += 1;
                 if (empty(state->files.a[state->curr_file_idx].contents))
@@ -5332,18 +5385,26 @@ void handle_j() {
                 state->scrolled_lines = 0;
             }
         } else {
+            // Check inbox bounds
+            if (state->inbox_mode && state->curr_block_idx >= max_idx) {
+                return;
+            }
             if (state->blocks.a[state->curr_block_idx].end == state->files.a[state->curr_file_idx].contents.end) {
                 if (state->curr_file_idx + 1 < state->files.n) {
                     state->curr_file_idx += 1;
                     if (empty(state->files.a[state->curr_file_idx].contents)) {
-                        state->curr_block_idx = -1;
+                        if (!state->inbox_mode) state->curr_block_idx = -1;
                         return;
                     }
                     state->curr_block_idx = first_block_in_file(state->curr_file_idx);
+                    // Clamp to inbox bounds
+                    if (state->inbox_mode && state->curr_block_idx > max_idx) {
+                        state->curr_block_idx = max_idx;
+                    }
                     state->scrolled_lines = 0;
                 }
             } else {
-                if (state->curr_block_idx + 1 < state->blocks.n) {
+                if (state->curr_block_idx + 1 <= max_idx) {
                     state->curr_block_idx += 1;
                     state->scrolled_lines = 0;
                 }
@@ -5356,9 +5417,17 @@ void handle_k() {
     if (state->curr_file_idx == -1) return;
     
     int count = state->count_prefix > 0 ? state->count_prefix : 1;
+    int min_idx = state->inbox_mode ? state->inbox_start_idx : 0;
     
     for (int i = 0; i < count; i++) {
         if (state->curr_block_idx == -1) {
+            // Empty file state - in inbox mode, go to inbox_end
+            if (state->inbox_mode) {
+                state->curr_block_idx = state->inbox_end_idx;
+                state->curr_file_idx = file_for_block(state->blocks.a[state->curr_block_idx]);
+                state->scrolled_lines = 0;
+                return;
+            }
             if (state->curr_file_idx - 1 >= 0) {
                 state->curr_file_idx -= 1;
                 if (empty(state->files.a[state->curr_file_idx].contents))
@@ -5367,19 +5436,29 @@ void handle_k() {
                 state->scrolled_lines = 0;
             }
         } else {
+            // Check inbox bounds
+            if (state->inbox_mode && state->curr_block_idx <= min_idx) {
+                return;
+            }
             if (state->blocks.a[state->curr_block_idx].buf == state->files.a[state->curr_file_idx].contents.buf) {
                 if (state->curr_file_idx - 1 >= 0) {
                     state->curr_file_idx -= 1;
                     if (empty(state->files.a[state->curr_file_idx].contents)) {
-                        state->curr_block_idx = -1;
+                        if (!state->inbox_mode) state->curr_block_idx = -1;
                         return;
                     }
                     state->curr_block_idx = last_block_in_file(state->curr_file_idx);
+                    // Clamp to inbox bounds
+                    if (state->inbox_mode && state->curr_block_idx < min_idx) {
+                        state->curr_block_idx = min_idx;
+                    }
                     state->scrolled_lines = 0;
                 }
             } else {
-                state->curr_block_idx -= 1;
-                state->scrolled_lines = 0;
+                if (state->curr_block_idx - 1 >= min_idx) {
+                    state->curr_block_idx -= 1;
+                    state->scrolled_lines = 0;
+                }
             }
         }
     }
@@ -5387,6 +5466,13 @@ void handle_k() {
 
 void handle_g() {
     if (state->files.n == 0) return;
+
+    if (state->inbox_mode) {
+        state->curr_block_idx = state->inbox_start_idx;
+        state->curr_file_idx = file_for_block(state->blocks.a[state->curr_block_idx]);
+        state->scrolled_lines = 0;
+        return;
+    }
 
     state->curr_file_idx = 0;
     if (empty(state->files.a[0].contents)) {
@@ -5403,17 +5489,25 @@ void handle_G() {
     if (state->count_prefix > 0) {
         // NG goes to block N (1-indexed)
         int target = state->count_prefix - 1;
-        if (target >= state->blocks.n) {
-            target = state->blocks.n - 1;
-        }
-        if (target < 0) {
-            target = 0;
+        if (state->inbox_mode) {
+            // In inbox mode, clamp to inbox range
+            if (target < state->inbox_start_idx) target = state->inbox_start_idx;
+            if (target > state->inbox_end_idx) target = state->inbox_end_idx;
+        } else {
+            if (target >= state->blocks.n) target = state->blocks.n - 1;
+            if (target < 0) target = 0;
         }
         state->curr_block_idx = target;
         state->curr_file_idx = file_for_block(state->blocks.a[target]);
         state->scrolled_lines = 0;
     } else {
-        // G with no count goes to last block
+        // G with no count goes to last block (or inbox_end in inbox mode)
+        if (state->inbox_mode) {
+            state->curr_block_idx = state->inbox_end_idx;
+            state->curr_file_idx = file_for_block(state->blocks.a[state->curr_block_idx]);
+            state->scrolled_lines = 0;
+            return;
+        }
         state->curr_file_idx = state->files.n - 1;
         if (empty(state->files.a[state->files.n - 1].contents)) {
             state->curr_block_idx = -1;
@@ -7205,20 +7299,30 @@ void handle_agent_run(char* agent_name, char* mode) {
 extern char *available_agents[];
 
 void handle_agents() {
-    prt("%-12s %-12s %-16s\n", "AGENT", "INSTALLED", "RUNNING");
-    prt("%-12s %-12s %-16s\n", "------------", "------------", "----------------");
+    prt("%-24s %-12s %-16s\n", "AGENT", "INSTALLED", "RUNNING");
+    prt("%-24s %-12s %-16s\n", "------------------------", "------------", "----------------");
     
     int count = 0;
+    
+    // Track which agents we've listed (to avoid duplicates)
+    char listed[256][64];
+    int listed_count = 0;
+    
+    // First: embedded agents from available_agents[]
     for (int i = 0; available_agents[i] != NULL; i++) {
         char *name = available_agents[i];
         
-        // Check if installed
-        char path[256];
+        // Track as listed
+        if (listed_count < 256) {
+            strncpy(listed[listed_count], name, 63);
+            listed[listed_count][63] = 0;
+            listed_count++;
+        }
+        
+        char path[512];
         snprintf(path, sizeof(path), ".cmpr/agents/%s", name);
         int installed = (access(path, X_OK) == 0);
         
-        // Check if running using pgrep
-        // The [.] bracket trick prevents pgrep from matching itself
         char running_str[32] = "-";
         if (installed) {
             char cmd[512];
@@ -7232,17 +7336,58 @@ void handle_agents() {
                     snprintf(running_str, sizeof(running_str), "no");
                 }
                 pclose(fp);
-            } else {
-                snprintf(running_str, sizeof(running_str), "no");
             }
         }
         
-        prt("%-12s %-12s %-16s\n", name, installed ? "yes" : "no", running_str);
+        prt("%-24s %-12s %-16s\n", name, installed ? "yes" : "no", running_str);
         count++;
+    }
+    
+    // Second: scan .cmpr/agents/ for custom agents
+    DIR *dir = opendir(".cmpr/agents");
+    if (dir) {
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            if (entry->d_name[0] == '.') continue;
+            if (entry->d_type == DT_DIR) continue;
+            
+            // Check if already listed
+            int already_listed = 0;
+            for (int i = 0; i < listed_count; i++) {
+                if (strcmp(listed[i], entry->d_name) == 0) {
+                    already_listed = 1;
+                    break;
+                }
+            }
+            if (already_listed) continue;
+            
+            // Check if executable
+            char path[512];
+            snprintf(path, sizeof(path), ".cmpr/agents/%s", entry->d_name);
+            if (access(path, X_OK) != 0) continue;
+            
+            // Check if running
+            char running_str[32] = "no";
+            char cmd[512];
+            snprintf(cmd, sizeof(cmd), "pgrep -f '[.]cmpr/agents/%s' 2>/dev/null | head -1", entry->d_name);
+            FILE *fp = popen(cmd, "r");
+            if (fp) {
+                int pid = 0;
+                if (fscanf(fp, "%d", &pid) == 1 && pid > 0) {
+                    snprintf(running_str, sizeof(running_str), "yes (%d)", pid);
+                }
+                pclose(fp);
+            }
+            
+            prt("%-24s %-12s %-16s\n", entry->d_name, "yes", running_str);
+            count++;
+        }
+        closedir(dir);
     }
     
     prt("\nTotal: %d agents\n", count);
 }
+
 
 /* #handle_install_agent */
 void handle_install_agent(char *agent_name) {
@@ -7282,13 +7427,156 @@ span script_Tcks(span s) {
         "cmpr --event \"Tcks: $(cmpr --T | cmpr --checksum)\" --strength 255\n"
     ); else return nullspan();
 }
+
+/* #script_blockid_impl */
+span script_blockid(span s) {
+    if (empty(s) || span_eq(S("blockid"), s)) return S(
+        "#!/bin/sh\n"
+        "cmpr --T|awk '/\"The blockid is: (.*)\" 255[.]/{print $4}'|tr -d '\".'\n"
+    ); else return nullspan();
+}
+
+/* #script_checksum_impl */
+span script_checksum(span s) {
+    if (empty(s) || span_eq(S("checksum"), s)) return S(
+        "#!/bin/sh\n"
+        "BID=$(.cmpr/scripts/blockid)\n"
+        "cmpr --recall 2>/dev/null\n"
+        "cmpr --event \"The blkcks is the block checksum.\" --strength 255\n"
+        "cmpr --event \"The blkcks is: $(cmpr --print-block \"$BID\" | cmpr --checksum)\" --strength 255\n"
+    ); else return nullspan();
+}
+/* #script_patterns_impl */
+span script_patterns(span s) {
+    if (empty(s) || span_eq(S("patterns"), s)) return S(
+"#!/bin/bash\n"
+"# Pattern processing for event system\n"
+"# Called by cmpr --event with CMPR_EVENT, CMPR_STRENGTH, CMPR_PATTERN_DEPTH set\n"
+"\n"
+"t_debug() { [ -f .cmpr/T-debug ] && echo \"[T-debug] patterns: $*\" >&2; }\n"
+"\n"
+"lsi_should_increment() {\n"
+"    local n=$1\n"
+"    [ \"$n\" -eq 0 ] && return 0\n"
+"    local random_bits=$(od -An -tu4 -N4 /dev/urandom | tr -d ' ')\n"
+"    local mask=$(( (1 << n) - 1 ))\n"
+"    local masked=$(( random_bits & mask ))\n"
+"    [ \"$masked\" -eq \"$mask\" ]\n"
+"}\n"
+"\n"
+"[ -z \"$CMPR_EVENT\" ] && exit 0\n"
+"STRENGTH=\"${CMPR_STRENGTH:-0}\"\n"
+"SN_LINE=\"\\\"$CMPR_EVENT\\\" $STRENGTH.\"\n"
+"\n"
+"matched_es=\"\"\n"
+"for filter in .cmpr/es/*; do\n"
+"    [ -x \"$filter\" ] || continue\n"
+"    es_name=$(basename \"$filter\")\n"
+"    if echo \"$SN_LINE\" | \"$filter\" | grep -q .; then\n"
+"        matched_es=\"$matched_es $es_name\"\n"
+"    fi\n"
+"done\n"
+"[ -z \"$matched_es\" ] && exit 0\n"
+"\n"
+"for es in $matched_es; do\n"
+"    if [ -x \".cmpr/induced/$es\" ]; then\n"
+"        t_debug \"induced $es -> .cmpr/induced/$es\"\n"
+"        \".cmpr/induced/$es\"\n"
+"    fi\n"
+"done\n"
+"\n"
+"for es in $matched_es; do\n"
+"    if [ -x \".cmpr/surprise-high/$es\" ]; then\n"
+"        other_events=$(cmpr --T | \".cmpr/es/$es\" | grep ' 255\\.$')\n"
+"        count=$(echo \"$other_events\" | grep -v \"^\\\"$CMPR_EVENT\\\" \" | grep -c . || echo 0)\n"
+"        if [ \"$count\" -gt 0 ]; then\n"
+"            t_debug \"surprise-high $es -> .cmpr/surprise-high/$es\"\n"
+"            \".cmpr/surprise-high/$es\"\n"
+"        fi\n"
+"    fi\n"
+"done\n"
+"\n"
+"for es in $matched_es; do\n"
+"    shopt -s nullglob\n"
+"    for pattern_file in .cmpr/patterns/*-*; do\n"
+"        [ -f \"$pattern_file\" ] || continue\n"
+"        fname=$(basename \"$pattern_file\")\n"
+"        es1=\"${fname%%-*}\"\n"
+"        es2=\"${fname##*-}\"\n"
+"        other_es=\"\" search_col=\"\"\n"
+"        if [ \"$es\" = \"$es1\" ]; then other_es=\"$es2\"; search_col=1\n"
+"        elif [ \"$es\" = \"$es2\" ]; then other_es=\"$es1\"; search_col=2\n"
+"        else continue; fi\n"
+"\n"
+"        if [ \"$STRENGTH\" = \"255\" ]; then\n"
+"            other_filter=\".cmpr/es/$other_es\"\n"
+"            if [ -x \"$other_filter\" ]; then\n"
+"                other_events=$(cmpr --T | \"$other_filter\" | grep ' 255\\.$')\n"
+"                if [ -n \"$other_events\" ]; then\n"
+"                    echo \"$other_events\" | while IFS= read -r other_line; do\n"
+"                        [ -z \"$other_line\" ] && continue\n"
+"                        other_event=$(echo \"$other_line\" | sed 's/^\"\\(.*\\)\" [0-9]*\\.$/\\1/')\n"
+"                        if [ \"$search_col\" = \"1\" ]; then\n"
+"                            pair_prefix=\"\\\"$CMPR_EVENT\\\" \\\"$other_event\\\"\"\n"
+"                        else\n"
+"                            pair_prefix=\"\\\"$other_event\\\" \\\"$CMPR_EVENT\\\"\"\n"
+"                        fi\n"
+"                        current_line=$(grep -F \"$pair_prefix\" \"$pattern_file\" 2>/dev/null | head -1)\n"
+"                        if [ -n \"$current_line\" ]; then\n"
+"                            current_count=$(echo \"$current_line\" | sed -n 's/.* \\([0-9]*\\)\\.$/\\1/p')\n"
+"                            [ -z \"$current_count\" ] && current_count=0\n"
+"                        else current_count=0; fi\n"
+"                        if lsi_should_increment \"$current_count\"; then\n"
+"                            new_count=$((current_count + 1))\n"
+"                            new_line=\"$pair_prefix $new_count.\"\n"
+"                            if [ -n \"$current_line\" ]; then\n"
+"                                grep -vF \"$pair_prefix\" \"$pattern_file\" > \"$pattern_file.tmp\"\n"
+"                                echo \"$new_line\" >> \"$pattern_file.tmp\"\n"
+"                                mv \"$pattern_file.tmp\" \"$pattern_file\"\n"
+"                            else echo \"$new_line\" >> \"$pattern_file\"; fi\n"
+"                        fi\n"
+"                    done\n"
+"                fi\n"
+"            fi\n"
+"        fi\n"
+"\n"
+"        if [ -f \"$pattern_file\" ]; then\n"
+"            while IFS= read -r line; do\n"
+"                [ -z \"$line\" ] && continue\n"
+"                if [ \"$search_col\" = \"1\" ]; then\n"
+"                    match_event=$(echo \"$line\" | sed -n 's/^\"\\([^\"]*\\)\" \"\\([^\"]*\\)\" \\([0-9]*\\)\\.$/\\1/p')\n"
+"                    emit_event=$(echo \"$line\" | sed -n 's/^\"\\([^\"]*\\)\" \"\\([^\"]*\\)\" \\([0-9]*\\)\\.$/\\2/p')\n"
+"                    emit_strength=$(echo \"$line\" | sed -n 's/^\"\\([^\"]*\\)\" \"\\([^\"]*\\)\" \\([0-9]*\\)\\.$/\\3/p')\n"
+"                else\n"
+"                    match_event=$(echo \"$line\" | sed -n 's/^\"\\([^\"]*\\)\" \"\\([^\"]*\\)\" \\([0-9]*\\)\\.$/\\2/p')\n"
+"                    emit_event=$(echo \"$line\" | sed -n 's/^\"\\([^\"]*\\)\" \"\\([^\"]*\\)\" \\([0-9]*\\)\\.$/\\1/p')\n"
+"                    emit_strength=$(echo \"$line\" | sed -n 's/^\"\\([^\"]*\\)\" \"\\([^\"]*\\)\" \\([0-9]*\\)\\.$/\\3/p')\n"
+"                fi\n"
+"                if [ \"$match_event\" = \"$CMPR_EVENT\" ] && [ -n \"$emit_event\" ] && [ -n \"$emit_strength\" ]; then\n"
+"                    current_strength=$(cmpr --query \"$emit_event\" 2>/dev/null || echo 0)\n"
+"                    if [ \"$emit_strength\" -gt \"$current_strength\" ]; then\n"
+"                        t_debug \"populate $fname: \\\"$emit_event\\\" $emit_strength.\"\n"
+"                        cmpr --event \"$emit_event\" --strength \"$emit_strength\"\n"
+"                    fi\n"
+"                fi\n"
+"            done < \"$pattern_file\"\n"
+"        fi\n"
+"    done\n"
+"done\n"
+    ); else return nullspan();
+}
 /* #get_script */
 span get_script(span name) {
   span res = script_Tcks(name);
   if (!empty(res)) return res;
+  res = script_blockid(name);
+  if (!empty(res)) return res;
+  res = script_checksum(name);
+  if (!empty(res)) return res;
+  res = script_patterns(name);
+  if (!empty(res)) return res;
   return nullspan();
 }
-
 /* #handle_install_script */
 void handle_install_script(char *script_name) {
   span name = S(script_name);
@@ -7315,18 +7603,18 @@ void handle_install_script(char *script_name) {
 /* #help_text_summary_impl */
 span help_text_summary(span s) {
   if (empty(s) || span_eq(S("help_text_summary"), s)) return S(
-"Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs]\n"
+"Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all|--inbox|--status] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs]\n"
 "\n"
 "For help on available topics: cmpr --help topics\n"
 ); else return nullspan();
 }
-
 /* #help_text_topics_impl */
 span help_text_topics(span s) {
   if (empty(s) || span_eq(S("help_text_topics"), s)) return S(
 "topics\n\
 basics\n\
 blocks\n\
+inbox\n\
 editing\n\
 search\n\
 nl2pl\n\
@@ -7338,7 +7626,6 @@ claude-setup\n\
 ");
   else return nullspan();
 }
-
 /* #help_text_basic_impl */
 span help_text_basic(span s) {
   if (empty(s) || span_eq(S("help_text_basic"),s)) return S(
@@ -7422,7 +7709,9 @@ span help_text_blocks(span s) {
 "If you're starting a new cmpr project, or adapting an existing codebase to use cmpr, we highly recommend creating two blocks:\n"
 "\n"
 "- #root should contain your project overview and will gradually be filled in with pointers to other blocks so that codebase navigation becomes easy.\n"
-"- #INBOX is a recommended convention, if you use cmpr with an AI coding assistant, so that agents can send experience reports or programmer feedback requests to a consistent place, using `cmpr --after '#INBOX'` with input on stdin.\n"
+"- #INBOX and #END_INBOX define a region for staging new blocks. AI coding assistants can add experience reports or programmer feedback requests here using `cmpr --after '#INBOX'`. The inbox is a staging area; items graduate to their proper locations during review.\n"
+"\n"
+"Use `cmpr --inbox` to open a TUI filtered to just the inbox region. See `cmpr --help inbox` for details.\n"
 "\n"
 "(You can of course establish your own conventions (e.g. by documenting them in the root block) if you don't like these ones.)\n"
 "\n"
@@ -7458,7 +7747,58 @@ span help_text_blocks(span s) {
   if (empty(s) || span_eq(S("help_text_blocks"), s)) return (span){(u8*)txt, (u8*)txt + sizeof(txt) - 1};
   else return nullspan();
 }
-
+/* #help_text_inbox_impl */
+span help_text_inbox(span s) {
+  static char txt[] =
+"The Inbox\n"
+"=========\n"
+"\n"
+"The inbox is a staging area for new blocks, typically used by AI coding assistants to deposit experience reports, experiments, or work-in-progress.\n"
+"\n"
+"## Structure\n"
+"\n"
+"The inbox is defined by two marker blocks:\n"
+"\n"
+"  /* #INBOX\n"
+"  ... inbox description ...\n"
+"  */\n"
+"\n"
+"  /* #some_new_block */\n"
+"  /* #another_pending_item */\n"
+"\n"
+"  /* #END_INBOX\n"
+"  Marker block. Everything between #INBOX and #END_INBOX is \"in the inbox\".\n"
+"  */\n"
+"\n"
+"## Commands\n"
+"\n"
+"--inbox\n"
+"  Open the TUI filtered to show only blocks in the inbox region.\n"
+"  Navigation (j/k/g/G) is constrained to blocks between #INBOX and #END_INBOX.\n"
+"  Press 'q' to exit back to the shell.\n"
+"\n"
+"## Workflow\n"
+"\n"
+"1. AI assistants add blocks using `cmpr --after '#INBOX'`\n"
+"2. Run `cmpr --inbox` to review pending items\n"
+"3. Move blocks to their proper locations (or delete if not needed)\n"
+"4. The inbox shrinks as items graduate to permanent homes\n"
+"\n"
+"## Setup\n"
+"\n"
+"If your project doesn't have an inbox yet, create these two blocks:\n"
+"\n"
+"  /* #INBOX\n"
+"  Staging area for new blocks.\n"
+"  */\n"
+"\n"
+"  /* #END_INBOX */\n"
+"\n"
+"Place them in a file where you want inbox items to accumulate.\n"
+;
+  if (empty(s) || span_eq(S("help_text_inbox"), s)) return (span){(u8*)txt, (u8*)txt + sizeof(txt) - 1};
+  else return nullspan();
+}
 /* #help_text_editing_impl */
 span help_text_editing(span s) {
   if (empty(s) || span_eq(S("help_text_editing"), s)) return S(
@@ -8008,6 +8348,8 @@ span get_help_text(span topic) {
         return help_text_basic(nullspan());
     } else if (span_eq(topic, S("blocks"))) {
         return help_text_blocks(nullspan());
+    } else if (span_eq(topic, S("inbox"))) {
+        return help_text_inbox(nullspan());
     } else if (span_eq(topic, S("editing"))) {
         return help_text_editing(nullspan());
     } else if (span_eq(topic, S("search"))) {
@@ -8814,6 +9156,47 @@ void handle_wants_dashboard() {
     flush();
 }
 
+/* #handle_status */
+void handle_status() {
+    // Count inbox items
+    int inbox_idx = block_from_arg("#INBOX");
+    int end_inbox_idx = block_from_arg("#END_INBOX");
+    int inbox_count = 0;
+    if (inbox_idx >= 0 && end_inbox_idx > inbox_idx) {
+        inbox_count = end_inbox_idx - inbox_idx - 1;
+    }
+    
+    // Count wants (simple grep for "We want " at start of SN lines)
+    int want_count = 0;
+    for (int i = 0; i < state->blocks.n; i++) {
+        span block = state->blocks.a[i];
+        while (block.buf < block.end) {
+            span line = head_line(&block);
+            while (line.buf < line.end && (*line.buf == ' ' || *line.buf == '\t')) line.buf++;
+            if (line.buf >= line.end || *line.buf != '"') continue;
+            span want_prefix = S("\"We want ");
+            if (line.end - line.buf >= 10 && memcmp(line.buf, want_prefix.buf, 9) == 0) {
+                want_count++;
+            }
+        }
+    }
+    
+    // Count anonymous blocks
+    int anonymous_count = 0;
+    for (int i = 0; i < state->blocks.n; i++) {
+        span id = id_for_block(state->blocks.a[i]);
+        if (empty(id)) {
+            anonymous_count++;
+        }
+    }
+    
+    // Print status
+    prt("Inbox: %d items pending\n", inbox_count);
+    prt("Wants: %d total\n", want_count);
+    prt("Blocks: %d total, %d anonymous\n", state->blocks.n, anonymous_count);
+    
+    flush();
+}
 /* #handle_event_report */
 void handle_event_report() {
     const char *report_path = "public_html/event_activity.html";
