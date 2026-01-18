@@ -2564,6 +2564,13 @@ for (int i = 1; i < argc; i++) {
 			ind_find_deleted = 1; action_arg = 1;
 		} else if (arg[0] == '-' && arg[1] == '-') {
 			prt("Unknown flag: %s\n", arg); flush(); exit(1);
+		} else if (arg[0] == '#') {
+			// Treat as block argument (cmpr #blockid opens TUI at that block)
+			if (ind_open_block) {
+				prt("Multiple block arguments provided: %s\n", arg); flush(); exit(1);
+			}
+			ind_open_block = 1;
+			arg_open_block = arg;
 		} else {
 			// Treat as file argument or positional (file or "-")
 			if (ind_file_argument) {
@@ -2573,6 +2580,7 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
 /* #handle_args_events */
 // Event system commands - handle BEFORE general action dispatch
 	// because --after/--before mean timestamps here, not block ids
