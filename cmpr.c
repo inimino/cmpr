@@ -1648,9 +1648,16 @@ void event_memorize() {
     span content = (span){cmp.end, cmp.end};
     out_sav sav = out2cmp();
 
+    span text_prefix = S("the text: ");
     for (size_t i = 0; i < state->events.n; i++) {
+        span ev = state->events.a[i].event_str;
+        // Skip "the text: " events - they're stored in revs and reconstructible
+        if (len(ev) >= len(text_prefix) && 
+            memcmp(ev.buf, text_prefix.buf, len(text_prefix)) == 0) {
+            continue;
+        }
         prt("\"");
-        wrs_esc(state->events.a[i].event_str);
+        wrs_esc(ev);
         prt("\" %d.\n", state->events.a[i].strength);
     }
 
@@ -1660,7 +1667,6 @@ void event_memorize() {
     write_to_file_span(content, filename, 0);
     cmp = saved_cmp;
 }
-
 /* #event_print_T */
 void event_print_T() {
     for (size_t i = 0; i < state->events.n; i++) {
@@ -2374,6 +2380,7 @@ void print_config() {
 /* #handle_args */
 void handle_args(int argc, char **argv) {
 
+
 /* #handle_args_2 */
 int ind_conf = 0;
 	int ind_print_conf = 0;
@@ -2402,6 +2409,8 @@ int ind_conf = 0;
 	int ind_checksum = 0;
 	int ind_T0 = 0;
 	int ind_event = 0;
+	int ind_event_stdin = 0;
+	int ind_event_file = 0;
 	int ind_strength = 0;
 	int ind_query = 0;
 	int ind_memorize = 0;
@@ -2421,6 +2430,7 @@ int ind_conf = 0;
 	int ind_learn = 0;
 	int ind_log_stochastic_count_joint = 0;
 	int ind_install_agent = 0;
+	int ind_install_script = 0;
 	int ind_file_argument = 0;
 	int ind_open_block = 0;
 	int ind_find_deleted = 0;
@@ -2443,12 +2453,14 @@ int ind_conf = 0;
 	char *arg_replace_code = NULL;
 	char *event_string = NULL;
 	char *event_strength_str = NULL;
+	char *arg_event_file = NULL;
 	char *query_string = NULL;
 	char *arg_snapshot_join_es1 = NULL;
 	char *arg_snapshot_join_es2 = NULL;
 	char *arg_learn_es1 = NULL;
 	char *arg_learn_es2 = NULL;
 	char *arg_install_agent = NULL;
+	char *arg_install_script = NULL;
 	char *file_argument = NULL;
 	char *arg_open_block = NULL;
 
@@ -2535,6 +2547,11 @@ for (int i = 1; i < argc; i++) {
 		} else if (strcmp(arg, "--strength") == 0) {
 			if (i+1 >= argc) { prt("Missing <value> argument for --strength\n"); flush(); exit(1); }
 			ind_strength = 1; event_strength_str = argv[++i];
+		} else if (strcmp(arg, "--event-stdin") == 0) {
+			ind_event_stdin = 1;
+		} else if (strcmp(arg, "--event-file") == 0) {
+			if (i+1 >= argc) { prt("Missing <path> argument for --event-file\n"); flush(); exit(1); }
+			ind_event_file = 1; arg_event_file = argv[++i];
 		} else if (strcmp(arg, "--query") == 0) {
 			if (i+1 >= argc) { prt("Missing <string> argument for --query\n"); flush(); exit(1); }
 			ind_query = 1; query_string = argv[++i];
@@ -2562,6 +2579,9 @@ for (int i = 1; i < argc; i++) {
 			ind_export_docs = 1; action_arg = 1;
 		} else if (strcmp(arg, "--find-deleted") == 0) {
 			ind_find_deleted = 1; action_arg = 1;
+		} else if (strcmp(arg, "--install-script") == 0) {
+			if (i+1 >= argc) { prt("Missing <name> argument for --install-script\n"); flush(); exit(1); }
+			ind_install_script = 1; arg_install_script = argv[++i]; action_arg = 1;
 		} else if (arg[0] == '-' && arg[1] == '-') {
 			prt("Unknown flag: %s\n", arg); flush(); exit(1);
 		} else if (arg[0] == '#') {
@@ -2581,22 +2601,24 @@ for (int i = 1; i < argc; i++) {
 		}
 	}
 
+
+
 /* #handle_args_events */
 // Event system commands - handle BEFORE general action dispatch
 	// because --after/--before mean timestamps here, not block ids
-	if (ind_T0 || ind_event || ind_strength || ind_query || ind_memorize || ind_recall || ind_recall_first || ind_T) {
-		if (ind_event && !ind_strength) {
-			prt("Error: --event requires --strength\n");
+	if (ind_T0 || ind_event || ind_event_stdin || ind_event_file || ind_strength || ind_query || ind_memorize || ind_recall || ind_recall_first || ind_T) {
+		if ((ind_event || ind_event_stdin || ind_event_file) && !ind_strength) {
+			prt("Error: --event, --event-stdin, and --event-file require --strength\n");
 			flush_exit(1);
 		}
-		if (ind_strength && !ind_event) {
-			prt("Error: --strength must be used with --event\n");
+		if (ind_strength && !(ind_event || ind_event_stdin || ind_event_file)) {
+			prt("Error: --strength must be used with --event, --event-stdin, or --event-file\n");
 			flush_exit(1);
 		}
 		
-		int event_actions = ind_T0 + ind_event + ind_query + ind_memorize + ind_recall + ind_recall_first + ind_T;
+		int event_actions = ind_T0 + ind_event + ind_event_stdin + ind_event_file + ind_query + ind_memorize + ind_recall + ind_recall_first + ind_T;
 		if (event_actions > 1) {
-			prt("Error: --T0, --event, --query, --memorize, --recall, --recall-first, and --T cannot be combined\n");
+			prt("Error: --T0, --event, --event-stdin, --event-file, --query, --memorize, --recall, --recall-first, and --T cannot be combined\n");
 			flush_exit(1);
 		}
 		
@@ -2612,6 +2634,16 @@ for (int i = 1; i < argc; i++) {
 			span event_span = { (u8 *)event_string, (u8 *)event_string + strlen(event_string) };
 			int strength_value = event_strength_str ? atoi(event_strength_str) : 255;
 			event_add(event_span, (unsigned char)strength_value);
+			flush_exit(0);
+		}
+		if (ind_event_stdin) {
+			int strength_value = event_strength_str ? atoi(event_strength_str) : 255;
+			handle_event_large_stdin(strength_value);
+			flush_exit(0);
+		}
+		if (ind_event_file) {
+			int strength_value = event_strength_str ? atoi(event_strength_str) : 255;
+			handle_event_large_file(S(arg_event_file), strength_value);
 			flush_exit(0);
 		}
 		if (ind_memorize) {
@@ -2636,8 +2668,6 @@ for (int i = 1; i < argc; i++) {
 			flush_exit(0);
 		}
 	}
-
-
 /* #handle_args_4 */
 if (ind_file_argument) {
 		state->manual_filename = S(file_argument);
@@ -2688,6 +2718,12 @@ if (ind_file_argument) {
 	// Handle --install-agent (doesn't need code loading)
 	if (ind_install_agent) {
 		handle_install_agent(arg_install_agent);
+		flush_exit(0);
+	}
+
+	// Handle --install-script (doesn't need code loading)
+	if (ind_install_script) {
+		handle_install_script(arg_install_script);
 		flush_exit(0);
 	}
 
@@ -2864,19 +2900,19 @@ if (ind_file_argument) {
 	}
 	
 	// Event system commands (have special validation)
-	if (ind_T0 || ind_event || ind_strength || ind_query || ind_memorize || ind_recall || ind_recall_first || ind_T) {
-		if (ind_event && !ind_strength) {
-			prt("Error: --event requires --strength\n");
+	if (ind_T0 || ind_event || ind_strength || ind_query || ind_memorize || ind_recall || ind_recall_first || ind_event_stdin || ind_event_file || ind_T) {
+		if ((ind_event || ind_event_stdin || ind_event_file) && !ind_strength) {
+			prt("Error: --event, --event-stdin, and --event-file require --strength\n");
 			flush_exit(1);
 		}
-		if (ind_strength && !ind_event) {
+		if (ind_strength && !(ind_event || ind_event_stdin || ind_event_file)) {
 			prt("Error: --strength must be used with --event\n");
 			flush_exit(1);
 		}
 		
-		int event_actions = ind_T0 + ind_event + ind_query + ind_memorize + ind_recall + ind_recall_first + ind_T;
+		int event_actions = ind_T0 + ind_event + ind_event_stdin + ind_event_file + ind_query + ind_memorize + ind_recall + ind_recall_first + ind_T;
 		if (event_actions > 1) {
-			prt("Error: --T0, --event, --query, --memorize, --recall, --recall-first, and --T cannot be combined\n");
+			prt("Error: --T0, --event, --event-stdin, --event-file, --query, --memorize, --recall, --recall-first, and --T cannot be combined\n");
 			flush_exit(1);
 		}
 		
@@ -2892,6 +2928,16 @@ if (ind_file_argument) {
 			span event_span = { (u8 *)event_string, (u8 *)event_string + strlen(event_string) };
 			int strength_value = event_strength_str ? atoi(event_strength_str) : 255;
 			event_add(event_span, (unsigned char)strength_value);
+			flush_exit(0);
+		}
+		if (ind_event_stdin) {
+			int strength_value = event_strength_str ? atoi(event_strength_str) : 255;
+			handle_event_large_stdin(strength_value);
+			flush_exit(0);
+		}
+		if (ind_event_file) {
+			int strength_value = event_strength_str ? atoi(event_strength_str) : 255;
+			handle_event_large_file(S(arg_event_file), strength_value);
 			flush_exit(0);
 		}
 		if (ind_memorize) {
@@ -2975,6 +3021,8 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
+
+
 /* #handle_snapshot_join */
 /* #help_text_nl2pl */
 /* #print_physical_lines */
@@ -7227,6 +7275,43 @@ void handle_install_agent(char *agent_name) {
     prt("Installed agent: %s\n", path);
     prt("Run with: %s &\n", path);
 }
+/* #script_Tcks_impl */
+span script_Tcks(span s) {
+    if (empty(s) || span_eq(S("Tcks"), s)) return S(
+        "#!/bin/sh\n"
+        "cmpr --event \"Tcks: $(cmpr --T | cmpr --checksum)\" --strength 255\n"
+    ); else return nullspan();
+}
+/* #get_script */
+span get_script(span name) {
+  span res = script_Tcks(name);
+  if (!empty(res)) return res;
+  return nullspan();
+}
+
+/* #handle_install_script */
+void handle_install_script(char *script_name) {
+  span name = S(script_name);
+  span script = get_script(name);
+  if (empty(script)) {
+    prt("Unknown script: %s\nAvailable scripts:\n", script_name);
+    // List available scripts
+    span s = script_Tcks(nullspan());
+    if (!empty(s)) prt("  Tcks\n");
+    flush_exit(1);
+  }
+
+  mkdir(".cmpr", 0700);
+  mkdir(".cmpr/scripts", 0700);
+
+  char path_buf[PATH_MAX];
+  snprintf(path_buf, sizeof(path_buf), ".cmpr/scripts/%s", script_name);
+  write_to_file_span(script, S(path_buf), 1);
+  chmod(path_buf, 0755);
+  prt("Installed script '%s' to %s\n", script_name, path_buf);
+  flush();
+}
+
 /* #help_text_summary_impl */
 span help_text_summary(span s) {
   if (empty(s) || span_eq(S("help_text_summary"), s)) return S(
@@ -8023,6 +8108,91 @@ void handle_checksum(void) {
 
 
 
+/* #handle_event_large */
+void handle_event_large_stdin(int strength) {
+    size_t capacity = 1 << 20;
+    size_t size = 0;
+    u8 *buffer = malloc(capacity);
+    if (!buffer) {
+        prt("Error: Failed to allocate memory\n");
+        flush_exit(1);
+    }
+    while (1) {
+        if (size == capacity) {
+            capacity *= 2;
+            if (capacity > (1ULL << 22)) {  // 4MiB limit
+                prt("Error: Input too large (max 4MiB)\n");
+                free(buffer);
+                flush_exit(1);
+            }
+            u8 *new_buffer = realloc(buffer, capacity);
+            if (!new_buffer) {
+                prt("Error: Realloc failed\n");
+                free(buffer);
+                flush_exit(1);
+            }
+            buffer = new_buffer;
+        }
+        size_t bytes_read = fread(buffer + size, 1, capacity - size, stdin);
+        if (bytes_read == 0) {
+            if (feof(stdin)) break;
+            if (ferror(stdin)) {
+                prt("Error reading stdin\n");
+                free(buffer);
+                flush_exit(1);
+            }
+        }
+        size += bytes_read;
+    }
+    
+    span content = {buffer, buffer + size};
+    checksum cs = selected_checksum(content);
+    
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    span rev_path = unique_rev_path(ts);
+    write_to_file_span(content, rev_path, 1);
+    
+    span hash_hex = prs_checksum(cs);
+    span hash_event = prs("the hash: %.*s", (int)len(hash_hex), hash_hex.buf);
+    span text_event = prs("the text: %.*s", (int)size, buffer);
+    
+    event_add_internal(hash_event, (unsigned char)strength);
+    event_add_internal(text_event, (unsigned char)strength);
+    event_save_T();
+    
+    prt("Stored %zu bytes in %.*s\n", size, (int)len(rev_path), rev_path.buf);
+    free(buffer);
+}
+
+void handle_event_large_file(span path, int strength) {
+    span content = read_file_into_cmp(path);
+    if (len(content) == 0) {
+        prt("Error: Could not read file or file is empty\n");
+        flush_exit(1);
+    }
+    if (len(content) > (1ULL << 22)) {  // 4MiB limit
+        prt("Error: File too large (max 4MiB)\n");
+        flush_exit(1);
+    }
+    
+    checksum cs = selected_checksum(content);
+    
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    span rev_path = unique_rev_path(ts);
+    write_to_file_span(content, rev_path, 1);
+    
+    span hash_hex = prs_checksum(cs);
+    span hash_event = prs("the hash: %.*s", (int)len(hash_hex), hash_hex.buf);
+    span text_event = prs("the text: %.*s", (int)len(content), content.buf);
+    
+    event_add_internal(hash_event, (unsigned char)strength);
+    event_add_internal(text_event, (unsigned char)strength);
+    event_save_T();
+    
+    prt("Stored %zu bytes in %.*s\n", len(content), (int)len(rev_path), rev_path.buf);
+}
 /* #handle_wants */
 void handle_wants() {
     get_code();
