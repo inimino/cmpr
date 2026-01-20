@@ -7740,12 +7740,19 @@ void handle_install_script(char *script_name) {
 
 /* #help_text_summary_impl */
 span help_text_summary(span s) {
-  if (empty(s) || span_eq(S("help_text_summary"), s)) return S(
-"Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all|--inbox|--status] [--after <id>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--memorize] [--recall] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs]\n"
-"\n"
-"For help on available topics: cmpr --help topics\n"
-); else return nullspan();
+  if (empty(s) || span_eq(S("help_text_summary"), s))
+    return S(
+      "cmpr code swiss army knife\n"
+      "\n"
+      "Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all|--inbox|--status] [--after <id>] [--before <ts>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--query <string>] [--memorize] [--recall] [--recall-first] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces|--es] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs] [FILE|-]\n"
+      "\n"
+      "For help on available topics: cmpr --help topics\n"
+      "Every CLI flag can also be used after --help to get a description of that flag or usage examples: cmpr --help --grep\n"
+    );
+  else
+    return nullspan();
 }
+
 /* #help_text_topics_impl */
 span help_text_topics(span s) {
   if (empty(s) || span_eq(S("help_text_topics"), s)) return S(
