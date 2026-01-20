@@ -1551,10 +1551,11 @@ void event_load_T() {
     event_parse_sn(content);
 }
 
+
 /* #event_save_T */
 void event_save_T() {
     span saved_cmp = cmp;
-    span t_file = prs("%.*s/T", len(state->cmprdir), state->cmprdir.buf);
+    span t_file = prs("%.*sT", len(state->cmprdir), state->cmprdir.buf);
 
     span content = (span){cmp.end, cmp.end};
     out_sav sav = out2cmp();
@@ -1571,6 +1572,8 @@ void event_save_T() {
     write_to_file_span(content, t_file, 1);
     cmp = saved_cmp;
 }
+
+
 
 /* #event_add_internal */
 void event_add_internal(span event_str, unsigned char strength) {
@@ -1593,6 +1596,36 @@ void event_T0() {
     T_debug_print_events("T0 (cleared)");
 }
 
+/* #event_get_id */
+int event_get_id(span event_str) {
+    span path = prs("%.*sevent-names", len(state->cmprdir), state->cmprdir.buf);
+    
+    int line_num = 1;
+    
+    if (readable_file(path)) {
+        span content = read_file_into_cmp(path);
+        span remaining = content;
+        
+        while (!empty(remaining)) {
+            span line = next_line(&remaining);
+            if (span_eq(line, event_str)) {
+                return line_num;
+            }
+            line_num++;
+        }
+    }
+    
+    // Not found - append to file
+    FILE *f = fopen(s(path), "a");
+    if (f) {
+        fprintf(f, "%.*s\n", len(event_str), event_str.buf);
+        fclose(f);
+    }
+    
+    return line_num;
+}
+
+
 /* #event_add */
 void event_add(span event_str, unsigned char strength) {
     event_add_internal(event_str, strength);
@@ -1614,6 +1647,11 @@ void event_add(span event_str, unsigned char strength) {
     snprintf(strength_buf, sizeof(strength_buf), "%d", strength);
     setenv("CMPR_STRENGTH", strength_buf, 1);
 
+    int event_id = event_get_id(event_str);
+    char event_id_buf[16];
+    snprintf(event_id_buf, sizeof(event_id_buf), "%d", event_id);
+    setenv("CMPR_EVENT_ID", event_id_buf, 1);
+
     char new_depth[16];
     snprintf(new_depth, sizeof(new_depth), "%d", depth + 1);
     setenv("CMPR_PATTERN_DEPTH", new_depth, 1);
@@ -1626,12 +1664,10 @@ void event_add(span event_str, unsigned char strength) {
         unsetenv("CMPR_PATTERN_DEPTH");
     }
 }
-
-
 /* #event_memorize */
 void event_memorize() {
     span saved_cmp = cmp;
-    span events_dir = prs("%.*s/events", len(state->cmprdir), state->cmprdir.buf);
+    span events_dir = prs("%.*sevents", len(state->cmprdir), state->cmprdir.buf);
     mkdir(s(events_dir), 0777);
 
     struct timespec ts;
@@ -1670,6 +1706,8 @@ void event_memorize() {
     write_to_file_span(content, filename, 0);
     cmp = saved_cmp;
 }
+
+
 /* #event_print_T */
 void event_print_T() {
     for (size_t i = 0; i < state->events.n; i++) {
@@ -2219,7 +2257,7 @@ network_ret call_gpt(json messages, span model) {
     strftime(timestr, sizeof(timestr), "%Y%m%d-%H%M%S", localtime(&ts.tv_sec));
 
     // Set up filenames for request, response, error
-    base_filename = concat(state->cmprdir, S("/api_calls/"));
+    base_filename = concat(state->cmprdir, S("api_calls/"));
     base_filename = concat(base_filename, S(timestr));
     req_filename = concat(base_filename, S("-req"));
     resp_filename = concat(base_filename, S("-resp"));
@@ -2244,6 +2282,7 @@ network_ret call_gpt(json messages, span model) {
 
     return net_result;
 }
+
 
 
 /* #call_gpt_curl */
@@ -2411,6 +2450,7 @@ int ind_conf = 0;
 	int ind_help = 0;
 	int ind_version = 0;
 	int ind_print_block = 0;
+	int ind_ofra = 0;
 	int ind_print_comment = 0;
 	int ind_print_code = 0;
 	int ind_expand_block = 0;
@@ -2427,6 +2467,7 @@ int ind_conf = 0;
 	int ind_replace = 0;
 	int ind_replace_comment = 0;
 	int ind_replace_code = 0;
+	int ind_replace_current = 0;
 	int ind_run = 0;
 	int ind_agents = 0;
 	int ind_checksum = 0;
@@ -2458,6 +2499,7 @@ int ind_conf = 0;
 	int ind_open_block = 0;
 	int ind_find_deleted = 0;
 	int ind_status = 0;
+	int ind_work = 0;
 
 	char *conf_filepath = NULL;
 	char *help_topic = NULL;
@@ -2490,6 +2532,9 @@ int ind_conf = 0;
 
 	int action_arg = 0;
 
+
+
+
 /* #handle_args_3 */
 for (int i = 1; i < argc; i++) {
 		char *arg = argv[i];
@@ -2510,6 +2555,8 @@ for (int i = 1; i < argc; i++) {
 		} else if (strcmp(arg, "--print-block") == 0) {
 			if (i+1 >= argc) { prt("Missing <index> argument for --print-block\n"); flush(); exit(1); }
 			ind_print_block = 1; arg_print_block = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--ofra") == 0) {
+			ind_ofra = 1;
 		} else if (strcmp(arg, "--print-comment") == 0) {
 			if (i+1 >= argc) { prt("Missing <index> argument for --print-comment\n"); flush(); exit(1); }
 			ind_print_comment = 1; arg_print_comment = argv[++i]; action_arg = 1;
@@ -2542,6 +2589,8 @@ for (int i = 1; i < argc; i++) {
 		} else if (strcmp(arg, "--replace-code") == 0) {
 			if (i+1 >= argc) { prt("Missing <id> argument for --replace-code\n"); flush(); exit(1); }
 			ind_replace_code = 1; arg_replace_code = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--replace-current") == 0) {
+			ind_replace_current = 1; action_arg = 1;
 		} else if (strcmp(arg, "--content-index") == 0) {
 			if (i+1 >= argc) { prt("Missing <search> argument for --content-index\n"); flush(); exit(1); }
 			ind_content_index = 1; content_index_search = argv[++i]; action_arg = 1;
@@ -2608,6 +2657,8 @@ for (int i = 1; i < argc; i++) {
 			ind_find_deleted = 1; action_arg = 1;
 		} else if (strcmp(arg, "--status") == 0) {
 			ind_status = 1; action_arg = 1;
+		} else if (strcmp(arg, "--work") == 0) {
+			ind_work = 1; action_arg = 1;
 		} else if (strcmp(arg, "--install-script") == 0) {
 			if (i+1 >= argc) { prt("Missing <name> argument for --install-script\n"); flush(); exit(1); }
 			ind_install_script = 1; arg_install_script = argv[++i]; action_arg = 1;
@@ -2629,6 +2680,9 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
+
+
 
 
 
@@ -2700,6 +2754,7 @@ for (int i = 1; i < argc; i++) {
 			flush_exit(0);
 		}
 	}
+
 /* #handle_args_4 */
 if (ind_file_argument) {
 		state->manual_filename = S(file_argument);
@@ -2767,7 +2822,7 @@ if (ind_file_argument) {
 	// Count action flags (excluding event-related flags which are handled separately)
 	action_arg = ind_print_block + ind_print_comment + ind_print_code + ind_expand_block +
 	             ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all +
-	             ind_rewritepl + ind_prompt + ind_llm + ind_after + ind_replace + ind_replace_comment + ind_replace_code +
+	             ind_rewritepl + ind_prompt + ind_llm + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_replace_current +
 	             ind_run + ind_agents + ind_checksum +
 	             ind_map_error + ind_test_block_map +
 	             ind_wants +
@@ -2776,6 +2831,7 @@ if (ind_file_argument) {
 	             ind_wants_dashboard +
 	             ind_event_report +
 	             ind_status +
+	             ind_work +
 	             ind_es +
 	             ind_export_docs +
 	             ind_find_deleted +
@@ -2787,6 +2843,9 @@ if (ind_file_argument) {
 		prt("Error: Only one action argument may be used at a time.\n");
 		flush_exit(1);
 	}
+
+	check_conf_vars();
+	check_dirs();
 
 	// Get code database if needed (for most commands)
 	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es) {
@@ -2800,7 +2859,11 @@ if (ind_file_argument) {
 			prt("Block id or index not found: %s\n", arg_print_block);
 			flush_exit(1);
 		}
-		print_block(idx);
+		if (ind_ofra) {
+			print_block_ofra(idx);
+		} else {
+			print_block(idx);
+		}
 		flush_exit(0);
 	}
 	
@@ -2906,7 +2969,12 @@ if (ind_file_argument) {
 		replace_code(S(arg_replace_code));
 		flush_exit(0);
 	}
-	
+
+	if (ind_replace_current) {
+		handle_replace_current();
+		flush_exit(0);
+	}
+
 	if (ind_run) {
 		handle_run(run_block_id);
 		flush_exit(0);
@@ -3057,6 +3125,11 @@ if (ind_file_argument) {
 		flush_exit(0);
 	}
 
+	if (ind_work) {
+		handle_work();
+		flush_exit(0);
+	}
+
 	if (ind_es) {
 		handle_es();
 		flush_exit(0);
@@ -3064,6 +3137,11 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
+
+
+
+
+
 
 
 
@@ -3531,11 +3609,12 @@ void block_refs_jump() {
 /* #get_revdir */
 span get_revdir() {
     static char buf[2048] = {0};
-    span revs = S("/revs");
+    span revs = S("revs");
     span revdir = concat(state->cmprdir, revs);
     s_buffer(buf, 2048, revdir);
     return S(buf);
 }
+
 
 
 /* #complain_and_exit */
@@ -4239,7 +4318,7 @@ checksums load_revblock_checksums(int revblock_idx) {
     strftime(timestamp_str, sizeof(timestamp_str), "%Y%m%d-%H%M%S", &tm);
 
     span cmprdir = state->cmprdir;
-    span prefix = concat(cmprdir, S("/cache/v8/revs/"));
+    span prefix = concat(cmprdir, S("cache/v8/revs/"));
     span ts_span = S(timestamp_str); // on stack, so copy to cmp for pointers OK
     span cache_path = concat(prefix, ts_span);
 
@@ -4315,6 +4394,7 @@ checksums load_revblock_checksums(int revblock_idx) {
     cmp.end = old_end;
     return cksums;
 }
+
 
 /* #load_revblock_ids */
 spans load_revblock_ids(int revblock_idx) {
@@ -6340,9 +6420,10 @@ span tmp_filename() {
     }
 
     static char filename[1024];
-    snprintf(filename, sizeof(filename), "%s/tmp/%s%s", s(state->cmprdir), timestamp, extension);
+    snprintf(filename, sizeof(filename), "%stmp/%s%s", s(state->cmprdir), timestamp, extension);
     return S(filename);
 }
+
 
 
 /* #launch_editor */
@@ -6569,7 +6650,7 @@ span unique_rev_path(struct timespec ts) {
     snprintf(tsbuf, sizeof(tsbuf), "%04d%02d%02d-%02d%02d%02d",
              tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
              tm.tm_hour, tm.tm_min, tm.tm_sec);
-    span prefix = concat(state->cmprdir, S("/revs/"));
+    span prefix = concat(state->cmprdir, S("revs/"));
     span ts_span = S(tsbuf);
     span base_path = concat(prefix, ts_span);
     char pathbuf[PATH_MAX];
@@ -6590,6 +6671,7 @@ span unique_rev_path(struct timespec ts) {
     }
     return nullspan();
 }
+
 
 /* #new_rev */
 void new_rev(span tmp_filename, int file_index) {
@@ -7164,6 +7246,62 @@ int count_blocks() {
 }
 
 
+/* #print_block_ofra */
+void print_block_ofra(int index) {
+    if (index < 0 || index >= state->blocks.n) return;
+    span block = state->blocks.a[index];
+    
+    // Get block ID (first one if multiple)
+    spans ids = ids_for_block(block);
+    if (ids.n > 0) {
+        prt("ID: %s\n", s(ids.a[0]));
+    } else {
+        prt("ID: %d\n", index + 1);  // Use 1-based index as fallback
+    }
+    
+    // Compute and print checksum
+    checksum cs = selected_checksum(block);
+    prt("Checksum: %016llX\n", (unsigned long long)cs.__u);
+    
+    // Get and print file path
+    int file_idx = file_for_block(block);
+    prt("File: %s\n", s(state->files.a[file_idx].path));
+    
+    // Find previous block in same file and get its ID
+    if (index > 0) {
+        span prev_block = state->blocks.a[index - 1];
+        int prev_file_idx = file_for_block(prev_block);
+        if (prev_file_idx == file_idx) {
+            spans prev_ids = ids_for_block(prev_block);
+            if (prev_ids.n > 0) {
+                prt("After: %s\n", s(prev_ids.a[0]));
+            } else {
+                prt("After: %d\n", index);  // 1-based index of previous
+            }
+        } else {
+            prt("After:\n");  // First block in file
+        }
+    } else {
+        prt("After:\n");  // First block overall
+    }
+    
+    // Determine type from language
+    span lang = state->files.a[file_idx].language;
+    if (span_eq(lang, S("C")) || span_eq(lang, S("c"))) {
+        prt("Type: C\n");
+    } else if (span_eq(lang, S("Python")) || span_eq(lang, S("python"))) {
+        prt("Type: Python\n");
+    } else {
+        prt("Type: none\n");
+    }
+    
+    // Blank line separating headers from body
+    prt("\n");
+    
+    // Print block content
+    wrs(block);
+    terpri();
+}
 /* #content_index */
 void content_index(span search_text) {
     int first_match = 1;
@@ -9156,6 +9294,113 @@ void handle_wants_dashboard() {
     flush();
 }
 
+/* #handle_work */
+void handle_work() {
+    // Collect all wants (same logic as handle_wants)
+    span wants[256];
+    int want_count = 0;
+    
+    for (int i = 0; i < state->blocks.n && want_count < 256; i++) {
+        span block = state->blocks.a[i];
+        
+        while (block.buf < block.end) {
+            span line = head_line(&block);
+            
+            // Skip leading whitespace
+            while (line.buf < line.end && (*line.buf == ' ' || *line.buf == '\t')) {
+                line.buf++;
+            }
+            
+            // Line must start with "
+            if (line.buf >= line.end || *line.buf != '"') continue;
+            
+            // Search backwards for " <digits>.
+            u8 *p = line.end - 1;
+            if (p < line.buf || *p != '.') continue;
+            p--;
+            
+            u8 *digit_end = p + 1;
+            while (p >= line.buf && *p >= '0' && *p <= '9') p--;
+            if (p < line.buf || p + 1 == digit_end) continue;
+            if (*p != ' ') continue;
+            p--;
+            if (p < line.buf || *p != '"') continue;
+            
+            span event_str = {line.buf + 1, p};
+            span want_prefix = S("We want ");
+            int prefix_len = want_prefix.end - want_prefix.buf;
+            
+            if (event_str.end - event_str.buf >= prefix_len &&
+                memcmp(event_str.buf, want_prefix.buf, prefix_len) == 0) {
+                
+                // Check if already seen
+                int is_dup = 0;
+                for (int j = 0; j < want_count; j++) {
+                    if (span_eq(wants[j], event_str)) {
+                        is_dup = 1;
+                        break;
+                    }
+                }
+                
+                if (!is_dup && want_count < 256) {
+                    wants[want_count++] = event_str;
+                }
+            }
+        }
+    }
+    
+    if (want_count == 0) {
+        prt("No wants found\n");
+        flush();
+        return;
+    }
+    
+    // Loop forever
+    while (1) {
+        for (int i = 0; i < want_count; i++) {
+            span want = wants[i];
+            
+            // Clear T and add this want
+            event_T0();
+            event_add(want, 255);
+            
+            // Clear screen and print T
+            prt("\033[2J\033[H");
+            for (size_t j = 0; j < state->events.n; j++) {
+                prt("\"");
+                wrs_esc(state->events.a[j].event_str);
+                prt("\" %d.\n", state->events.a[j].strength);
+            }
+            flush();
+            
+            // Run the patterns script if it exists
+            size_t old_count = state->events.n;
+            span patterns_script = S(".cmpr/scripts/patterns");
+            if (readable_file(patterns_script)) {
+                system(".cmpr/scripts/patterns");
+                event_load_T();
+                
+                // If T changed, clear and print again
+                if (state->events.n != old_count) {
+                    prt("\033[2J\033[H");
+                    for (size_t j = 0; j < state->events.n; j++) {
+                        prt("\"");
+                        wrs_esc(state->events.a[j].event_str);
+                        prt("\" %d.\n", state->events.a[j].strength);
+                    }
+                    flush();
+                }
+            }
+            
+            // Memorize snapshot
+            event_memorize();
+        }
+        
+        // Short delay before cycling (1 second)
+        struct timespec ts = {1, 0};
+        nanosleep(&ts, NULL);
+    }
+}
 /* #handle_status */
 void handle_status() {
     // Count inbox items
@@ -9580,6 +9825,135 @@ void replace(span arg) {
 }
 
 
+/* #handle_replace_current */
+void handle_replace_current(void) {
+    span input = read_stdin_into_cmp();
+    
+    // Parse headers
+    span id = nullspan();
+    u64 expected_checksum = 0;
+    int found_checksum = 0;
+    
+    span rest = input;
+    span body = nullspan();
+    
+    while (len(rest) > 0) {
+        span line = next_line(&rest);
+        
+        // Blank line marks end of headers
+        if (len(line) == 0 || (len(line) == 1 && line.buf[0] == '\r')) {
+            body = rest;
+            break;
+        }
+        
+        // Parse "Key: Value" format
+        u8 *colon = memchr(line.buf, ':', len(line));
+        if (!colon) continue;
+        
+        span key = { line.buf, colon };
+        span value = { colon + 1, line.end };
+        
+        // Skip leading whitespace in value
+        while (len(value) > 0 && (value.buf[0] == ' ' || value.buf[0] == '\t')) {
+            value.buf++;
+        }
+        // Trim trailing whitespace/CR
+        while (len(value) > 0 && (value.end[-1] == '\r' || value.end[-1] == ' ')) {
+            value.end--;
+        }
+        
+        if (span_eq(key, S("ID"))) {
+            id = value;
+        } else if (span_eq(key, S("Checksum"))) {
+            // Parse hex checksum
+            char hex[17] = {0};
+            int hexlen = len(value) < 16 ? len(value) : 16;
+            memcpy(hex, value.buf, hexlen);
+            expected_checksum = strtoull(hex, NULL, 16);
+            found_checksum = 1;
+        }
+    }
+    
+    // Validate required headers
+    if (len(id) == 0) {
+        prt("Error: OFRA input missing ID header\n");
+        flush_exit(1);
+    }
+    if (!found_checksum) {
+        prt("Error: OFRA input missing Checksum header\n");
+        flush_exit(1);
+    }
+    if (len(body) == 0) {
+        prt("Error: OFRA input missing body (no blank line after headers)\n");
+        flush_exit(1);
+    }
+    
+    // Look up block by ID
+    int block_idx = block_id_arg(id);
+    if (block_idx == -1) {
+        prt("Block not found: %.*s\n", (int)len(id), id.buf);
+        flush_exit(1);
+    }
+    
+    span block = state->blocks.a[block_idx];
+    
+    // Compute current checksum
+    checksum current_cs = selected_checksum(block);
+    
+    // Compare checksums
+    if (current_cs.__u != expected_checksum) {
+        prt("Error: Checksum mismatch - block was modified since editing began\n");
+        prt("Expected: %016llX\n", (unsigned long long)expected_checksum);
+        prt("Current:  %016llX\n", (unsigned long long)current_cs.__u);
+        flush_exit(1);
+    }
+    
+    // Ensure body ends with newline
+    span new_content = body;
+    if (len(new_content) == 0 || new_content.end[-1] != '\n') {
+        if (len(inp) + len(new_content) + 1 >= BUF_SZ) {
+            prt("Too much input, buffer size exceeded\n");
+            flush_exit(1);
+        }
+        *new_content.end++ = '\n';
+    }
+    
+    // Perform replacement (similar to replace())
+    int file_idx = file_for_block(block);
+    projfile *pf = &state->files.a[file_idx];
+    
+    size_t old_block_len = len(block);
+    u8 *block_start = block.buf;
+    u8 *block_end = block.end;
+    size_t tail_len = inp.end - block_end;
+    
+    ssize_t diff = (ssize_t)len(new_content) - (ssize_t)old_block_len;
+    
+    if (diff > 0) {
+        if (len(inp) + diff >= BUF_SZ) {
+            prt("Too much input to replace, buffer size exceeded\n");
+            flush_exit(1);
+        }
+        memmove(block_end + diff, block_end, tail_len);
+        inp.end += diff;
+    } else if (diff < 0) {
+        memmove(block_end + diff, block_end, tail_len);
+        inp.end += diff;
+    }
+    
+    memcpy(block_start, new_content.buf, len(new_content));
+    
+    pf->contents.end += diff;
+    
+    for (int i = file_idx + 1; i < state->files.n; ++i) {
+        state->files.a[i].contents.buf += diff;
+        state->files.a[i].contents.end += diff;
+    }
+    
+    ingest();
+    
+    new_rev(S(""), file_idx);
+}
 /* #replace_comment */
 void replace_comment(span arg) {
     int block_idx = block_id_arg(arg);
@@ -10306,7 +10680,7 @@ int span_cmp_wrapper(const void *a, const void *b) {
 
 /* #get_outputs */
 void get_outputs() {
-    span outdir = concat(state->cmprdir, S("/outputs"));
+    span outdir = concat(state->cmprdir, S("outputs"));
     DIR *dir = opendir(s(outdir));
     if (!dir) {
         prt("Cannot open outputs directory: %s\n", s(outdir));
@@ -10337,6 +10711,7 @@ void get_outputs() {
 
     qsort(state->outputs_filenames.a, state->outputs_filenames.n, sizeof(span), span_cmp_wrapper);
 }
+
 
 
 /* #dir_listing */
