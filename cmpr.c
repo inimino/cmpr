@@ -6241,6 +6241,10 @@ void check_conf_vars() {
     if (empty(state->cmprdir)) {
       state->cmprdir = S(".cmpr/");
     }
+    // Ensure cmprdir ends with a slash for correct path concatenation
+    if (!empty(state->cmprdir) && state->cmprdir.end[-1] != '/') {
+      state->cmprdir = concat(state->cmprdir, S("/"));
+    }
     if (empty(state->model)) {
       state->model = S("clipboard");
     }
