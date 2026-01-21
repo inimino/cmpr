@@ -204,7 +204,7 @@ void handle_wants();
 void handle_wants_status();
 void handle_agents_wants();
 void handle_wants_dashboard();
-void handle_work();
+void handle_work(char *event_arg);
 void handle_status();
 void handle_event_report();
 void handle_export_docs();

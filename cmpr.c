@@ -1634,7 +1634,7 @@ void event_add(span event_str, unsigned char strength) {
 
     char *depth_str = getenv("CMPR_PATTERN_DEPTH");
     int depth = depth_str ? atoi(depth_str) : 0;
-    if (depth >= 1) return;
+    if (depth >= 4) return;
 
     char event_buf[4096];
     int event_len = len(event_str);
@@ -2500,6 +2500,8 @@ int ind_conf = 0;
 	int ind_find_deleted = 0;
 	int ind_status = 0;
 	int ind_work = 0;
+	int ind_trace = 0;
+	char *arg_work = NULL;
 
 	char *conf_filepath = NULL;
 	char *help_topic = NULL;
@@ -2535,6 +2537,8 @@ int ind_conf = 0;
 
 
 
+
+
 /* #handle_args_3 */
 for (int i = 1; i < argc; i++) {
 		char *arg = argv[i];
@@ -2545,7 +2549,7 @@ for (int i = 1; i < argc; i++) {
 			ind_print_conf = 1; action_arg = 1;
 		} else if (strcmp(arg, "--help") == 0) {
 			ind_help = 1; action_arg = 1;
-			if (i+1 < argc && strncmp(argv[i+1], "--", 2) != 0) {
+			if (i+1 < argc) {
 				help_topic = argv[++i];
 			}
 		} else if (strcmp(arg, "--init") == 0) {
@@ -2659,6 +2663,11 @@ for (int i = 1; i < argc; i++) {
 			ind_status = 1; action_arg = 1;
 		} else if (strcmp(arg, "--work") == 0) {
 			ind_work = 1; action_arg = 1;
+			if (i+1 < argc && argv[i+1][0] != '-') {
+				arg_work = argv[++i];
+			}
+		} else if (strcmp(arg, "--trace") == 0) {
+			ind_trace = 1; action_arg = 1;
 		} else if (strcmp(arg, "--install-script") == 0) {
 			if (i+1 >= argc) { prt("Missing <name> argument for --install-script\n"); flush(); exit(1); }
 			ind_install_script = 1; arg_install_script = argv[++i]; action_arg = 1;
@@ -2680,6 +2689,9 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
+
+
 
 
 
@@ -2837,7 +2849,8 @@ if (ind_file_argument) {
 	             ind_find_deleted +
 	             ind_snapshot_join +
 	             ind_learn +
-	             ind_log_stochastic_count_joint;
+	             ind_log_stochastic_count_joint +
+	             ind_trace;
 	
 	if (action_arg > 1) {
 		prt("Error: Only one action argument may be used at a time.\n");
@@ -3126,7 +3139,12 @@ if (ind_file_argument) {
 	}
 
 	if (ind_work) {
-		handle_work();
+		handle_work(arg_work);
+		flush_exit(0);
+	}
+
+	if (ind_trace) {
+		handle_trace();
 		flush_exit(0);
 	}
 
@@ -3137,6 +3155,8 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
+
+
 
 
 
@@ -7610,6 +7630,17 @@ span script_patterns(span s) {
 "STRENGTH=\"${CMPR_STRENGTH:-0}\"\n"
 "SN_LINE=\"\\\"$CMPR_EVENT\\\" $STRENGTH.\"\n"
 "\n"
+"# Induced-single: scan .cmpr/induced-single/N/ directories for exact match\n"
+"for dir in .cmpr/induced-single/*/; do\n"
+"    [ -d \"$dir\" ] || continue\n"
+"    [ -f \"${dir}name\" ] && [ -x \"${dir}script\" ] || continue\n"
+"    want_name=$(cat \"${dir}name\")\n"
+"    if [ \"$CMPR_EVENT\" = \"$want_name\" ]; then\n"
+"        t_debug \"induced-single ${dir} matches\"\n"
+"        \"${dir}script\"\n"
+"    fi\n"
+"done\n"
+"\n"
 "matched_es=\"\"\n"
 "for filter in .cmpr/es/*; do\n"
 "    [ -x \"$filter\" ] || continue\n"
@@ -7707,6 +7738,7 @@ span script_patterns(span s) {
 "done\n"
     ); else return nullspan();
 }
+
 /* #get_script */
 span get_script(span name) {
   span res = script_Tcks(name);
@@ -8193,6 +8225,13 @@ span help_text_events(span s) {
 "  Unimplemented. Snapshots are available in .cmpr/events if you want to look at them, and they are just text files, so none of this is necessary.\n"
 "  So --snapshots is ls -l .cmpr/events and --snapshot-view is cat.\n"
 "\n"
+"--trace\n"
+"  Watch .cmpr/T for changes and print them incrementally.\n"
+"  Unlike --work, does not clear the terminal - just prints changes as a log stream.\n"
+"  Useful for monitoring T state while other processes add events.\n"
+"  Exit with Ctrl+C.\n"
+"  Example: cmpr --trace\n"
+"\n"
 "Common Workflow Pattern:\n"
 "  1. Clear T: cmpr --T0\n"
 "  2. Set context: cmpr --event \"The blockid is: #foo\" --strength 255\n"
@@ -8209,6 +8248,7 @@ span help_text_events(span s) {
 );
   else return nullspan();
 }
+
 
 /* #help_text_agents_impl */
 span help_text_agents(span s) {
@@ -8518,6 +8558,30 @@ span get_help_text(span topic) {
     } else if (span_eq(topic, S("claude-setup"))) {
         return help_text_claude_setup(nullspan());
     }
+    // Flag-to-topic mapping: --flag -> relevant help topic
+    if (len(topic) > 2 && topic.buf[0] == '-' && topic.buf[1] == '-') {
+        span flag = { topic.buf + 2, topic.end };
+        if (span_eq(flag, S("grep")) || span_eq(flag, S("content-index")) || span_eq(flag, S("files-blocks"))) {
+            return help_text_search(nullspan());
+        } else if (span_eq(flag, S("T0")) || span_eq(flag, S("T")) || span_eq(flag, S("event")) ||
+                   span_eq(flag, S("memorize")) || span_eq(flag, S("recall")) || span_eq(flag, S("query")) || span_eq(flag, S("trace"))) {
+            return help_text_events(nullspan());
+        } else if (span_eq(flag, S("print-block")) || span_eq(flag, S("print-code")) || span_eq(flag, S("print-comment")) ||
+                   span_eq(flag, S("expand-block")) || span_eq(flag, S("count-blocks"))) {
+            return help_text_blocks(nullspan());
+        } else if (span_eq(flag, S("replace")) || span_eq(flag, S("replace-code")) || span_eq(flag, S("replace-comment")) ||
+                   span_eq(flag, S("after"))) {
+            return help_text_editing(nullspan());
+        } else if (span_eq(flag, S("agents")) || span_eq(flag, S("agent-run"))) {
+            return help_text_agents(nullspan());
+        } else if (span_eq(flag, S("wants")) || span_eq(flag, S("wants-status")) || span_eq(flag, S("wants-dashboard"))) {
+            return help_text_wants(nullspan());
+        } else if (span_eq(flag, S("rewritepl")) || span_eq(flag, S("prompt"))) {
+            return help_text_nl2pl(nullspan());
+        } else if (span_eq(flag, S("inbox")) || span_eq(flag, S("status"))) {
+            return help_text_inbox(nullspan());
+        }
+    }
     return nullspan();
 }
 
@@ -8529,6 +8593,7 @@ span get_agent_script(span name) {
     }
     return nullspan();
 }
+
 /* #handle_help_topic */
 void handle_help_topic(char *topic) {
     span s = get_help_text(S(topic));
@@ -9306,110 +9371,75 @@ void handle_wants_dashboard() {
 }
 
 /* #handle_work */
-void handle_work() {
-    // Collect all wants (same logic as handle_wants)
-    span wants[256];
-    int want_count = 0;
+void handle_work(char *event_arg) {
+    // Enable T-debug
+    span debug_file = prs("%.*sT-debug", (int)len(state->cmprdir), state->cmprdir.buf);
+    FILE *f = fopen((char*)debug_file.buf, "w");
+    if (f) fclose(f);
     
-    for (int i = 0; i < state->blocks.n && want_count < 256; i++) {
-        span block = state->blocks.a[i];
-        
-        while (block.buf < block.end) {
-            span line = head_line(&block);
-            
-            // Skip leading whitespace
-            while (line.buf < line.end && (*line.buf == ' ' || *line.buf == '\t')) {
-                line.buf++;
-            }
-            
-            // Line must start with "
-            if (line.buf >= line.end || *line.buf != '"') continue;
-            
-            // Search backwards for " <digits>.
-            u8 *p = line.end - 1;
-            if (p < line.buf || *p != '.') continue;
-            p--;
-            
-            u8 *digit_end = p + 1;
-            while (p >= line.buf && *p >= '0' && *p <= '9') p--;
-            if (p < line.buf || p + 1 == digit_end) continue;
-            if (*p != ' ') continue;
-            p--;
-            if (p < line.buf || *p != '"') continue;
-            
-            span event_str = {line.buf + 1, p};
-            span want_prefix = S("We want ");
-            int prefix_len = want_prefix.end - want_prefix.buf;
-            
-            if (event_str.end - event_str.buf >= prefix_len &&
-                memcmp(event_str.buf, want_prefix.buf, prefix_len) == 0) {
-                
-                // Check if already seen
-                int is_dup = 0;
-                for (int j = 0; j < want_count; j++) {
-                    if (span_eq(wants[j], event_str)) {
-                        is_dup = 1;
-                        break;
-                    }
-                }
-                
-                if (!is_dup && want_count < 256) {
-                    wants[want_count++] = event_str;
-                }
-            }
-        }
+    // If event provided, add it to T
+    if (event_arg) {
+        span event_span = {(u8*)event_arg, (u8*)event_arg + strlen(event_arg)};
+        event_add(event_span, 255);
     }
     
-    if (want_count == 0) {
-        prt("No wants found\n");
-        flush();
+    // Build the entr command like show-T does (use -n for non-interactive)
+    span cmd = prs("echo \"%.*sT\" | entr -n -c sh -c \"cmpr --T\"", 
+                   (int)len(state->cmprdir), state->cmprdir.buf);
+    system((char*)cmd.buf);
+}
+/* #handle_trace */
+void handle_trace() {
+    char *t_path = ".cmpr/T";
+    char prev_content[65536] = {0};
+    
+    // Load initial T content
+    FILE *f = fopen(t_path, "r");
+    if (f) {
+        size_t n = fread(prev_content, 1, sizeof(prev_content)-1, f);
+        prev_content[n] = '\0';
+        fclose(f);
+        prt("=== Initial T ===\n%s", prev_content);
+    }
+    
+    // Watch for changes using poll on file mtime
+    struct stat st, prev_st;
+    if (stat(t_path, &prev_st) < 0) {
+        prt("Error: Cannot stat %s\n", t_path);
         return;
     }
     
-    // Loop forever
+    prt("=== Watching T for changes (Ctrl+C to stop) ===\n");
+    flush();
+    
     while (1) {
-        for (int i = 0; i < want_count; i++) {
-            span want = wants[i];
+        usleep(100000); // 100ms poll interval
+        
+        if (stat(t_path, &st) < 0) continue;
+        
+        if (st.st_mtime != prev_st.st_mtime || st.st_size != prev_st.st_size) {
+            prev_st = st;
             
-            // Clear T and add this want
-            event_T0();
-            event_add(want, 255);
-            
-            // Clear screen and print T
-            prt("\033[2J\033[H");
-            for (size_t j = 0; j < state->events.n; j++) {
-                prt("\"");
-                wrs_esc(state->events.a[j].event_str);
-                prt("\" %d.\n", state->events.a[j].strength);
-            }
-            flush();
-            
-            // Run the patterns script if it exists
-            size_t old_count = state->events.n;
-            span patterns_script = S(".cmpr/scripts/patterns");
-            if (readable_file(patterns_script)) {
-                system(".cmpr/scripts/patterns");
-                event_load_T();
+            char new_content[65536] = {0};
+            f = fopen(t_path, "r");
+            if (f) {
+                size_t n = fread(new_content, 1, sizeof(new_content)-1, f);
+                new_content[n] = '\0';
+                fclose(f);
                 
-                // If T changed, clear and print again
-                if (state->events.n != old_count) {
-                    prt("\033[2J\033[H");
-                    for (size_t j = 0; j < state->events.n; j++) {
-                        prt("\"");
-                        wrs_esc(state->events.a[j].event_str);
-                        prt("\" %d.\n", state->events.a[j].strength);
+                // Print new content if different
+                if (strcmp(new_content, prev_content) != 0) {
+                    // Find what's new (simple: if content differs, show current state)
+                    if (strlen(new_content) == 0) {
+                        prt("--- T cleared ---\n");
+                    } else {
+                        prt("--- T changed ---\n%s", new_content);
                     }
                     flush();
+                    strcpy(prev_content, new_content);
                 }
             }
-            
-            // Memorize snapshot
-            event_memorize();
         }
-        
-        // Short delay before cycling (1 second)
-        struct timespec ts = {1, 0};
-        nanosleep(&ts, NULL);
     }
 }
 /* #handle_status */
