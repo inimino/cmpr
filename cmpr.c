@@ -2509,6 +2509,9 @@ int ind_conf = 0;
 	int ind_induced_single = 0;
 	int ind_lpp = 0;
 	int ind_es_create = 0;
+	int ind_history = 0;
+	int ind_log_gap = 0;
+	int ind_limit = 0;
 	char *arg_work = NULL;
 
 	char *conf_filepath = NULL;
@@ -2545,8 +2548,12 @@ int ind_conf = 0;
 	char *arg_lpp_es2 = NULL;
 	char *arg_es_name = NULL;
 	char *arg_es_pattern = NULL;
+	char *arg_history = NULL;
+	char *arg_log_gap = NULL;
+	char *arg_limit = NULL;
 
 	int action_arg = 0;
+
 
 
 
@@ -2705,6 +2712,19 @@ for (int i = 1; i < argc; i++) {
 		} else if (strcmp(arg, "--install-script") == 0) {
 			if (i+1 >= argc) { prt("Missing <name> argument for --install-script\n"); flush(); exit(1); }
 			ind_install_script = 1; arg_install_script = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--history") == 0) {
+			ind_history = 1; action_arg = 1;
+			if (i+1 < argc && argv[i+1][0] == '#') {
+				arg_history = argv[++i];
+			}
+		} else if (strcmp(arg, "--log-gap") == 0) {
+			ind_log_gap = 1;
+			if (i+1 < argc && argv[i+1][0] != '-') {
+				arg_log_gap = argv[++i];
+			}
+		} else if (strcmp(arg, "--limit") == 0) {
+			if (i+1 >= argc) { prt("Missing <N> argument for --limit\n"); flush(); exit(1); }
+			ind_limit = 1; arg_limit = argv[++i];
 		} else if (arg[0] == '-' && arg[1] == '-') {
 			prt("Unknown flag: %s\n", arg); flush(); exit(1);
 		} else if (arg[0] == '#') {
@@ -2723,6 +2743,7 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
 
 
 
@@ -2894,7 +2915,8 @@ if (ind_file_argument) {
 	             ind_induced +
 	             ind_induced_single +
 	             ind_lpp +
-	             ind_es_create;
+	             ind_es_create +
+	             ind_history;
 	
 	if (action_arg > 1) {
 		prt("Error: Only one action argument may be used at a time.\n");
@@ -3227,8 +3249,16 @@ if (ind_file_argument) {
 		flush_exit(0);
 	}
 
+	if (ind_history) {
+		double log_gap_factor = ind_log_gap ? (arg_log_gap ? atof(arg_log_gap) : 2.0) : 0.0;
+		int limit = ind_limit ? atoi(arg_limit) : 0;
+		handle_history(arg_history ? S(arg_history) : nullspan(), log_gap_factor, limit);
+		flush_exit(0);
+	}
+
 	// No action arg - return to enter interactive mode
 }
+
 
 
 
@@ -3980,7 +4010,6 @@ span read_file_into(span filename, rope *r) {
 }
 
 
-/* #get_revs_2 */
 void get_revs_2() {
     clear_display();
     time_t latest_rev_timestamp;
@@ -4007,8 +4036,8 @@ void get_revs_2() {
     for (int i = state->revs.filenames.n - 1; i >= 0; --i) {
         span bname = state->revs.filenames.a[i];
         span rev_path = prs("%.*s/revs/%.*s", len(state->cmprdir), state->cmprdir.buf, len(bname), bname.buf);
-        prt("\033[Hrev hashing: %d/%d", state->revs.filenames.n - i, state->revs.filenames.n);
-        flush();
+        fprintf(stderr, "\033[Hrev hashing: %d/%d", (int)(state->revs.filenames.n - i), (int)state->revs.filenames.n);
+        fflush(stderr);
 
         span rev_contents = read_file_into(rev_path, &state->revs.revrope);
         if (empty(rev_contents)) {
@@ -4036,9 +4065,7 @@ void get_revs_2() {
 
     free(working_set);
 }
-
-
-
+/* #get_revs_2 */
 /* #revs_cache_design */
 /* #get_revs_cache_get */
 int get_revs_cache_get(span bname, span rev_contents) {
@@ -9326,6 +9353,72 @@ span help_text_claude_setup(span s) {
 ); else return nullspan();
 }
 
+/* #help_text_history_impl */
+span help_text_history(span s) {
+  if (empty(s) || span_eq(S("help_text_history"), s))
+    return S(
+      "Block History\n"
+      "=============\n"
+      "\n"
+      "--history [#blockid] [--log-gap [factor]] [--limit N]\n"
+      "  Show block change history from the revision store.\n"
+      "\n"
+      "  Without arguments:\n"
+      "    Lists recently changed blocks across the codebase (most recent first).\n"
+      "    Each line shows: timestamp, block ID.\n"
+      "    Useful for \"what changed recently?\" at a glance.\n"
+      "\n"
+      "  With #blockid:\n"
+      "    Shows timestamps when that specific block's content changed.\n"
+      "    Tracks the block by ID across time, including renames and moves.\n"
+      "    Duplicate content (reverts) are collapsed to earliest timestamp.\n"
+      "\n"
+      "  Options:\n"
+      "    --log-gap [factor]\n"
+      "      Show recent changes densely, older changes sparsely.\n"
+      "      The gap between shown entries doubles (or multiplies by factor) going\n"
+      "      back in time. Default factor: 2.0\n"
+      "\n"
+      "      This reflects how recent changes matter more than ancient history.\n"
+      "      Without --log-gap, all changes in range are shown.\n"
+      "\n"
+      "      Example: with factor 2.0, gaps are 1s, 2s, 4s, 8s, 16s, ...\n"
+      "      The 10th entry is at least 512 seconds older than the 9th.\n"
+      "\n"
+      "    --limit N\n"
+      "      Show at most N entries. Applied after --log-gap filtering.\n"
+      "      Reports how many entries were skipped if limit was exceeded.\n"
+      "\n"
+      "  Examples:\n"
+      "    cmpr --history                     # recent changes, all blocks\n"
+      "    cmpr --history '#root'             # history of #root block\n"
+      "    cmpr --history --log-gap           # sparse view of recent changes\n"
+      "    cmpr --history --log-gap 1.5       # gentler thinning (factor 1.5)\n"
+      "    cmpr --history '#foo' --limit 10   # last 10 changes to #foo\n"
+      "\n"
+      "  Output format:\n"
+      "    Without blockid (recent changes):\n"
+      "      YYYY-MM-DD HH:MM:SS  #blockid\n"
+      "      YYYY-MM-DD HH:MM:SS  #other\n"
+      "      ... (+3 skipped)\n"
+      "      YYYY-MM-DD HH:MM:SS  #another\n"
+      "\n"
+      "    With blockid (block history):\n"
+      "      YYYY-MM-DD HH:MM:SS  245 bytes  12 lines\n"
+      "      YYYY-MM-DD HH:MM:SS  198 bytes  10 lines\n"
+      "      ... (+5 skipped)\n"
+      "      YYYY-MM-DD HH:MM:SS  150 bytes  8 lines\n"
+      "\n"
+      "  Notes:\n"
+      "    - Timestamps are local time (same as TUI's 'U' Select Block Version).\n"
+      "    - Uses the same revision store as the TUI's 'U' keybinding.\n"
+      "    - Block identity follows IDs; content-identical reverts are deduplicated.\n"
+      "    - \"Skipped\" counts show entries filtered by --log-gap or --limit.\n"
+      "\n"
+      "  See also: TUI 'U' keybinding for interactive block version selection.\n"
+      );
+  else return nullspan();
+}
 /* #agent_script_claude_impl */
 span agent_script_claude(span s) {
     if (empty(s) || span_eq(S("agent_script_claude"), s)) return S(
@@ -9393,6 +9486,8 @@ span get_help_text(span topic) {
         return help_text_agent_qa(nullspan());
     } else if (span_eq(topic, S("claude-setup"))) {
         return help_text_claude_setup(nullspan());
+    } else if (span_eq(topic, S("history"))) {
+        return help_text_history(nullspan());
     }
     // Flag-to-topic mapping: --flag -> relevant help topic
     if (len(topic) > 2 && topic.buf[0] == '-' && topic.buf[1] == '-') {
@@ -9449,6 +9544,10 @@ span get_help_text(span topic) {
         if (span_eq(flag, S("inbox"))) {
             return help_text_inbox(nullspan());
         }
+        // History
+        if (span_eq(flag, S("history")) || span_eq(flag, S("log-gap")) || span_eq(flag, S("limit"))) {
+            return help_text_history(nullspan());
+        }
     }
     return nullspan();
 }
@@ -9461,6 +9560,7 @@ span get_agent_script(span name) {
     }
     return nullspan();
 }
+
 /* #handle_help_topic */
 void handle_help_topic(char *topic) {
     span s = get_help_text(S(topic));
@@ -11086,6 +11186,140 @@ void handle_es_create(char *name, char *pattern) {
   prt("Created: %s\n", s(es_path));
   prt("Pattern: %s\n", pattern);
   flush();
+}
+/* #handle_history */
+void handle_history(span blockid, double log_gap_factor, int limit) {
+    get_revs();
+    clear_display();
+    
+    int have_blockid = len(blockid) > 0;
+    size_t total = state->revs.n_revblocks;
+    int effective_limit = limit > 0 ? limit : 20;  // default limit for performance
+    
+    if (have_blockid) {
+        // === BLOCKID MODE ===
+        typedef struct { checksum ck; time_t ts; int bytes, lines; } version;
+        version *versions = malloc(256 * sizeof(version));
+        int n_ver = 0, ver_cap = 256;
+        
+        for (size_t i = 0; i < total; i++) {
+            if (i % 1000 == 0) { fprintf(stderr, "\rScanning: %zu/%zu", i, total); fflush(stderr); }
+            
+            rev_block *rb = &state->revs.revblocks[i];
+            spans_arena_push();
+            spans ids = load_revblock_ids(i);
+            int match = 0;
+            for (int j = 0; j < ids.n && !match; j++)
+                if (span_eq(ids.a[j], blockid)) match = 1;
+            spans_arena_pop();
+            if (!match) continue;
+            
+            checksum ck = selected_checksum(rb->contents);
+            int found = -1;
+            for (int j = 0; j < n_ver; j++)
+                if (versions[j].ck.__u == ck.__u) { found = j; break; }
+            
+            if (found >= 0) {
+                if (rb->timestamp < versions[found].ts) versions[found].ts = rb->timestamp;
+            } else {
+                if (n_ver >= ver_cap) { ver_cap *= 2; versions = realloc(versions, ver_cap * sizeof(version)); }
+                versions[n_ver].ck = ck;
+                versions[n_ver].ts = rb->timestamp;
+                versions[n_ver].bytes = len(rb->contents);
+                int lines = 0; span tmp = rb->contents;
+                while (len(tmp) > 0) { next_line(&tmp); lines++; }
+                versions[n_ver].lines = lines;
+                n_ver++;
+            }
+        }
+        fprintf(stderr, "\r                              \r");
+        
+        // Sort newest first
+        for (int i = 0; i < n_ver - 1; i++)
+            for (int j = i + 1; j < n_ver; j++)
+                if (versions[j].ts > versions[i].ts) { version t = versions[i]; versions[i] = versions[j]; versions[j] = t; }
+        
+        int shown = 0, skipped = 0;
+        time_t last_ts = 0; double gap = 1.0;
+        prt("History for %.*s\n\n", (int)len(blockid), blockid.buf);
+        for (int i = 0; i < n_ver && (limit <= 0 || shown < limit); i++) {
+            if (log_gap_factor > 0 && shown > 0 && last_ts - versions[i].ts < gap) { skipped++; continue; }
+            char ts[32]; struct tm *tm = localtime(&versions[i].ts);
+            strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", tm);
+            prt("  %s  %d bytes  %d lines\n", ts, versions[i].bytes, versions[i].lines);
+            last_ts = versions[i].ts; if (log_gap_factor > 0) gap *= log_gap_factor; shown++;
+        }
+        free(versions);
+        
+    } else {
+        // === RECENT CHANGES MODE (limited scan) ===
+        typedef struct { span id; checksum ck; time_t ts; } state_entry;
+        state_entry *states = malloc(1024 * sizeof(state_entry));
+        int n_states = 0, state_cap = 1024;
+        
+        typedef struct { time_t ts; span id; } event;
+        event *events = malloc(512 * sizeof(event));
+        int n_events = 0, event_cap = 512;
+        
+        // Scan newest-first, stop when we have enough events
+        for (size_t i = 0; i < total && n_events < effective_limit * 3; i++) {
+            if (i % 1000 == 0) { fprintf(stderr, "\rScanning: %zu (found %d)", i, n_events); fflush(stderr); }
+            
+            rev_block *rb = &state->revs.revblocks[i];
+            spans_arena_push();
+            spans ids = load_revblock_ids(i);
+            if (ids.n > 0) {
+                span bid = ids.a[0];
+                checksum ck = selected_checksum(rb->contents);
+                
+                int found = -1;
+                for (int k = 0; k < n_states; k++)
+                    if (span_eq(states[k].id, bid)) { found = k; break; }
+                
+                if (found >= 0) {
+                    if (states[found].ck.__u != ck.__u) {
+                        if (n_events >= event_cap) { event_cap *= 2; events = realloc(events, event_cap * sizeof(event)); }
+                        events[n_events].ts = states[found].ts;
+                        events[n_events].id = states[found].id;
+                        n_events++;
+                        states[found].ck = ck;
+                        states[found].ts = rb->timestamp;
+                    }
+                } else {
+                    if (n_states >= state_cap) { state_cap *= 2; states = realloc(states, state_cap * sizeof(state_entry)); }
+                    u8 *copy = malloc(len(bid)); memcpy(copy, bid.buf, len(bid));
+                    states[n_states].id = (span){copy, copy + len(bid)};
+                    states[n_states].ck = ck;
+                    states[n_states].ts = rb->timestamp;
+                    n_states++;
+                }
+            }
+            spans_arena_pop();
+        }
+        fprintf(stderr, "\r                              \r");
+        
+        // Sort by timestamp
+        for (int i = 0; i < n_events - 1; i++)
+            for (int j = i + 1; j < n_events; j++)
+                if (events[j].ts > events[i].ts) { event t = events[i]; events[i] = events[j]; events[j] = t; }
+        
+        int shown = 0, skipped = 0;
+        time_t last_ts = 0; double gap = 1.0;
+        prt("Recent block changes\n\n");
+        for (int i = 0; i < n_events && shown < effective_limit; i++) {
+            if (log_gap_factor > 0 && shown > 0 && last_ts - events[i].ts < gap) { skipped++; continue; }
+            char ts[32]; struct tm *tm = localtime(&events[i].ts);
+            strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", tm);
+            prt("  %s  %.*s\n", ts, (int)len(events[i].id), events[i].id.buf);
+            last_ts = events[i].ts; if (log_gap_factor > 0) gap *= log_gap_factor; shown++;
+        }
+        
+        for (int i = 0; i < n_states; i++) free((void*)states[i].id.buf);
+        free(events);
+        free(states);
+    }
+    
+    flush();
 }
 /* #grep_blocks */
 void grep_blocks(span pattern) {
