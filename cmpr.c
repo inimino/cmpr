@@ -1349,9 +1349,11 @@ typedef struct {
     span language;
     span contents;
     checksum cksum;
+    checksum load_checksum;
 } projfile;
 
 MAKE_ARENA(projfile, projfiles, 256)
+
 
 /* #rope */
 #define SEGMENT_SIZE (32 * 1024 * 1024)
@@ -2501,6 +2503,7 @@ int ind_conf = 0;
 	int ind_status = 0;
 	int ind_work = 0;
 	int ind_trace = 0;
+	int ind_P = 0;
 	char *arg_work = NULL;
 
 	char *conf_filepath = NULL;
@@ -2533,6 +2536,7 @@ int ind_conf = 0;
 	char *arg_open_block = NULL;
 
 	int action_arg = 0;
+
 
 
 
@@ -2645,6 +2649,8 @@ for (int i = 1; i < argc; i++) {
 			ind_T = 1; action_arg = 1;
 		} else if (strcmp(arg, "--event-spaces") == 0 || strcmp(arg, "--es") == 0) {
 			ind_es = 1; action_arg = 1;
+		} else if (strcmp(arg, "--P") == 0 || strcmp(arg, "--pattern") == 0) {
+			ind_P = 1; action_arg = 1;
 		} else if (strcmp(arg, "--wants") == 0) {
 			ind_wants = 1; action_arg = 1;
 		} else if (strcmp(arg, "--wants-status") == 0) {
@@ -2689,6 +2695,7 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
 
 
 
@@ -2850,7 +2857,8 @@ if (ind_file_argument) {
 	             ind_snapshot_join +
 	             ind_learn +
 	             ind_log_stochastic_count_joint +
-	             ind_trace;
+	             ind_trace +
+	             ind_P;
 	
 	if (action_arg > 1) {
 		prt("Error: Only one action argument may be used at a time.\n");
@@ -2861,7 +2869,7 @@ if (ind_file_argument) {
 	check_dirs();
 
 	// Get code database if needed (for most commands)
-	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es) {
+	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es && !ind_P) {
 		get_code();
 	}
 	
@@ -3153,6 +3161,11 @@ if (ind_file_argument) {
 		flush_exit(0);
 	}
 
+	if (ind_P) {
+		handle_P();
+		flush_exit(0);
+	}
+
 	// No action arg - return to enter interactive mode
 }
 
@@ -3166,7 +3179,126 @@ if (ind_file_argument) {
 
 
 
+
+
 /* #handle_snapshot_join */
+void handle_snapshot_join(span es1, span es2) {
+    // Build filter paths
+    char es1_path[256], es2_path[256];
+    snprintf(es1_path, sizeof(es1_path), ".cmpr/es/%.*s", len(es1), es1.buf);
+    snprintf(es2_path, sizeof(es2_path), ".cmpr/es/%.*s", len(es2), es2.buf);
+    
+    // Check filters exist and are executable
+    if (access(es1_path, X_OK) != 0) {
+        prt("Error: Event space filter not found: %s\n", es1_path);
+        flush();
+        exit(1);
+    }
+    if (access(es2_path, X_OK) != 0) {
+        prt("Error: Event space filter not found: %s\n", es2_path);
+        flush();
+        exit(1);
+    }
+    
+    // Open events directory
+    DIR *dir = opendir(".cmpr/events");
+    if (!dir) {
+        flush();
+        return;
+    }
+    
+    // Collect snapshot filenames
+    char *snapshots[4096];
+    int n = 0;
+    struct dirent *de;
+    while ((de = readdir(dir)) != NULL && n < 4096) {
+        if (de->d_name[0] == '.') continue;
+        snapshots[n++] = strdup(de->d_name);
+    }
+    closedir(dir);
+    
+    if (n == 0) {
+        flush();
+        return;
+    }
+    
+    // Sort newest first (reverse strcmp)
+    for (int i = 0; i < n - 1; i++) {
+        for (int j = i + 1; j < n; j++) {
+            if (strcmp(snapshots[i], snapshots[j]) < 0) {
+                char *tmp = snapshots[i];
+                snapshots[i] = snapshots[j];
+                snapshots[j] = tmp;
+            }
+        }
+    }
+    
+    // Process each snapshot
+    for (int i = 0; i < n; i++) {
+        char snap_path[512];
+        snprintf(snap_path, sizeof(snap_path), ".cmpr/events/%s", snapshots[i]);
+        
+        // Run through ES1 filter
+        char cmd1[1024];
+        snprintf(cmd1, sizeof(cmd1), "cat '%s' | '%s'", snap_path, es1_path);
+        FILE *fp1 = popen(cmd1, "r");
+        char *es1_lines[1024];
+        int es1_n = 0;
+        if (fp1) {
+            char buf[4096];
+            while (fgets(buf, sizeof(buf), fp1) && es1_n < 1024) {
+                size_t l = strlen(buf);
+                if (l > 0 && buf[l-1] == '\n') buf[l-1] = 0;
+                if (buf[0]) es1_lines[es1_n++] = strdup(buf);
+            }
+            pclose(fp1);
+        }
+        
+        // Run through ES2 filter
+        char cmd2[1024];
+        snprintf(cmd2, sizeof(cmd2), "cat '%s' | '%s'", snap_path, es2_path);
+        FILE *fp2 = popen(cmd2, "r");
+        char *es2_lines[1024];
+        int es2_n = 0;
+        if (fp2) {
+            char buf[4096];
+            while (fgets(buf, sizeof(buf), fp2) && es2_n < 1024) {
+                size_t l = strlen(buf);
+                if (l > 0 && buf[l-1] == '\n') buf[l-1] = 0;
+                if (buf[0]) es2_lines[es2_n++] = strdup(buf);
+            }
+            pclose(fp2);
+        }
+        
+        // Check for strength 255 in each
+        int es1_has_255 = 0, es2_has_255 = 0;
+        for (int j = 0; j < es1_n; j++) {
+            char *p = strrchr(es1_lines[j], ' ');
+            if (p && atoi(p+1) == 255) { es1_has_255 = 1; break; }
+        }
+        for (int j = 0; j < es2_n; j++) {
+            char *p = strrchr(es2_lines[j], ' ');
+            if (p && atoi(p+1) == 255) { es2_has_255 = 1; break; }
+        }
+        
+        // Output if both have 255
+        if (es1_has_255 && es2_has_255) {
+            prt("%s\n", snapshots[i]);
+            for (int j = 0; j < es1_n; j++) prt("%s\n", es1_lines[j]);
+            for (int j = 0; j < es2_n; j++) prt("%s\n", es2_lines[j]);
+            prt("\n");
+        }
+        
+        // Free lines
+        for (int j = 0; j < es1_n; j++) free(es1_lines[j]);
+        for (int j = 0; j < es2_n; j++) free(es2_lines[j]);
+    }
+    
+    // Free snapshots
+    for (int i = 0; i < n; i++) free(snapshots[i]);
+    flush();
+}
+
 /* #help_text_nl2pl */
 /* #print_physical_lines */
 void print_physical_lines(span block, int lines_to_print) {
@@ -3396,6 +3528,7 @@ void get_code() {
     for (int i = 0; i < state->files.n; i++) {
         state->files.a[i].contents = read_file_S_into_span(state->files.a[i].path, inp_compl());
         inp.end = state->files.a[i].contents.end; // Advance inp to not overwrite contents
+        state->files.a[i].load_checksum = selected_checksum(state->files.a[i].contents);
     }
 
     if (state->files.n == 0) state->curr_file_idx = -1;
@@ -3403,6 +3536,7 @@ void get_code() {
 
     ingest();
 }
+
 
 
 /* #ingest */
@@ -3541,13 +3675,12 @@ void block_id_jump() {
         if (idx == -1) idx = 0;
     }
 
-    idx = select_menu(state->block_idx, idx);
+    idx = select_menu_searchable(state->block_idx, idx);
     if (idx != -1) {
         span selected_id = state->block_idx.a[idx];
         set_current_block(block_for_span(selected_id));
     }
 }
-
 
 /* #refs_for_block */
 spans refs_for_block(span block) {
@@ -3586,6 +3719,48 @@ spans refs_for_block(span block) {
     return refs;
 }
 
+/* #mentions_for_block */
+spans mentions_for_block(span block) {
+    span block_copy = block;
+    spans own_ids = ids_for_block(block_copy);
+    spans result = spans_alloc(8);
+
+    // Skip topline
+    next_line(&block);
+
+    // Scan remaining content for #blockid tokens
+    u8* p = block.buf;
+    while (p < block.end) {
+        if (*p == '#') {
+            u8* start = p;
+            p++; // skip '#'
+            // collect alphanumeric and underscore
+            while (p < block.end && (isalnum(*p) || *p == '_')) p++;
+            if (p > start + 1) { // at least one char after '#'
+                span tok = (span){start, p};
+                // check if it's one of our own ids
+                int is_own = 0;
+                for (int i = 0; i < own_ids.n; i++) {
+                    if (span_eq(tok, own_ids.a[i])) { is_own = 1; break; }
+                }
+                // check if already in result
+                int is_dup = 0;
+                if (!is_own) {
+                    for (int i = 0; i < result.n; i++) {
+                        if (span_eq(tok, result.a[i])) { is_dup = 1; break; }
+                    }
+                }
+                if (!is_own && !is_dup) {
+                    spans_push(&result, tok);
+                }
+            }
+        } else {
+            p++;
+        }
+    }
+    return result;
+}
+
 /* #referrers_to_block */
 spans referrers_to_block(int block_idx) {
     spans result = spans_alloc(8);
@@ -3622,7 +3797,8 @@ spans referrers_to_block(int block_idx) {
 /* #block_refs_jump */
 void block_refs_jump() {
     if (state->curr_block_idx < 0) return;
-    int idx = refs_menu(state->curr_block_idx);
+    spans breadcrumb = spans_alloc(0);
+    int idx = refs_menu(state->curr_block_idx, breadcrumb);
     if (idx != -1) set_current_block(idx);
 }
 
@@ -4185,14 +4361,17 @@ restore:
 
 
 /* #refs_menu */
-int refs_menu(int block_idx) {
+int refs_menu(int block_idx, spans breadcrumb) {
     span block = state->blocks.a[block_idx];
     span blockid = id_for_block(block);
-    spans outs = refs_for_block(block);
+    spans refs = refs_for_block(block);
+    spans mentions = mentions_for_block(block);
     spans ins = referrers_to_block(block_idx);
 
-    int num_out = outs.n;
+    int num_refs = refs.n;
+    int num_mentions = mentions.n;
     int num_in = ins.n;
+    int num_out = num_refs + num_mentions;
     int num_total = num_out + num_in;
     if(num_total == 0) {
         prt("no references\n");
@@ -4204,91 +4383,105 @@ int refs_menu(int block_idx) {
 
     for(;;) {
         clear_display();
+        if(breadcrumb.n > 0) {
+            for(int i=0; i<breadcrumb.n; i++) {
+                if(i > 0) prt(" > ");
+                wrs(breadcrumb.a[i]);
+            }
+            terpri();
+        }
         prt("References for ");
         wrs(blockid);
         terpri();
         terpri();
-        for(int i=0; i<num_out; i++) {
+        // Print @refs
+        for(int i=0; i<num_refs; i++) {
             if(sel == i) set_highlight();
             prt("  ");
-            wrs(outs.a[i]);
+            wrs(refs.a[i]);
             if(sel == i) reset_highlight();
             terpri();
         }
-        if(num_out > 0 && num_in > 0) {
-            if(sel == num_out) set_highlight();
-            prt("  ...");
-            if(sel == num_out) reset_highlight();
+        // Print #mentions
+        for(int i=0; i<num_mentions; i++) {
+            if(sel == num_refs + i) set_highlight();
+            prt("  ");
+            wrs(mentions.a[i]);
+            if(sel == num_refs + i) reset_highlight();
             terpri();
         }
+        // Divider between outgoing and incoming
+        if(num_out > 0 && num_in > 0) {
+            prt("  ...");
+            terpri();
+        }
+        // Print incoming refs
         for(int i=0; i<num_in; i++) {
-            if(num_out>0&&num_in>0) {
-                if(sel == (num_out+1+i)) set_highlight();
-            } else {
-                if(sel == (num_out+i)) set_highlight();
-            }
+            if(sel == num_out + i) set_highlight();
             prt("  ");
             wrs(ins.a[i]);
-            if(num_out>0&&num_in>0) {
-                if(sel == (num_out+1+i)) reset_highlight();
-            } else {
-                if(sel == (num_out+i)) reset_highlight();
-            }
+            if(sel == num_out + i) reset_highlight();
             terpri();
         }
         // push nav hint to bottom
-        int lines_used = 2 + num_out + ((num_out>0&&num_in>0)?1:0) + num_in + 1;
+        int lines_used = (breadcrumb.n > 0 ? 1 : 0) + 2 + num_out + ((num_out>0&&num_in>0)?1:0) + num_in + 1;
         int scr_rows = state->terminal_rows ? state->terminal_rows : 24;
         for(int i=lines_used; i<scr_rows-2; i++) terpri();
-        prt("j/k:move  @:drill  enter:jump  q:cancel");
+        prt("j/k:move  @:drill  enter:jump  q:back");
         flush();
 
         int k = getkey();
         if(k == 'q' || k == 27) return -1;
         if(k == '\n' || k == '\r') {
-            // selection to block idx
-            if(sel < num_out) {
-                span ref = outs.a[sel];
-                // skip '@', handle colon
+            int idx = -1;
+            if(sel < num_refs) {
+                // @ref
+                span ref = refs.a[sel];
                 span have = ref;
-                advance1(&have);
+                advance1(&have); // skip '@'
                 int col_idx = find_char(have, ':');
                 span id = col_idx<0 ? have : first_n(have,col_idx);
-                int idx = block_by_id(id);
-                if(idx != -1) return idx;
+                idx = block_by_id(id);
+            } else if(sel < num_out) {
+                // #mention
+                span ref = mentions.a[sel - num_refs];
+                span have = ref;
+                if(!empty(have) && have.buf[0]=='#') advance1(&have);
+                idx = block_by_id(have);
             } else {
+                // incoming
                 int in_idx = sel - num_out;
-                if(num_out>0&&num_in>0) in_idx--; // adjust for divider
                 if(in_idx >= 0 && in_idx < num_in) {
                     span ref = ins.a[in_idx];
-                    // ref has leading '#', skip it
                     span have = ref;
                     if(!empty(have) && have.buf[0]=='#') advance1(&have);
-                    int idx = block_by_id(have);
-                    if(idx != -1) return idx;
+                    idx = block_by_id(have);
                 }
             }
+            if(idx != -1) return idx;
         }
-        if((k == 'j' || k == ARROW_D)) {
-            int last = num_total-1;
-            if(num_out>0&&num_in>0) last++; // for divider
-            if(sel < last) sel++;
+        if(k == 'j' || k == ARROW_D) {
+            if(sel < num_total - 1) sel++;
         }
-        if((k == 'k' || k == ARROW_U)) {
+        if(k == 'k' || k == ARROW_U) {
             if(sel > 0) sel--;
         }
         if(k == '@') {
             int sub_idx = -1;
-            if(sel < num_out) {
-                span ref = outs.a[sel];
+            if(sel < num_refs) {
+                span ref = refs.a[sel];
                 span have = ref;
                 advance1(&have);
                 int col_idx = find_char(have, ':');
                 span id = col_idx<0 ? have : first_n(have,col_idx);
                 sub_idx = block_by_id(id);
+            } else if(sel < num_out) {
+                span ref = mentions.a[sel - num_refs];
+                span have = ref;
+                if(!empty(have) && have.buf[0]=='#') advance1(&have);
+                sub_idx = block_by_id(have);
             } else {
                 int in_idx = sel - num_out;
-                if(num_out>0&&num_in>0) in_idx--;
                 if(in_idx >= 0 && in_idx < num_in) {
                     span ref = ins.a[in_idx];
                     if(!empty(ref) && ref.buf[0]=='#') advance1(&ref);
@@ -4296,12 +4489,16 @@ int refs_menu(int block_idx) {
                 }
             }
             if(sub_idx != -1) {
-                int ret = refs_menu(sub_idx);
+                spans new_breadcrumb = spans_alloc(breadcrumb.n + 1);
+                for(int i=0; i<breadcrumb.n; i++) spans_push(&new_breadcrumb, breadcrumb.a[i]);
+                spans_push(&new_breadcrumb, blockid);
+                int ret = refs_menu(sub_idx, new_breadcrumb);
                 if(ret != -1) return ret;
             }
         }
     }
 }
+
 /* #sbv_display */
 void sbv_display(sbv_state* sbvs) {
     char offset[32];
@@ -4917,6 +5114,7 @@ void main_loop() {
         flush();
 
         char ch = getch();
+        if (ch == 0) break; // EOF - exit gracefully
         clock_gettime(CLOCK_REALTIME, &state->now);
 
         if ((ch >= '1' && ch <= '9') || (ch == '0' && state->count_prefix > 0)) {
@@ -4928,6 +5126,7 @@ void main_loop() {
         state->count_prefix = 0;
     }
 }
+
 /* #count_physical_lines */
 span count_physical_lines(span input, int *max_physical_lines) {
     span result = input;
@@ -5431,31 +5630,31 @@ void paste_before() {
 /* #keyboard_help */
 void keyboard_help() {
     clear_display();
-    prt("Keyboard shortcuts:\n");
-    prt("j    - Go down one block\n");
-    prt("k    - Go up one block\n");
-    prt("g    - Go to the first block\n");
-    prt("G    - Go to the last block\n");
-    prt("e    - Edit the current block in $EDITOR\n");
-    prt("o    - Insert a new block after the current block\n");
-    prt("O    - Insert a new block before the current block\n");
-    prt("'    - Open the prompt palette\n");
-    prt("r    - Rewrite code part based on comment part; clipboard updated\n");
-    prt("R    - Replace code part with clipboard contents\n");
-    //prt("u    - Undo\n");
-    prt("space- Paginate down within a block\n");
-    prt("b    - Paginate up (\"back\") within a block\n");
-    prt("B    - Build project with provided command\n");
-    //prt("v    - Toggle visual selection mode\n");
-    prt("/    - Enter search mode\n");
-    prt("#    - Open block id jump list\n");
-    prt("@    - Open block references jump list\n");
-    prt(":    - Enter ex command line\n");
-    prt("n    - Repeat search forward\n");
-    prt("N    - Repeat search backward\n");
-    //prt("S    - Enter settings mode\n");
-    prt("?    - Display this help\n");
-    prt("q    - Quit\n");
+    prt("Keyboard shortcuts:\n\n");
+    prt("Navigation:\n");
+    prt("  j/k     - Move down/up one block\n");
+    prt("  g/G     - Jump to first/last block\n");
+    prt("  space/b - Page down/up within block\n");
+    prt("  #       - Jump to block by ID (use / to filter)\n");
+    prt("  @       - Browse references (@refs, #mentions, incoming)\n");
+    prt("\n");
+    prt("Editing:\n");
+    prt("  e       - Edit current block in $EDITOR\n");
+    prt("  o/O     - Insert new block after/before current\n");
+    prt("  d       - Delete current block\n");
+    prt("  p/P     - Paste deleted block after/before current\n");
+    prt("  r       - Rewrite code from comment (LLM), to clipboard\n");
+    prt("  U       - Select block version from history\n");
+    prt("\n");
+    prt("Search:\n");
+    prt("  /       - Enter search mode\n");
+    prt("  n/N     - Repeat search forward/backward\n");
+    prt("\n");
+    prt("Other:\n");
+    prt("  :       - Enter ex command mode (:help for commands)\n");
+    prt("  B       - Build project with configured command\n");
+    prt("  ?       - Show this help\n");
+    prt("  q       - Quit\n");
     prt("\nPress any key to return...\n");
     flush();
     getch();
@@ -5646,6 +5845,17 @@ void start_search() {
 
     char input;
     while ((input = getch()) != '\n') { // Continue until Enter is pressed
+        if (input == 0) {
+            // EOF - exit search mode gracefully
+            state->search = nullspan();
+            print_current_blocks();
+            return;
+        }
+        if (input == 0x1b) { // Escape - exit search mode
+            state->search = nullspan();
+            print_current_blocks();
+            return;
+        }
         if (input == '\b' || input == 127) { // Handle backspace (ASCII DEL on some systems)
             if (state->search.buf < state->search.end) {
                 state->search.end--; // Shorten the span
@@ -5665,8 +5875,6 @@ void start_search() {
 
     finalize_search(); // Finalize search on Enter
 }
-
-
 /* #start_ex */
 void start_ex() {
     static char ex_buf[256] = ":";
@@ -5678,6 +5886,17 @@ void start_ex() {
 
     char ch;
     while ((ch = getch()) != '\n') {
+        if (ch == 0) {
+            // EOF - exit ex mode gracefully
+            state->ex_command = nullspan();
+            print_current_blocks();
+            return;
+        }
+        if (ch == 0x1b) { // Escape - exit ex mode
+            state->ex_command = nullspan();
+            print_current_blocks();
+            return;
+        }
         if (ch == '\b' || ch == 127) { // Handle backspace
             if (state->ex_command.end > state->ex_command.buf + 1) {
                 state->ex_command.end--;
@@ -5699,50 +5918,50 @@ void start_ex() {
     }
     handle_ex_command();
 }
-
-
-
-
 /* #extable */
 /* #handle_ex_command */
-// stubbed for now (manually)
-void addfile(span s) {}
-void addlib(span s) {}
-
 void handle_ex_command() {
-    /*
     if (starts_with(state->ex_command, S(":bootstrap"))) {
         bootstrap();
-    } else*/ if (starts_with(state->ex_command, S(":addfile"))) {
+    } else if (starts_with(state->ex_command, S(":addfile "))) {
         span file_path = skip_n(state->ex_command, len(S(":addfile ")));
-        addfile(file_path);
-    } else if (starts_with(state->ex_command, S(":addlib"))) {
+        ex_addfile(file_path);
+    } else if (starts_with(state->ex_command, S(":addlib "))) {
         span lib_path = skip_n(state->ex_command, len(S(":addlib ")));
-        addlib(lib_path);
+        ex_addlib(lib_path);
+    } else if (span_eq(state->ex_command, S(":allfiles"))) {
+        ex_allfiles();
     } else if (starts_with(state->ex_command, S(":help"))) {
         ex_help();
     } else if (starts_with(state->ex_command, S(":model"))) {
         select_model();
     } else if (span_eq(state->ex_command, S(":expand"))) {
         ex_expand();
+    } else if (span_eq(state->ex_command, S(":reload"))) {
+        ex_reload();
+    } else if (span_eq(state->ex_command, S(":config"))) {
+        ex_config();
     }
     state->ex_command = nullspan();
 }
-
 /* #ex_help */
 void ex_help() {
+    clear_display();
+    prt("Ex Commands:\n\n");
+    prt(":help       - Print this help message.\n");
+    prt(":model      - Select the LLM to use for \"r\" and other commands.\n");
+    prt(":expand     - Expand block references and display the result.\n");
+    prt(":reload     - Reload all project files from disk (detect external changes).\n");
+    prt(":config     - Edit and reload the config file.\n");
+    prt(":allfiles   - Add all source files in project directory to config.\n");
+    prt(":bootstrap  - Run the bootstrap command, put result on clipboard.\n");
+    prt(":addfile    - Add a file to the project (e.g. :addfile ./foo.c).\n");
+    prt(":addlib     - Add a library to the project.\n");
     prt("\n");
-    prt(":bootstrap - Run the user-provided bootstrap command, putting the result on the clipboard.\n");
-    prt(":help - Print short help on available ex commands.\n");
-    prt(":model - Select the LLM to use for \"r\" and other commands.\n");
-    prt(":expand - Expands block references and displays the expanded result.\n");
-    flush();
     prt("Press any key to continue...");
     flush();
     getch();
 }
-
-
 /* #set_highlight */
 void set_highlight() {
     prt("\033[7m");
@@ -5848,6 +6067,238 @@ int select_menu(spans options, int selected_index) {
 }
 
 
+/* #select_menu_searchable */
+// Helper: case-insensitive substring search
+static int contains_ci(span haystack, span needle) {
+    int hlen = len(haystack);
+    int nlen = len(needle);
+    if (nlen == 0) return 1;
+    if (hlen < nlen) return 0;
+    for (int i = 0; i <= hlen - nlen; i++) {
+        int match = 1;
+        for (int j = 0; j < nlen; j++) {
+            char hc = tolower(haystack.buf[i + j]);
+            char nc = tolower(needle.buf[j]);
+            if (hc != nc) { match = 0; break; }
+        }
+        if (match) return 1;
+    }
+    return 0;
+}
+
+// Helper: check if item matches all space-separated tokens in filter
+static int matches_filter(span item, char* filter) {
+    if (filter[0] == '\0') return 1;
+    char* p = filter;
+    while (*p) {
+        // Skip spaces
+        while (*p == ' ') p++;
+        if (!*p) break;
+        // Find end of token
+        char* start = p;
+        while (*p && *p != ' ') p++;
+        span token = {(u8*)start, (u8*)p};
+        if (!contains_ci(item, token)) return 0;
+    }
+    return 1;
+}
+
+// Helper: build filtered list and index mapping
+static spans build_filtered(spans options, char* filter, int* map, int* map_count) {
+    spans filtered = spans_alloc(options.n);
+    *map_count = 0;
+    for (int i = 0; i < options.n; i++) {
+        if (matches_filter(options.a[i], filter)) {
+            spans_push(&filtered, options.a[i]);
+            map[(*map_count)++] = i;
+        }
+    }
+    return filtered;
+}
+
+// Helper: print a line and clear to end of line (reduces flicker)
+static void print_line_clear(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    char buffer[1024];
+    vsnprintf(buffer, sizeof(buffer), fmt, ap);
+    va_end(ap);
+    prt("%s\033[K\n", buffer);  // Print content, clear to EOL, newline
+}
+
+// Helper: print menu with filter (flicker-reduced version)
+static void print_menu_filtered(spans opts, int sel, char* filter, int filter_mode) {
+    // Move cursor to home position without clearing screen
+    prt("\033[H");
+
+    int term_rows = state->terminal_rows;
+    int num_opts = opts.n;
+    int prompt_lines = filter_mode ? 2 : 1;  // Extra line for filter display
+    int sel_row = (term_rows - prompt_lines - 1) / 2;
+    int max_above = sel_row;
+    int lines_printed = 0;
+
+    if (num_opts == 0) {
+        print_line_clear("(no matches)");
+        lines_printed++;
+        for (int i = 1; i < term_rows - prompt_lines; i++) {
+            prt("\033[K\n");  // Clear line and newline
+            lines_printed++;
+        }
+    } else {
+        int start = sel > max_above ? sel - max_above : 0;
+        int end = start + term_rows - prompt_lines - 1;
+
+        if (end > num_opts) {
+            end = num_opts;
+            start = end - term_rows + prompt_lines + 1;
+            if (start < 0) start = 0;
+        }
+
+        // Blank lines before content
+        for (int i = 0; i < start; i++) {
+            prt("\033[K\n");
+            lines_printed++;
+        }
+
+        // Items before selection
+        for (int i = start; i < sel && i < num_opts; i++) {
+            prt("%.*s\033[K\n", len(opts.a[i]), opts.a[i].buf);
+            lines_printed++;
+        }
+
+        // Selected item
+        if (sel < num_opts) {
+            set_highlight();
+            prt("%.*s", len(opts.a[sel]), opts.a[sel].buf);
+            reset_highlight();
+            prt("\033[K\n");
+            lines_printed++;
+        }
+
+        // Items after selection
+        for (int i = sel + 1; i < end; i++) {
+            prt("%.*s\033[K\n", len(opts.a[i]), opts.a[i].buf);
+            lines_printed++;
+        }
+
+        // Blank lines after content
+        while (lines_printed < term_rows - prompt_lines) {
+            prt("\033[K\n");
+            lines_printed++;
+        }
+    }
+
+    // Filter line (if in filter mode)
+    if (filter_mode) {
+        prt("/%s\033[K\n", filter);
+    }
+
+    // Prompt line
+    prt("j/k:move  /:search  enter:select  q:cancel\033[K");
+
+    // Clear any remaining lines below
+    prt("\033[J");
+
+    flush();
+}
+
+int select_menu_searchable(spans options, int initial_index) {
+    char filter[256] = {0};
+    int filter_len = 0;
+    int filter_mode = 0;
+    int* index_map = malloc(options.n * sizeof(int));
+    int map_count = options.n;
+
+    // Initialize index map (identity mapping)
+    for (int i = 0; i < options.n; i++) index_map[i] = i;
+
+    spans filtered = options;  // Start with full list
+    int sel = initial_index >= 0 && initial_index < options.n ? initial_index : 0;
+
+    // Initial draw needs to clear screen first
+    clear_display();
+    print_menu_filtered(filtered, sel, filter, filter_mode);
+
+    for (;;) {
+        int k = getkey();
+
+        if (k == 'q') {
+            free(index_map);
+            return -1;
+        }
+
+        if (k == 27) {  // Escape
+            if (filter_mode && filter_len > 0) {
+                // Clear filter
+                filter[0] = '\0';
+                filter_len = 0;
+                filter_mode = 0;
+                // Rebuild to full list
+                for (int i = 0; i < options.n; i++) index_map[i] = i;
+                map_count = options.n;
+                filtered = options;
+                sel = 0;
+                print_menu_filtered(filtered, sel, filter, filter_mode);
+            } else {
+                free(index_map);
+                return -1;
+            }
+            continue;
+        }
+
+        if (k == '\n' || k == '\r') {
+            if (filtered.n > 0 && sel < map_count) {
+                int result = index_map[sel];
+                free(index_map);
+                return result;
+            }
+            continue;
+        }
+
+        if (k == '/') {
+            filter_mode = 1;
+            print_menu_filtered(filtered, sel, filter, filter_mode);
+            continue;
+        }
+
+        if (k == 'j' || k == ARROW_D) {
+            if (filtered.n > 0 && sel < filtered.n - 1) {
+                sel++;
+                print_menu_filtered(filtered, sel, filter, filter_mode);
+            }
+            continue;
+        }
+
+        if (k == 'k' || k == ARROW_U) {
+            if (sel > 0) {
+                sel--;
+                print_menu_filtered(filtered, sel, filter, filter_mode);
+            }
+            continue;
+        }
+
+        if (filter_mode) {
+            if (k == 127 || k == 8) {  // Backspace or DEL
+                if (filter_len > 0) {
+                    filter[--filter_len] = '\0';
+                    filtered = build_filtered(options, filter, index_map, &map_count);
+                    sel = 0;
+                    print_menu_filtered(filtered, sel, filter, filter_mode);
+                }
+            } else if (k >= 32 && k < 127) {  // Printable character
+                if (filter_len < 255) {
+                    filter[filter_len++] = k;
+                    filter[filter_len] = '\0';
+                    filtered = build_filtered(options, filter, index_map, &map_count);
+                    sel = 0;
+                    print_menu_filtered(filtered, sel, filter, filter_mode);
+                }
+            }
+        }
+    }
+}
+
 /* #select_model */
 void select_model() {
     spans_arena_push();
@@ -5884,6 +6335,44 @@ void select_model() {
 
 
 /* #bootstrap */
+void bootstrap() {
+    ensure_conf_var(&state->bootstrap, S("The bootstrap command generates your initial prompt on stdout. See README for details."), nullspan());
+    
+    char buf[2048] = {0};
+    s_buffer(buf, sizeof(buf), state->bootstrap);
+    prt("Running bootstrap command: %s\n", buf);
+    flush();
+    
+    // Run command and capture output into cmp space
+    FILE* fp = popen(buf, "r");
+    if (!fp) {
+        prt("Error: Could not run bootstrap command.\n");
+        prt("Press any key to continue...");
+        flush();
+        getch();
+        return;
+    }
+    
+    span cmp_free = cmp_compl();
+    u8* start = cmp_free.buf;
+    u8* p = start;
+    u8* end = cmp_free.end;
+    
+    int c;
+    while ((c = fgetc(fp)) != EOF && p < end) {
+        *p++ = (u8)c;
+    }
+    pclose(fp);
+    
+    state->bootstrapprompt = (span){start, p};
+    cmp.end = p;
+    
+    send_to_clipboard(state->bootstrapprompt);
+    prt("Bootstrap output (%d bytes) sent to clipboard.\n", (int)len(state->bootstrapprompt));
+    prt("Press any key to continue...");
+    flush();
+    getch();
+}
 /* #perform_search */
 void perform_search() {
     int remaining_lines = state->terminal_rows;
@@ -5946,6 +6435,15 @@ void print_ruler() {
 
     int block_count = state->blocks.n;
     int current_block_number = (state->curr_block_idx != -1) ? state->curr_block_idx + 1 : 0;
+    
+    // Check if current file is modified (cksum differs from load_checksum)
+    int is_modified = 0;
+    if (state->curr_file_idx != -1) {
+        projfile *f = &state->files.a[state->curr_file_idx];
+        if (f->cksum.__u != f->load_checksum.__u) {
+            is_modified = 1;
+        }
+    }
 
     if (state->count_prefix > 0) {
         prt("%d ", state->count_prefix);
@@ -5957,7 +6455,11 @@ void print_ruler() {
         prt("Block -/%d, Line -, File %.*s, Model %.*s", block_count, len(current_file_path), current_file_path.buf, len(model), model.buf);
     } else {
         int top_visible_line = state->scrolled_lines + 1;
-        prt("Block %d/%d, Line %d, File %.*s, Model %.*s", current_block_number, block_count, top_visible_line, len(current_file_path), current_file_path.buf, len(model), model.buf);
+        prt("Block %d/%d, Line %d, File %.*s%s, Model %.*s", 
+            current_block_number, block_count, top_visible_line, 
+            len(current_file_path), current_file_path.buf,
+            is_modified ? " [+]" : "",
+            len(model), model.buf);
     }
 
     if (empty(debug_info)) {
@@ -5998,22 +6500,26 @@ void print_single_block_with_skipping(int block_index, int skipped_lines) {
     block_suffix.buf = skipped_span.end;
 
     int remaining_rows = state->terminal_rows;
-    prt("Block %d\n", block_index + 1);
+    
+    // Get block ID for header
+    spans ids = ids_for_block(block);
+    if (ids.n > 0) {
+        prt("Block %d  %.*s\n", block_index + 1, len(ids.a[0]), ids.a[0].buf);
+    } else {
+        prt("Block %d  (anonymous)\n", block_index + 1);
+    }
     --remaining_rows;
 
     int remaining_content_lines = remaining_rows - 1;
     span content_to_print = count_physical_lines(block_suffix, &remaining_content_lines);
     wrs(content_to_print);
 
-    /* *** manual fixup *** totally failed to get GPT4 to write this */
     while (remaining_content_lines-- > 0) {
         terpri();
     }
 
     print_ruler();
 }
-
-
 /* #print_matching_physical_lines */
 int print_matching_physical_lines(span block, span match) {
 
@@ -6169,6 +6675,9 @@ span read_line(span *buffer, span default_value) {
     flush(); // Ensure output is visible
     char ch;
     while ((ch = getch()) != '\n') { // Read input until enter is hit
+        if (ch == 0) { // EOF - return what we have (default or empty)
+            break;
+        }
         if (ch == '\b' || ch == 127) { // Handle backspace (ASCII DEL or backspace)
             if (line.buf < line.end) { // Check if there's a character to delete
                 line.end--; // Shorten the span by one
@@ -6183,8 +6692,6 @@ span read_line(span *buffer, span default_value) {
     *buffer = (span){ .buf = line.end, .end = buffer->end }; // Adjust input buffer span to exclude the read line
     return (span){ .buf = line.buf, .end = line.end }; // Return the span containing user input
 }
-
-
 /* #save_conf_files */
 void save_conf_files() {
     span last_written_language = nullspan();
@@ -7590,6 +8097,7 @@ span script_Tcks(span s) {
     ); else return nullspan();
 }
 
+
 /* #script_blockid_impl */
 span script_blockid(span s) {
     if (empty(s) || span_eq(S("blockid"), s)) return S(
@@ -7602,12 +8110,20 @@ span script_blockid(span s) {
 span script_checksum(span s) {
     if (empty(s) || span_eq(S("checksum"), s)) return S(
         "#!/bin/sh\n"
-        "BID=$(.cmpr/scripts/blockid)\n"
+        "# \"The blkcks is the block checksum.\"\n"
+        "# \"The blkcks is: \"\n"
+        "\n"
+        "BID=$(scripts/blockid)\n"
+        "\n"
+        "# Recall previous state for this BID (loads old blkcks if any)\n"
         "cmpr --recall 2>/dev/null\n"
+        "\n"
+        "# Compute and add fresh checksum (may create surprise-high if changed)\n"
         "cmpr --event \"The blkcks is the block checksum.\" --strength 255\n"
         "cmpr --event \"The blkcks is: $(cmpr --print-block \"$BID\" | cmpr --checksum)\" --strength 255\n"
     ); else return nullspan();
 }
+
 /* #script_patterns_impl */
 span script_patterns(span s) {
     if (empty(s) || span_eq(S("patterns"), s)) return S(
@@ -7776,92 +8292,116 @@ void handle_install_script(char *script_name) {
 
 /* #help_text_summary_impl */
 span help_text_summary(span s) {
-  if (empty(s) || span_eq(S("help_text_summary"), s))
+  if (empty(s) || span_eq(s, S("help_text_summary")))
     return S(
-      "cmpr code swiss army knife\n"
-      "\n"
-      "Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version] [(--print-block|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all|--inbox|--status] [--after <id>] [--before <ts>] [(--replace|--replace-comment|--replace-code) <id>] [--run <block_id>] [--agents] [--agent-run <agent_name> <mode>] [--checksum] [--T0] [--event <string> --strength <value>] [--query <string>] [--memorize] [--recall] [--recall-first] [--T] [--snapshots] [--snapshot-view <timestamp>] [--event-spaces|--es] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs] [FILE|-]\n"
-      "\n"
-      "For help on available topics: cmpr --help topics\n"
-      "Every CLI flag can also be used after --help to get a description of that flag or usage examples: cmpr --help --grep\n"
-    );
+"cmpr code swiss army knife\n"
+"\n"
+"Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version|--status] [(--print-block [--ofra]|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--llm] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all|--inbox] [--after <id>] [--before <ts>] [(--replace|--replace-comment|--replace-code|--replace-current) <id>] [--run <block_id>] [--agents] [--install-agent <name>] [--install-script <name>] [--checksum] [--find-deleted] [--T0] [--event <string> --strength <value>] [--event-stdin --strength <value>] [--event-file <path> --strength <value>] [--query <string>] [--memorize] [--recall] [--recall-first] [--T] [--trace] [--work [event]] [--event-spaces|--es] [--P|--pattern] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs] [FILE|-]\n"
+"\n"
+"For help on available topics: cmpr --help topics\n"
+"Every CLI flag can also be used after --help to get a description of that flag or usage examples: cmpr --help --grep\n"
+);
   else
     return nullspan();
 }
 
+
 /* #help_text_topics_impl */
 span help_text_topics(span s) {
-  if (empty(s) || span_eq(S("help_text_topics"), s)) return S(
-"topics\n\
-basics\n\
-blocks\n\
-inbox\n\
-editing\n\
-search\n\
-nl2pl\n\
-events\n\
-agents\n\
-reports\n\
-wants\n\
-claude-setup\n\
-");
-  else return nullspan();
+  if (empty(s) || span_eq(S("help_text_topics"), s))
+    return S(
+"topics\n"
+"basic\n"
+"blocks\n"
+"inbox\n"
+"editing\n"
+"search\n"
+"nl2pl\n"
+"events\n"
+"agents\n"
+"reports\n"
+"wants\n"
+"claude-setup\n"
+);
+  else
+    return nullspan();
 }
+
 /* #help_text_basic_impl */
 span help_text_basic(span s) {
-  if (empty(s) || span_eq(S("help_text_basic"),s)) return S(
-"All cmpr state is maintained in .cmpr in your project directory (like .git), also set up via `cmpr --init` in a new project.\n"
-"In .cmpr/conf is the \"project manifest\" or list of files that cmpr will know about.\n"
-"You can add all the files in your project or just start with one to try it.\n"
-"Recommended starter example .cmpr/conf:\n"
-"\n"
-"cmprdir: .cmpr/\n"
-"buildcmd: make\n"
-"[ ... other config ... ]\n"
-"model: gpt-4.1\n"
-"\n"
-"language: C\n"
-"file: .cmpr/conf\n"
-"file: my-project-code\n"
-"\n"
-"Note that \"language: C\" only refers to the cmpr \"blockizing style\".\n"
-"You should use \"C\" regardless of the actual programming language in your project, unless it is Python.\n"
-"\n"
-"Only use \"language: Python\" for Python files, and \"language: none\" for files that you don't want to be blockized at all.\n"
-"Each language line applies to all file lines up to the next language line.\n"
-"\n"
-"Replace buildcmd with your actual build command.\n"
-"This only applies to the TUI currently, specifically the 'B' keybinding.\n"
-"\n"
-"cmpr can be used via TUI, reached by running `cmpr` with no arguments (or with a single filename).\n"
-"It can be used from the shell via CLI, see cmpr --help for basic usage.\n"
-"\n"
-"cmpr organizes your code into blocks, which are marked by actual block comments in your source code.\n"
-"Next, read `cmpr --help blocks` for the basics of blocks and cmpr source-code access.\n"
-"\n"
-"Basic Commands\n"
-"==============\n"
-"\n"
-"--help [topic]\n"
-"  Display help information.\n"
-"  cmpr --help         # basic usage\n"
-"  cmpr --help topics  # list of topics\n"
-"\n"
-"--version\n"
-"  Version information.\n"
-"\n"
-"--init\n"
-"  Initialize .cmpr/ directory structure in current directory.\n"
-"  Use when setting up cmpr in a new project, then manually edit .cmpr/conf to add your source files.\n"
-"\n"
-"--conf <filepath>\n"
-"  Use alternate configuration file.\n"
-"  Example: cmpr --conf /path/to/custom.conf --print-block '#root'\n"
-"\n"
-"--print-conf\n"
-"  Display current configuration.\n"
-"\n"
-); else return nullspan();
+  if (empty(s) || span_eq(S("help_text_basic"), s))
+    return S(
+      "cmpr basics\n"
+      "\n"
+      "All cmpr state is maintained in .cmpr in your project directory (like .git), also set up via `cmpr --init` in a new project.\n"
+      "In .cmpr/conf is the \"project manifest\" or list of files that cmpr will know about.\n"
+      "You can add all the files in your project or just start with one to try it.\n"
+      "Recommended starter example .cmpr/conf:\n"
+      "\n"
+      "cmprdir: .cmpr/\n"
+      "buildcmd: make\n"
+      "[ ... other config ... ]\n"
+      "model: gpt-4.1\n"
+      "\n"
+      "language: C\n"
+      "file: .cmpr/conf\n"
+      "file: my-project-code\n"
+      "\n"
+      "Note that \"language: C\" only refers to the cmpr \"blockizing style\".\n"
+      "You should use \"C\" regardless of the actual programming language in your project, unless it is Python.\n"
+      "\n"
+      "Only use \"language: Python\" for Python files, and \"language: none\" for files that you don't want to be blockized at all.\n"
+      "Each language line applies to all file lines up to the next language line.\n"
+      "\n"
+      "Replace buildcmd with your actual build command.\n"
+      "This only applies to the TUI currently, specifically the 'B' keybinding.\n"
+      "\n"
+      "cmpr can be used via TUI, reached by running `cmpr` with no arguments (or with a single filename).\n"
+      "It can be used from the shell via CLI, see cmpr --help for basic usage.\n"
+      "\n"
+      "cmpr organizes your code into blocks, which are marked by actual block comments in your source code.\n"
+      "Next, read `cmpr --help blocks` for the basics of blocks and cmpr source-code access.\n"
+      "\n"
+      "Basic Commands\n"
+      "==============\n"
+      "\n"
+      "--help [topic]\n"
+      "  Display help information.\n"
+      "  cmpr --help         # basic usage\n"
+      "  cmpr --help topics  # list of topics\n"
+      "  cmpr --help --flag  # help for specific flag\n"
+      "\n"
+      "--version\n"
+      "  Version information.\n"
+      "\n"
+      "--init\n"
+      "  Initialize .cmpr/ directory structure in current directory.\n"
+      "  Use when setting up cmpr in a new project, then manually edit .cmpr/conf to add your source files.\n"
+      "\n"
+      "--conf <filepath>\n"
+      "  Use alternate configuration file.\n"
+      "  Example: cmpr --conf /path/to/custom.conf --print-block '#root'\n"
+      "\n"
+      "--print-conf\n"
+      "  Display current configuration.\n"
+      "\n"
+      "--status\n"
+      "  Print quick project health dashboard.\n"
+      "  Shows: inbox items, total wants, total blocks, anonymous blocks.\n"
+      "  Example: cmpr --status\n"
+      "\n"
+      "--checksum\n"
+      "  Compute checksum of input from stdin.\n"
+      "  Useful for verifying content integrity.\n"
+      "  Example: cat file.txt | cmpr --checksum\n"
+      "\n"
+      "--find-deleted\n"
+      "  Find and print the most recently deleted block.\n"
+      "  Searches revision history for blocks that no longer exist.\n"
+      "  Useful for recovering accidentally deleted blocks.\n"
+      "  Example: cmpr --find-deleted\n"
+      );
+  else return nullspan();
 }
 
 /* #help_text_blocks_impl */
@@ -7983,67 +8523,82 @@ span help_text_inbox(span s) {
 /* #help_text_editing_impl */
 span help_text_editing(span s) {
   if (empty(s) || span_eq(S("help_text_editing"), s)) return S(
-"\
-#help_text_editing\n\
-\n\
-## Editing with cmpr\n\
-\n\
-You can use the TUI `cmpr` or `cmpr foo.c` to navigate around your codebase by blocks (using j/k) and edit them using 'e', which will open up vim (or your configured $EDITOR) on a temporary file containing that block, and then replace it back into the file after you save and successfully (status code 0) exit vim.\n\
-\n\
-Coding agents should use the CLI commands instead.\n\
-\n\
-Block Editing Commands\n\
-======================\n\
-\n\
---after <id>\n\
-  Insert new block after the specified block ID.\n\
-  Reads new block content (NL + PL) from stdin.\n\
-  New block is inserted in the same file.\n\
-  Example: cat newblock.txt | cmpr --after '#INBOX'\n\
-\n\
---replace <id>\n\
-  Replace entire block (both NL and PL parts) with content from stdin.\n\
-  Completely overwrites existing block.\n\
-  Example: cat updated.txt | cmpr --replace '#blockid'\n\
-\n\
---replace-comment <id>\n\
-  Replace only the NL (comment) part, keeping PL unchanged.\n\
-  Use this to update documentation without touching code.\n\
-  Example: cat new_comment.txt | cmpr --replace-comment '#blockid'\n\
-\n\
---replace-code <id>\n\
-  Replace only the PL (code) part, keeping NL unchanged.\n\
-  Less preferred than --rewritepl which generates from NL.\n\
-  Example: cat new_code.c | cmpr --replace-code '#blockid'\n\
-\n\
-\n\
-## General editing recipe\n\
-\n\
-There is no \"before\" even though there is an --after, so if you want to put a block before the first block in a file, follow the general editing recipe we describe here.\n\
-\n\
-This also applies to handling blocks that are anonymous, since you can't use --replace with numeric blockids at all without introducing race conditions in case anyone else is editing the codebase at the same time.\n\
-\n\
-The \"general editing recipe\" lets you do anything with blocks and makes cmpr a complete swiss army knife.\n\
-But this knife is sharp so be careful with it.\n\
-\n\
-In the general editing recipe, you construct a temp file, concatenating any cmpr --print-* commands or whatever other information you want into it, edit it using any tools you like, and then finally run `cmpr --replace \\#foo < path/to/that/file` to replace #foo with whatever you have constructed.\n\
-\n\
-Note this allows you to totally rewrite the block structure of a file, and fix (or make) all kinds of mistakes, for example:\n\
-\ndelete a block: cmpr --replace '#foo' </dev/null # or: true | cmpr --replace ...\n\
-split a block into two:\n\
-    cmpr --print-block '#foo' >/path/to/tmpfile\n\
-    vim /path/to/tmpfile                         # add a block comment opening in column 0\n\
-    cmpr --replace '#foo' </path/to/tmpfile\n\
-    cmpr --files-blocks | grep -A3 '#foo'        # check the current block structure\n\
-\n\
-You can also use this to rename a block, or even remove (or indent) the block comment part of a block, making it become part of the previous block in the file.\n\
-\n\
-You can also do terrible mistakes like sending a Python block which is triple-quote delimited into a C-style file.\n\
-In this case the Python block won't start a new block, since that's not how the file is blockized.\n\
-You can fix this by editing the block that you put the Python block after, which will now contain the Python block entirely as part of its PL section.\n\
-Copy it into a file and fix it and then --replace and check the block structure as above (applies to any surgery of this sort).\n\
-\
-"); else return nullspan();
+"You can use the TUI `cmpr` or `cmpr foo.c` to navigate around your codebase by blocks (using j/k) and edit them using 'e', which will open up vim (or your configured $EDITOR) on a temporary file containing that block, and then replace it back into the file after you save and successfully (status code 0) exit vim.\n"
+"\n"
+"Coding agents should use the CLI commands instead.\n"
+"\n"
+"Block Editing Commands\n"
+"======================\n"
+"\n"
+"--after <id>\n"
+"  Insert new block after the specified block ID.\n"
+"  Reads new block content (NL + PL) from stdin.\n"
+"  New block is inserted in the same file.\n"
+"  Example: cat newblock.txt | cmpr --after '#INBOX'\n"
+"\n"
+"--replace <id>\n"
+"  Replace entire block (both NL and PL parts) with content from stdin.\n"
+"  Completely overwrites existing block.\n"
+"  Example: cat updated.txt | cmpr --replace '#blockid'\n"
+"\n"
+"--replace-comment <id>\n"
+"  Replace only the NL (comment) part, keeping PL unchanged.\n"
+"  Use this to update documentation without touching code.\n"
+"  Example: cat new_comment.txt | cmpr --replace-comment '#blockid'\n"
+"\n"
+"--replace-code <id>\n"
+"  Replace only the PL (code) part, keeping NL unchanged.\n"
+"  Less preferred than --rewritepl which generates from NL.\n"
+"  Example: cat new_code.c | cmpr --replace-code '#blockid'\n"
+"\n"
+"--replace-current\n"
+"  Replace block using OFRA format from stdin (checksum-protected).\n"
+"  Verifies checksum to prevent concurrent modification conflicts.\n"
+"  Used by TUI and safe editing workflows.\n"
+"  \n"
+"  OFRA format:\n"
+"    ID: #blockid\n"
+"    Checksum: <16-char hex>\n"
+"    \n"
+"    <block content>\n"
+"  \n"
+"  If checksum doesn't match current block, operation fails.\n"
+"  Example: cat ofra_block.txt | cmpr --replace-current\n"
+"\n"
+"--print-block --ofra <id>\n"
+"  Print block in OFRA format (includes ID and Checksum headers).\n"
+"  Use this output with --replace-current for safe editing.\n"
+"  Example: cmpr --print-block --ofra '#myblock' > /tmp/edit.txt\n"
+"\n"
+"General editing recipe\n"
+"=====================\n"
+"\n"
+"There is no \"before\" even though there is an --after, so if you want to put a block before the first block in a file, follow the general editing recipe we describe here.\n"
+"\n"
+"This also applies to handling blocks that are anonymous, since you can't use --replace with numeric blockids at all without introducing race conditions in case anyone else is editing the codebase at the same time.\n"
+"\n"
+"The \"general editing recipe\" lets you do anything with blocks and makes cmpr a complete swiss army knife.\n"
+"But this knife is sharp so be careful with it.\n"
+"\n"
+"In the general editing recipe, you construct a temp file, concatenating any cmpr --print-* commands or whatever other information you want into it, edit it using any tools you like, and then finally run `cmpr --replace \\#foo < path/to/that/file` to replace #foo with whatever you have constructed.\n"
+"\n"
+"Note this allows you to totally rewrite the block structure of a file, and fix (or make) all kinds of mistakes, for example:\n"
+"\n"
+"delete a block: cmpr --replace '#foo' </dev/null # or: true | cmpr --replace ...\n"
+"split a block into two:\n"
+"    cmpr --print-block '#foo' >/path/to/tmpfile\n"
+"    vim /path/to/tmpfile                         # add a block comment opening in column 0\n"
+"    cmpr --replace '#foo' </path/to/tmpfile\n"
+"    cmpr --files-blocks | grep -A3 '#foo'        # check the current block structure\n"
+"\n"
+"You can also use this to rename a block, or even remove (or indent) the block comment part of a block, making it become part of the previous block in the file.\n"
+"\n"
+"You can also do terrible mistakes like sending a Python block which is triple-quote delimited into a C-style file.\n"
+"In this case the Python block won't start a new block, since that's not how the file is blockized.\n"
+"You can fix this by editing the block that you put the Python block after, which will now contain the Python block entirely as part of its PL section.\n"
+"Copy it into a file and fix it and then --replace and check the block structure as above (applies to any surgery of this sort).\n"
+"\n"
+); else return nullspan();
 }
 
 /* #help_text_search_impl */
@@ -8120,7 +8675,7 @@ span help_text_nl2pl(span s) {
 "However, for efficiency, nl2pl is still strongly recommended.\n"
 "We are gradually migrating the cmpr codebase itself back to nl2pl code generation.\n"
 "\n"
-"In times of accumulating tech debt to try ideas, you may have a lot of \"manually maintained\" code (writted by gpt5 or similar class model) however this tech debt should always be cleaned up bringing the codebase into a clean state where every block that has PL at all is successfully and repeatably generated by --rewritepl (or 'R' in the TUI).\n"
+"In times of accumulating tech debt to try ideas, you may have a lot of \"manually maintained\" code (written by gpt5 or similar class model) however this tech debt should always be cleaned up bringing the codebase into a clean state where every block that has PL at all is successfully and repeatably generated by --rewritepl (or 'R' in the TUI).\n"
 "\n"
 "Natural Language to Code Generation\n"
 "===================================\n"
@@ -8135,54 +8690,71 @@ span help_text_nl2pl(span s) {
 "  1. Edit NL: cat new_nl.txt | cmpr --replace-comment '#blockid'\n"
 "  2. Generate code: cmpr --rewritepl '#blockid'\n"
 "  3. Verify: cmpr --print-code '#blockid'\n"
-"  4. build or test or whatever.\n"
+"  4. Build or test.\n"
 "\n"
 "  If the code is not as you expect:\n"
-"  1. use --expand and --blockrefs and similar to make sure you understand what nl2pl is seeing\n"
-"  2. add negative advice in the NL in an \"Implementation notes\" or similar section\n"
-"  3. add an explicit algorithm, described in English prose, ideally without bullet points and definitely without cheating by embedding code\n"
-"  4. include a line of just identifier names at the bottom, without explanation; the model will know to use those variable names\n"
-"  5. include one or more code snippets alone without explanation or with \"Hint: \" as a prefix, until gpt4 (the basic model of nl2pl) starts to write good code\n"
-"  6. resist the urge to write the code yourself, unless you don't know what the code needs to do. then write it yourself, and only after it works rewrite the NL using English only, and iterate until gpt4 can write the same code you wrote (up to variable names and formatting, e.g.).\n"
+"  1. Use --expand-block to see what nl2pl is seeing (context from refs)\n"
+"  2. Add negative advice in the NL in an \"Implementation notes\" section\n"
+"  3. Add an explicit algorithm in English prose\n"
+"  4. Include identifier names at the bottom (model will use them)\n"
+"  5. Include code snippets with \"Hint: \" prefix\n"
+"  6. Resist writing PL directly - iterate on NL instead\n"
 "\n"
 "--prompt <id>\n"
 "  Print the prompt that would be sent to the LLM for nl2pl conversion.\n"
 "  Does NOT call the LLM - just shows what prompt would be used.\n"
 "  Useful for debugging and understanding LLM context.\n"
 "  Example: cmpr --prompt '#blockid'\n"
-"  See also --expand.\n"
+"\n"
+"--expand-block <id>\n"
+"  Print the block with all @references expanded.\n"
+"  Shows the full context that nl2pl will see.\n"
+"  Useful for debugging when --rewritepl produces unexpected code.\n"
+"  Example: cmpr --expand-block '#myblock'\n"
+"\n"
+"--llm\n"
+"  Send stdin to the configured LLM and print response to stdout.\n"
+"  General-purpose LLM access, not block-specific.\n"
+"  Example: echo \"Explain quicksort\" | cmpr --llm\n"
 "\n"
 "Configuration:\n"
 "  LLM settings are in .cmpr/conf:\n"
+"    model: gpt-4.1     (or claude-3-opus, etc.)\n"
 "\n"
-"If generated PL is wrong, fix the NL, not the PL.\n"
+"Block References (@):\n"
+"  Use @blockid in NL to include another block as context.\n"
+"  Use @blockid:code to include only the PL part.\n"
+"  Use @blockid:all to include all references recursively.\n"
+"  These are expanded before sending to the LLM.\n"
 "\n"
 "Manually Maintained Blocks:\n"
 "  Add \"Manually maintained.\" as last line of NL comment.\n"
 "  Only use when you MUST write PL directly.\n"
-"  Avoid when possible.\n"
-"  nl2pl subsystem will skip touching the PL in these blocks (but not if you run --rewritepl directly, so don't).\n"
+"  Avoid when possible - nl2pl subsystem will skip these blocks.\n"
 "\n"
-); else return nullspan();
+"If generated PL is wrong, fix the NL, not the PL.\n"
+"\n"
+  ); 
+  else return nullspan();
 }
 
 /* #help_text_events_impl */
 span help_text_events(span s) {
   if (empty(s) || span_eq(S("help_text_events"), s)) return S(
-"This documentation is incomplete and subject to rapid revision.\n"
-"\n"
 "Event System (Temporal Reasoning)\n"
 "==================================\n"
 "\n"
 "The event system provides temporal reasoning through tracking events\n"
-"in transient memory (T).\n"
+"in transient memory (T). Events are strings with strength values (0-255).\n"
 "\n"
 "Core Concepts:\n"
-"  T - Transient memory (current event state)\n"
+"  T - Transient memory (current event state, stored in .cmpr/T)\n"
 "  E - Events (strings with associated strength values)\n"
-"  S - Strength (binary log odds, 0-255 bits of support) (think of these as FALSE = 0, TRUE = 255)\n"
+"  S - Strength (0=false, 255=true, values between represent uncertainty)\n"
+"  ES - Event Space (a filter that matches a category of events)\n"
+"  SN - Strength Notation: \"event string\" strength.\n"
 "\n"
-"Commands:\n"
+"Basic Commands:\n"
 "\n"
 "--T0\n"
 "  Reset T to empty state.\n"
@@ -8192,14 +8764,28 @@ span help_text_events(span s) {
 "--event <string> --strength <value>\n"
 "  Add event to T with specified strength (0-255).\n"
 "  Events are deduplicated - adding duplicate updates strength.\n"
-"  Currently only strength 255 is well-supported.\n"
-"  Some day we may support leaving the strength out for a default of \"truth\" or 255, but for now it's still a required argument.\n"
-"  Example: cmpr --event \"The block id is: #root.\" --strength 255\n"
+"  Example: cmpr --event \"The blockid is: #root.\" --strength 255\n"
+"\n"
+"--event-stdin --strength <value>\n"
+"  Read event text from stdin (for large events up to 4MiB).\n"
+"  Content is hashed and stored in revs, with hash event added to T.\n"
+"  Example: cat large_content.txt | cmpr --event-stdin --strength 255\n"
+"\n"
+"--event-file <path> --strength <value>\n"
+"  Read event text from file (for large events up to 4MiB).\n"
+"  Example: cmpr --event-file myfile.txt --strength 255\n"
 "\n"
 "--T\n"
 "  Print current T state as SN (strength-notation) lines.\n"
 "  Format: \"event_string\" strength.\n"
 "  Example: cmpr --T\n"
+"\n"
+"--query <string>\n"
+"  Query the strength of an event in T.\n"
+"  Prints the strength value (0-255), or 0 if not found.\n"
+"  Example: cmpr --query \"The blockid is: #root.\"\n"
+"\n"
+"Memory Commands:\n"
 "\n"
 "--memorize\n"
 "  Save current T to timestamped snapshot in .cmpr/events/\n"
@@ -8207,93 +8793,169 @@ span help_text_events(span s) {
 "  Example: cmpr --memorize\n"
 "\n"
 "--recall\n"
-"  Use current T as query to search memorized snapshots.\n"
-"  Finds the most recent snapshot containing all 255 events in T and loads that snapshot.\n"
-"  T should be non-empty before calling --recall.\n"
+"  Search memorized snapshots for most recent match.\n"
+"  Finds the most recent snapshot containing all 255-strength events in T.\n"
+"  Loads matching snapshot into T.\n"
 "  Example:\n"
 "    cmpr --T0\n"
 "    cmpr --event \"The blockid is: #root.\" --strength 255\n"
-"    cmpr --recall # find out whatever we were thinking about the last time the blockid was #root\n"
+"    cmpr --recall  # loads last snapshot about #root\n"
 "\n"
-"--snapshots\n"
-"  List all event snapshots with timestamps and previews.\n"
-"  Currently busted.\n"
+"--recall-first\n"
+"  Like --recall but finds the oldest matching snapshot.\n"
+"  Useful for finding when something first happened.\n"
+"  Example: cmpr --recall-first\n"
 "\n"
-"--snapshot-view <timestamp>\n"
-"  View complete contents of specific snapshot.\n"
-"  Timestamp format: YYYYMMDD-HHMMSS-nanos (from --snapshots)\n"
-"  Unimplemented. Snapshots are available in .cmpr/events if you want to look at them, and they are just text files, so none of this is necessary.\n"
-"  So --snapshots is ls -l .cmpr/events and --snapshot-view is cat.\n"
+"Monitoring Commands:\n"
 "\n"
 "--trace\n"
 "  Watch .cmpr/T for changes and print them incrementally.\n"
-"  Unlike --work, does not clear the terminal - just prints changes as a log stream.\n"
-"  Useful for monitoring T state while other processes add events.\n"
+"  Prints changes as a log stream (does not clear terminal).\n"
+"  Useful for monitoring T while other processes add events.\n"
 "  Exit with Ctrl+C.\n"
 "  Example: cmpr --trace\n"
 "\n"
-"Common Workflow Pattern:\n"
+"--work [event]\n"
+"  Interactive work mode with T-debug enabled.\n"
+"  Clears terminal and displays T on changes (uses entr).\n"
+"  Optionally adds an initial event.\n"
+"  Useful for focused work sessions watching T state.\n"
+"  Example: cmpr --work \"Starting task: #myblock\"\n"
+"\n"
+"Event Spaces (ES):\n"
+"\n"
+"An Event Space is a filter that matches a category of events.\n"
+"ES filters are executable scripts in .cmpr/es/ that read stdin\n"
+"and output matching lines.\n"
+"\n"
+"--es (or --event-spaces)\n"
+"  List all event spaces with their attached infrastructure.\n"
+"  Shows induced patterns, surprise handlers, and LPP connections.\n"
+"  Example: cmpr --es\n"
+"\n"
+"Open vs Closed ES:\n"
+"  Open ES: Variable part (e.g., \"The blockid is: #foo\")\n"
+"  Closed ES: Fixed set of states (e.g., \"The block is justified.\")\n"
+"  \n"
+"  Pattern: Bind open ES once, then reference closed ES for states.\n"
+"  Example:\n"
+"    cmpr --event \"The blockid is: #myblock\" --strength 255  # bind open\n"
+"    cmpr --event \"The block is justified.\" --strength 255   # closed state\n"
+"\n"
+"Induced Patterns:\n"
+"\n"
+"When events are added that match an ES, scripts in .cmpr/induced/<es>\n"
+"are automatically executed. This enables reactive automation.\n"
+"\n"
+"Example: .cmpr/induced/BID runs when \"The blockid is: ...\" is added.\n"
+"\n"
+"Common Workflow:\n"
 "  1. Clear T: cmpr --T0\n"
 "  2. Set context: cmpr --event \"The blockid is: #foo\" --strength 255\n"
 "  3. Add facts: cmpr --event \"Block is reachable\" --strength 255\n"
 "  4. Save snapshot: cmpr --memorize\n"
 "\n"
-"T is TRANSIENT - meant to be cleared between work sessions.\n"
+"T is TRANSIENT - cleared between work sessions.\n"
 "Snapshots provide HISTORICAL queries via --recall.\n"
 "\n"
-"This communication pattern can be used for agents to communicate with each other while working on the same codebase.\n"
-"Multiple agents can share the same T but won't conflict with each other if they don't use the same events with different meanings.\n"
-"This is why our event names tend to be kind of formulaic at the beginning, like \"The blockid is: ...\".\n"
+"Multi-Agent Communication:\n"
+"Multiple agents can share T without conflict by using different\n"
+"event prefixes. Formulaic beginnings like \"The blockid is:\" help\n"
+"prevent collisions.\n"
 "\n"
-);
-  else return nullspan();
+"See also: cmpr --help agents, cmpr --help wants\n"
+"\n"
+); else return nullspan();
 }
-
 
 /* #help_text_agents_impl */
 span help_text_agents(span s) {
   if (empty(s) || span_eq(S("help_text_agents"), s)) return S(
-"Agent System (Automated Maintenance)\n"
-"====================================\n"
+"Agent System\n"
+"============\n"
 "\n"
-"Agents are executable blocks that verify and maintain wants (desired states).\n"
+"Agents are background processes that watch for changes and maintain wants\n"
+"(desired states). All agent communication is via T (transient memory).\n"
+"\n"
+"Quick Start:\n"
+"  cmpr --agents                    # List agents and status\n"
+"  cmpr --install-agent claude      # Install embedded agent\n"
+"  .cmpr/agents/claude &            # Run in background\n"
 "\n"
 "BASIC CONTRACT:\n"
 "\n"
-"You define wants in your source code by writing them in SN in some block.\n"
-"The context in the block should be used to give commentary on what the want is about, but the want itself is just one sentence.\n"
+"An agent takes responsibility for one or more wants. All communication\n"
+"is via cmpr events - no stdout/stderr for normal operation:\n"
 "\n"
-"An agent in cmpr is just a shell script that we run, and it takes responsibility for a want or some set of wants.\n"
+"  cmpr --event \"Agent: myagent\" --strength 255\n"
+"  cmpr --event \"We want X to be true.\" --strength 255\n"
+"  cmpr --event \"Status: ok\" --strength 255   # or \"Status: failing\"\n"
+"  cmpr --memorize\n"
 "\n"
-"ALL agent communication is via T:\n"
-"  - Agents use `cmpr --event \"...\" --strength N` for ALL results\n"
-"  - NO stdout/stderr for normal operation\n"
-"\n"
-"A typical set of events put into T by an agent might look like:\n"
-"  \"Agent: foo\" 255.\n"
-"  \"We want foo to be working.\" 255.\n"
-"  \"The time is: ...\" 255.\n"
-"  ...\n"
-"\n"
-"The same agent might then later look up (using --memorize and --recall) the same thought, retrieving the timestamp of the most recent check without needing any extra work.\n"
-"\n"
-"Architecture:\n"
-"  Agent = Predicate (Want) + Step Function (CHECK/FIX modes)\n"
-"  \n"
-"  Four decision states:\n"
-"  1. Tracked - Want is recorded but not verified\n"
-"  2. Checked - Can determine if want is satisfied\n"
-"  3. Assisted - Can offer help with fixing\n"
-"  4. Owned - Automatically maintains the want\n"
-"\n"
-"This is about the relationship between an agent and a want.\n"
-"This system is currently in flux with several overlapping approaches in play, so check back soon for more practical documentation.\n"
+"Agents typically use entr(1) to watch files and re-check on changes.\n"
 "\n"
 "Commands:\n"
 "\n"
-"This is changing too quickly, see cmpr --help and good luck, have fun.\n"
+"--agents\n"
+"  List all agents with installation and running status.\n"
+"  Shows both embedded agents (available via --install-agent) and\n"
+"  custom agents in .cmpr/agents/.\n"
+"  Running detection uses pgrep, no PID files needed.\n"
+"  Example: cmpr --agents\n"
 "\n"
-  ); else return nullspan();
+"--install-agent <name>\n"
+"  Extract embedded agent script to .cmpr/agents/<name>.\n"
+"  Makes the script executable.\n"
+"  Currently available: claude\n"
+"  Example: cmpr --install-agent claude\n"
+"\n"
+"--install-script <name>\n"
+"  Extract embedded utility script to .cmpr/scripts/<name>.\n"
+"  Makes the script executable.\n"
+"  Available scripts: Tcks, blockid, checksum, patterns\n"
+"  Example: cmpr --install-script patterns\n"
+"\n"
+"--run <block_id>\n"
+"  Execute the PL (code) part of a block as a shell script.\n"
+"  Writes code to temp file, runs it, returns exit code.\n"
+"  Useful for blocks that contain executable scripts.\n"
+"  Example: cmpr --run '#my_script_block'\n"
+"\n"
+"Agent Architecture:\n"
+"\n"
+"Agents watch files and emit events to T. The decision state progression:\n"
+"\n"
+"  1. Tracked  - Want is recorded but not verified\n"
+"  2. Checked  - Agent can determine if want is satisfied\n"
+"  3. Assisted - Agent can help fix violations\n"
+"  4. Owned    - Agent automatically maintains the want\n"
+"\n"
+"Creating a Custom Agent:\n"
+"\n"
+"1. Create .cmpr/agents/myagent (executable shell script)\n"
+"2. Use entr or inotifywait to watch relevant files\n"
+"3. On changes, emit events via cmpr --event\n"
+"4. Use cmpr --memorize to save state for --recall\n"
+"\n"
+"Example agent structure:\n"
+"\n"
+"  #!/bin/bash\n"
+"  cmpr --T0\n"
+"  cmpr --event \"Agent: myagent\" --strength 255\n"
+"  # ... check something ...\n"
+"  cmpr --event \"Status: ok\" --strength 255\n"
+"  cmpr --memorize\n"
+"  \n"
+"  echo \"watched_file.txt\" | entr -ns '\n"
+"    cmpr --T0\n"
+"    cmpr --event \"Agent: myagent\" --strength 255\n"
+"    # ... re-check ...\n"
+"    cmpr --memorize\n"
+"  '\n"
+"\n"
+"See also: cmpr --help events, cmpr --help wants\n"
+"\n"
+); else return nullspan();
 }
 
 /* #help_text_reports_impl */
@@ -8478,14 +9140,74 @@ span help_text_agent_qa(span s) {
 
 /* #help_text_claude_setup_impl */
 span help_text_claude_setup(span s) {
-  if (empty(s) || span_eq(S("help_text_claude_setup"), s)) return S(
-"This codebase uses cmpr for block-based code organization.\n"
+  if (empty(s) || span_eq(S("help_text_claude_setup"),s)) return S(
+"Claude Code Integration Guide\n"
+"=============================\n"
 "\n"
-"**IMPORTANT**: Always use cmpr commands instead of built-in or traditional file-based editing tools.\n"
+"This guide helps Claude Code work effectively with cmpr-managed codebases.\n"
 "\n"
-"All AI agents and especially Claude Code should begin every session by running this:\n"
+"Session Start:\n"
+"  Run this command at the beginning of every session:\n"
+"  \n"
+"  cmpr --help && cmpr --count-blocks && cmpr --T && cmpr --print-block '#root'\n"
 "\n"
-"cmpr --help && cmpr --help basic && cmpr --help blocks && cmpr --count-blocks && cmpr --T && cmpr --print-block '#root'\n"
+"Key Principles:\n"
+"\n"
+"1. BLOCKS, NOT FILES\n"
+"   - Code is organized into blocks, not files\n"
+"   - Use cmpr commands, not file-based tools (cat, sed, Read, Edit)\n"
+"   - A block = NL comment + PL code\n"
+"\n"
+"2. SEARCH: Use cmpr --grep\n"
+"   - Returns block IDs, not file paths\n"
+"   - Example: cmpr --grep 'handle_event'\n"
+"   - For structure: cmpr --files-blocks\n"
+"\n"
+"3. READ: Use cmpr --print-*\n"
+"   - cmpr --print-block '#blockid'  (full block)\n"
+"   - cmpr --print-comment '#blockid' (NL only)\n"
+"   - cmpr --print-code '#blockid'   (PL only)\n"
+"\n"
+"4. EDIT: Use cmpr --replace\n"
+"   - Read first: cmpr --print-block '#blockid'\n"
+"   - Modify and pipe back: cat modified.txt | cmpr --replace '#blockid'\n"
+"   - For new blocks: cat new.txt | cmpr --after '#existing_blockid'\n"
+"\n"
+"5. COMMUNICATE VIA T\n"
+"   - Check context: cmpr --T\n"
+"   - Add events: cmpr --event \"Working on: #blockid\" --strength 255\n"
+"   - Save state: cmpr --memorize\n"
+"   - Recall context: cmpr --recall\n"
+"\n"
+"Common Patterns:\n"
+"\n"
+"Safe Edit Pattern:\n"
+"  cmpr --print-block '#foo' > /tmp/foo.txt\n"
+"  # modify /tmp/foo.txt\n"
+"  cmpr --replace '#foo' < /tmp/foo.txt\n"
+"\n"
+"NL2PL Pattern (preferred for code):\n"
+"  # 1. Write NL (natural language spec)\n"
+"  # 2. Regenerate code: cmpr --rewritepl '#blockid'\n"
+"\n"
+"Finding Things:\n"
+"  cmpr --print-block '#root'     # start here\n"
+"  cmpr --files-blocks            # see all blocks\n"
+"  cmpr --grep 'pattern'          # search content\n"
+"  cmpr --help --flag             # per-flag help\n"
+"\n"
+"Pitfalls to Avoid:\n"
+"  - DON'T use cat/Read to read source files directly\n"
+"  - DON'T use sed/Edit to modify source files directly\n"
+"  - DON'T forget to check T at session start\n"
+"  - DON'T create files outside the block system\n"
+"\n"
+"Experience Reports:\n"
+"  When you learn something useful, create an experience report:\n"
+"  cat report.txt | cmpr --after '#INBOX'\n"
+"  Use naming: #claude_experience_report_<topic>_<date>\n"
+"\n"
+"See also: cmpr --help basic, cmpr --help blocks, cmpr --help events\n"
 "\n"
 ); else return nullspan();
 }
@@ -8561,24 +9283,54 @@ span get_help_text(span topic) {
     // Flag-to-topic mapping: --flag -> relevant help topic
     if (len(topic) > 2 && topic.buf[0] == '-' && topic.buf[1] == '-') {
         span flag = { topic.buf + 2, topic.end };
+        // Search
         if (span_eq(flag, S("grep")) || span_eq(flag, S("content-index")) || span_eq(flag, S("files-blocks"))) {
             return help_text_search(nullspan());
-        } else if (span_eq(flag, S("T0")) || span_eq(flag, S("T")) || span_eq(flag, S("event")) ||
-                   span_eq(flag, S("memorize")) || span_eq(flag, S("recall")) || span_eq(flag, S("query")) || span_eq(flag, S("trace"))) {
+        }
+        // Events
+        if (span_eq(flag, S("T0")) || span_eq(flag, S("T")) || span_eq(flag, S("event")) ||
+            span_eq(flag, S("memorize")) || span_eq(flag, S("recall")) || span_eq(flag, S("recall-first")) ||
+            span_eq(flag, S("query")) || span_eq(flag, S("trace")) || span_eq(flag, S("work")) ||
+            span_eq(flag, S("es")) || span_eq(flag, S("event-spaces")) ||
+            span_eq(flag, S("event-stdin")) || span_eq(flag, S("event-file")) || span_eq(flag, S("strength"))) {
             return help_text_events(nullspan());
-        } else if (span_eq(flag, S("print-block")) || span_eq(flag, S("print-code")) || span_eq(flag, S("print-comment")) ||
-                   span_eq(flag, S("expand-block")) || span_eq(flag, S("count-blocks"))) {
+        }
+        // Blocks
+        if (span_eq(flag, S("print-block")) || span_eq(flag, S("print-code")) || span_eq(flag, S("print-comment")) ||
+            span_eq(flag, S("expand-block")) || span_eq(flag, S("count-blocks"))) {
             return help_text_blocks(nullspan());
-        } else if (span_eq(flag, S("replace")) || span_eq(flag, S("replace-code")) || span_eq(flag, S("replace-comment")) ||
-                   span_eq(flag, S("after"))) {
+        }
+        // Editing
+        if (span_eq(flag, S("replace")) || span_eq(flag, S("replace-code")) || span_eq(flag, S("replace-comment")) ||
+            span_eq(flag, S("replace-current")) || span_eq(flag, S("ofra")) || span_eq(flag, S("after"))) {
             return help_text_editing(nullspan());
-        } else if (span_eq(flag, S("agents")) || span_eq(flag, S("agent-run"))) {
+        }
+        // Agents
+        if (span_eq(flag, S("agents")) || span_eq(flag, S("agent-run")) ||
+            span_eq(flag, S("install-agent")) || span_eq(flag, S("install-script")) || span_eq(flag, S("run"))) {
             return help_text_agents(nullspan());
-        } else if (span_eq(flag, S("wants")) || span_eq(flag, S("wants-status")) || span_eq(flag, S("wants-dashboard"))) {
+        }
+        // Wants
+        if (span_eq(flag, S("wants")) || span_eq(flag, S("wants-status")) || span_eq(flag, S("wants-dashboard")) ||
+            span_eq(flag, S("agents-wants"))) {
             return help_text_wants(nullspan());
-        } else if (span_eq(flag, S("rewritepl")) || span_eq(flag, S("prompt"))) {
+        }
+        // NL2PL
+        if (span_eq(flag, S("rewritepl")) || span_eq(flag, S("prompt")) || span_eq(flag, S("llm"))) {
             return help_text_nl2pl(nullspan());
-        } else if (span_eq(flag, S("inbox")) || span_eq(flag, S("status"))) {
+        }
+        // Reports
+        if (span_eq(flag, S("event-report")) || span_eq(flag, S("export-docs")) || span_eq(flag, S("wants-dashboard"))) {
+            return help_text_reports(nullspan());
+        }
+        // Basic
+        if (span_eq(flag, S("init")) || span_eq(flag, S("version")) || span_eq(flag, S("conf")) ||
+            span_eq(flag, S("print-conf")) || span_eq(flag, S("status")) ||
+            span_eq(flag, S("checksum")) || span_eq(flag, S("find-deleted"))) {
+            return help_text_basic(nullspan());
+        }
+        // Inbox
+        if (span_eq(flag, S("inbox"))) {
             return help_text_inbox(nullspan());
         }
     }
@@ -8593,7 +9345,6 @@ span get_agent_script(span name) {
     }
     return nullspan();
 }
-
 /* #handle_help_topic */
 void handle_help_topic(char *topic) {
     span s = get_help_text(S(topic));
@@ -9665,6 +10416,197 @@ void handle_es() {
 
 
 
+/* #handle_P */
+void handle_P() {
+  span es_dir = S(".cmpr/es/");
+  span induced_dir = S(".cmpr/induced/");
+  span induced_single_dir = S(".cmpr/induced-single/");
+  span surprise_dir = S(".cmpr/surprise-high/");
+  span patterns_dir = S(".cmpr/patterns/");
+
+  spans es_list = dir_listing(es_dir);
+  spans induced_list = dir_listing(induced_dir);
+  spans single_list = dir_listing(induced_single_dir);
+  spans surprise_list = dir_listing(surprise_dir);
+  spans patterns_list = dir_listing(patterns_dir);
+
+  int es_count = es_list.n;
+  int induced_count = induced_list.n;
+  int single_count = single_list.n;
+  int surprise_count = surprise_list.n;
+  int lpp_count = patterns_list.n;
+
+  prt("PATTERN OVERVIEW\n");
+  prt("================\n\n");
+
+  // Section 1: Event Spaces
+  prt("Event Spaces (%d):\n", es_count);
+  prt("  %-20s %-40s %s\n", "ES", "Example Match", "Reactive");
+  prt("  ");
+  for (int i = 0; i < 70; i++) prt("-");
+  prt("\n");
+
+  for (int i = 0; i < es_list.n; i++) {
+    span name = es_list.a[i];
+
+    // Check what's attached to this ES
+    span induced_path = concat(induced_dir, name);
+    span surprise_path = concat(surprise_dir, name);
+    int has_induced = readable_file(induced_path);
+    int has_surprise = readable_file(surprise_path);
+
+    // Find LPP connections
+    char lpp_buf[256];
+    lpp_buf[0] = 0;
+    for (int j = 0; j < patterns_list.n; j++) {
+      span fn = patterns_list.a[j];
+      int dash = find_char(fn, '-');
+      if (dash <= 0 || dash >= len(fn) - 1) continue;
+      span left = first_n(fn, dash);
+      span right = skip_n(fn, dash + 1);
+      span other = nullspan();
+      char arrow[4] = "";
+      if (span_eq(name, left)) { other = right; strcpy(arrow, "->"); }
+      else if (span_eq(name, right)) { other = left; strcpy(arrow, "<-"); }
+      if (len(other) > 0) {
+        if (strlen(lpp_buf) > 0) strcat(lpp_buf, ",");
+        strcat(lpp_buf, "LPP");
+        strcat(lpp_buf, arrow);
+        char tmp[64];
+        int n = len(other);
+        if (n >= (int)sizeof(tmp)) n = (int)sizeof(tmp) - 1;
+        memcpy(tmp, other.buf, n);
+        tmp[n] = 0;
+        strcat(lpp_buf, tmp);
+      }
+    }
+
+    // Read the ES filter to get example pattern
+    span es_path = concat(es_dir, name);
+    span content = read_file_into_cmp(es_path);
+    char example[48] = "";
+    // Extract grep pattern from filter script
+    span line = content;
+    while (len(line) > 0) {
+      span l = next_line(&line);
+      if (starts_with(l, S("grep"))) {
+        // Find quoted pattern
+        int q1 = find_char(l, '\'');
+        if (q1 >= 0) {
+          span rest = skip_n(l, q1 + 1);
+          int q2 = find_char(rest, '\'');
+          if (q2 > 0) {
+            int n = q2;
+            if (n > 40) n = 40;
+            memcpy(example, rest.buf, n);
+            example[n] = 0;
+          }
+        }
+        break;
+      }
+    }
+
+    // Build reactive column
+    char reactive[128];
+    reactive[0] = 0;
+    if (has_induced) {
+      strcat(reactive, "induced");
+    }
+    if (has_surprise) {
+      if (strlen(reactive) > 0) strcat(reactive, ",");
+      strcat(reactive, "surprise");
+    }
+    if (strlen(lpp_buf) > 0) {
+      if (strlen(reactive) > 0) strcat(reactive, ",");
+      strcat(reactive, lpp_buf);
+    }
+    if (strlen(reactive) == 0) strcpy(reactive, "-");
+
+    prt("  %-20s %-40s %s\n", s(name), example, reactive);
+  }
+
+  // Section 2: Induced Scripts
+  prt("\nInduced (%d):\n", induced_count);
+  if (induced_count == 0) {
+    prt("  (none)\n");
+  } else {
+    for (int i = 0; i < induced_list.n; i++) {
+      span name = induced_list.a[i];
+      span path = concat(induced_dir, name);
+      prt("  %-20s -> %s\n", s(name), s(path));
+    }
+  }
+
+  // Section 3: Induced-Single Triggers
+  prt("\nInduced-Single (%d):\n", single_count);
+  if (single_count == 0) {
+    prt("  (none)\n");
+  } else {
+    for (int i = 0; i < single_list.n; i++) {
+      span dirname = single_list.a[i];
+      span name_path = concat(concat(induced_single_dir, dirname), S("/name"));
+      span script_path = concat(concat(induced_single_dir, dirname), S("/script"));
+      
+      if (readable_file(name_path)) {
+        span name_content = trim(read_file_into_cmp(name_path));
+        char truncated[60];
+        int n = len(name_content);
+        if (n > 55) {
+          memcpy(truncated, name_content.buf, 52);
+          strcpy(truncated + 52, "...");
+        } else {
+          memcpy(truncated, name_content.buf, n);
+          truncated[n] = 0;
+        }
+        prt("  [%s] \"%s\"\n", s(dirname), truncated);
+        prt("       -> %s\n", s(script_path));
+      }
+    }
+  }
+
+  // Section 4: Surprise Handlers
+  prt("\nSurprise (%d):\n", surprise_count);
+  if (surprise_count == 0) {
+    prt("  (none)\n");
+  } else {
+    for (int i = 0; i < surprise_list.n; i++) {
+      span name = surprise_list.a[i];
+      span path = concat(surprise_dir, name);
+      prt("  %-20s -> %s\n", s(name), s(path));
+    }
+  }
+
+  // Section 5: LPP Patterns
+  prt("\nLPP Patterns (%d):\n", lpp_count);
+  if (lpp_count == 0) {
+    prt("  (none)\n");
+  } else {
+    for (int i = 0; i < patterns_list.n; i++) {
+      span fn = patterns_list.a[i];
+      int dash = find_char(fn, '-');
+      if (dash <= 0 || dash >= len(fn) - 1) continue;
+      span left = first_n(fn, dash);
+      span right = skip_n(fn, dash + 1);
+      
+      // Count rules in pattern file
+      span pat_path = concat(patterns_dir, fn);
+      span content = read_file_into_cmp(pat_path);
+      int rule_count = 0;
+      span tmp = content;
+      while (len(tmp) > 0) {
+        span line = next_line(&tmp);
+        if (len(trim(line)) > 0) rule_count++;
+      }
+      
+      prt("  %-15s x %-15s  (%d rules)\n", s(left), s(right), rule_count);
+    }
+  }
+
+  prt("\nSummary: %d ES, %d induced, %d induced-single, %d surprise, %d LPP\n",
+      es_count, induced_count, single_count, surprise_count, lpp_count);
+
+  flush();
+}
 /* #grep_blocks */
 void grep_blocks(span pattern) {
     regex_t regex;
@@ -10200,6 +11142,245 @@ void ex_expand() {
 }
 
 
+/* #ex_reload */
+void ex_reload() {
+    int changed = 0;
+    
+    for (int i = 0; i < state->files.n; i++) {
+        // Read fresh copy into inp buffer
+        span fresh = read_file_S_into_span(state->files.a[i].path, inp_compl());
+        checksum fresh_cksum = selected_checksum(fresh);
+        
+        // Compare with load_checksum
+        if (fresh_cksum.__u != state->files.a[i].load_checksum.__u) {
+            // File changed on disk - update
+            state->files.a[i].contents = fresh;
+            inp.end = fresh.end;
+            state->files.a[i].load_checksum = fresh_cksum;
+            state->files.a[i].cksum = fresh_cksum;
+            changed++;
+        }
+    }
+    
+    if (changed > 0) {
+        ingest();
+        clear_display();
+        prt("Reloaded %d file(s) from disk.\n", changed);
+    } else {
+        clear_display();
+        prt("No files changed on disk.\n");
+    }
+    
+    prt("Press any key to continue...");
+    flush();
+    getch();
+}
+/* #ex_config */
+void ex_config() {
+    clear_display();
+    prt("Opening config file for editing...\n");
+    flush();
+    
+    // Create a null-terminated string for the config path
+    span path = state->config_file_path;
+    char filename[256];
+    int pathlen = len(path);
+    if (pathlen >= 256) pathlen = 255;
+    memcpy(filename, path.buf, pathlen);
+    filename[pathlen] = '\0';
+    
+    int result = launch_editor(filename);
+    
+    if (result == 0) {
+        prt("Config saved. Reloading...\n");
+        flush();
+        
+        // Reset files array and re-parse config
+        state->files.n = 0;
+        parse_config();
+        get_code();
+        
+        prt("Config reloaded successfully.\n");
+    } else {
+        prt("Editor exited with error, config not reloaded.\n");
+    }
+    
+    prt("Press any key to continue...");
+    flush();
+    getch();
+}
+/* #ex_allfiles */
+void ex_allfiles() {
+    clear_display();
+    prt("Scanning for source files...\n");
+    flush();
+    
+    // Run find to get source files
+    FILE* fp = popen("find . -maxdepth 3 -type f \\( "
+                     "-name '*.c' -o -name '*.h' -o "
+                     "-name '*.py' -o -name '*.js' -o -name '*.ts' -o "
+                     "-name '*.go' -o -name '*.rs' -o "
+                     "-name '*.java' -o -name '*.cpp' -o -name '*.hpp' "
+                     "\\) 2>/dev/null | sort", "r");
+    
+    if (!fp) {
+        prt("Error: Could not scan directory.\n");
+        prt("Press any key to continue...");
+        flush();
+        getch();
+        return;
+    }
+    
+    int added = 0;
+    char line[512];
+    while (fgets(line, sizeof(line), fp)) {
+        // Remove trailing newline
+        int linelen = strlen(line);
+        if (linelen > 0 && line[linelen-1] == '\n') line[--linelen] = '\0';
+        if (linelen == 0) continue;
+        
+        // Check if file already in project
+        span path = {(u8*)line, (u8*)line + linelen};
+        int found = 0;
+        for (int i = 0; i < state->files.n; i++) {
+            if (span_eq(state->files.a[i].path, path)) {
+                found = 1;
+                break;
+            }
+        }
+        
+        if (!found && state->files.n < state->files.cap) {
+            // Copy path into cmp space for persistence
+            span cmp_free = cmp_compl();
+            if (len(cmp_free) < linelen + 1) continue; // skip if no room
+            memcpy(cmp_free.buf, line, linelen);
+            span stored_path = {cmp_free.buf, cmp_free.buf + linelen};
+            cmp.end = stored_path.end;
+            
+            // Guess language from extension
+            span lang = S("C");
+            if (ends_with(path, S(".py"))) lang = S("Python");
+            else if (ends_with(path, S(".js"))) lang = S("JavaScript");
+            else if (ends_with(path, S(".ts"))) lang = S("TypeScript");
+            else if (ends_with(path, S(".go"))) lang = S("Go");
+            else if (ends_with(path, S(".rs"))) lang = S("Rust");
+            else if (ends_with(path, S(".java"))) lang = S("Java");
+            
+            state->files.a[state->files.n].path = stored_path;
+            state->files.a[state->files.n].language = lang;
+            state->files.a[state->files.n].contents = nullspan();
+            state->files.n++;
+            added++;
+            prt("  Added: %s\n", line);
+        }
+    }
+    pclose(fp);
+    
+    if (added > 0) {
+        save_conf();
+        prt("\nAdded %d file(s) to config.\n", added);
+        // Reload to pick up contents
+        get_code();
+    } else {
+        prt("\nNo new files found to add.\n");
+    }
+    
+    prt("Press any key to continue...");
+    flush();
+    getch();
+}
+/* #ex_addfile */
+void ex_addfile(span file_path) {
+    clear_display();
+    
+    // Trim whitespace from path
+    file_path = trim(file_path);
+    
+    if (empty(file_path)) {
+        prt("Usage: :addfile <path>\n");
+        prt("Press any key to continue...");
+        flush();
+        getch();
+        return;
+    }
+    
+    // Check if file already in project
+    for (int i = 0; i < state->files.n; i++) {
+        if (span_eq(state->files.a[i].path, file_path)) {
+            prt("File already in project: %.*s\n", len(file_path), file_path.buf);
+            prt("Press any key to continue...");
+            flush();
+            getch();
+            return;
+        }
+    }
+    
+    // Check if we have room
+    if (state->files.n >= state->files.cap) {
+        prt("Error: Too many files in project.\n");
+        prt("Press any key to continue...");
+        flush();
+        getch();
+        return;
+    }
+    
+    // Copy path into cmp space for persistence
+    span cmp_free = cmp_compl();
+    int pathlen = len(file_path);
+    if (len(cmp_free) < pathlen + 1) {
+        prt("Error: Out of memory.\n");
+        prt("Press any key to continue...");
+        flush();
+        getch();
+        return;
+    }
+    memcpy(cmp_free.buf, file_path.buf, pathlen);
+    span stored_path = {cmp_free.buf, cmp_free.buf + pathlen};
+    cmp.end = stored_path.end;
+    
+    // Guess language from extension
+    span lang = S("C");
+    if (ends_with(file_path, S(".py"))) lang = S("Python");
+    else if (ends_with(file_path, S(".js"))) lang = S("JavaScript");
+    else if (ends_with(file_path, S(".ts"))) lang = S("TypeScript");
+    else if (ends_with(file_path, S(".go"))) lang = S("Go");
+    else if (ends_with(file_path, S(".rs"))) lang = S("Rust");
+    else if (ends_with(file_path, S(".java"))) lang = S("Java");
+    else if (ends_with(file_path, S(".md"))) lang = S("Markdown");
+    else if (ends_with(file_path, S(".sh"))) lang = S("Shell");
+    
+    state->files.a[state->files.n].path = stored_path;
+    state->files.a[state->files.n].language = lang;
+    state->files.a[state->files.n].contents = nullspan();
+    state->files.n++;
+    
+    save_conf();
+    prt("Added file: %.*s (language: %.*s)\n", len(stored_path), stored_path.buf, len(lang), lang.buf);
+    
+    // Reload to pick up contents
+    get_code();
+    
+    prt("Press any key to continue...");
+    flush();
+    getch();
+}
+/* #ex_addlib */
+void ex_addlib(span lib_path) {
+    clear_display();
+    
+    lib_path = trim(lib_path);
+    
+    if (empty(lib_path)) {
+        prt("Usage: :addlib <path>\n");
+    } else {
+        prt("Library support not yet implemented.\n");
+        prt("Would add: %.*s\n", len(lib_path), lib_path.buf);
+    }
+    
+    prt("Press any key to continue...");
+    flush();
+    getch();
+}
 /* #blockref_id */
 span blockref_id(span ref) {
     advance(&ref, 1);  // Skip '@'
