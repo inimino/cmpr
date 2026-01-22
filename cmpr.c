@@ -2504,6 +2504,11 @@ int ind_conf = 0;
 	int ind_work = 0;
 	int ind_trace = 0;
 	int ind_P = 0;
+	int ind_E = 0;
+	int ind_induced = 0;
+	int ind_induced_single = 0;
+	int ind_lpp = 0;
+	int ind_es_create = 0;
 	char *arg_work = NULL;
 
 	char *conf_filepath = NULL;
@@ -2534,8 +2539,17 @@ int ind_conf = 0;
 	char *arg_install_script = NULL;
 	char *file_argument = NULL;
 	char *arg_open_block = NULL;
+	char *arg_induced = NULL;
+	char *arg_induced_single = NULL;
+	char *arg_lpp_es1 = NULL;
+	char *arg_lpp_es2 = NULL;
+	char *arg_es_name = NULL;
+	char *arg_es_pattern = NULL;
 
 	int action_arg = 0;
+
+
+
 
 
 
@@ -2648,9 +2662,23 @@ for (int i = 1; i < argc; i++) {
 		} else if (strcmp(arg, "--T") == 0) {
 			ind_T = 1; action_arg = 1;
 		} else if (strcmp(arg, "--event-spaces") == 0 || strcmp(arg, "--es") == 0) {
+			if (i + 2 < argc && argv[i+1][0] != '-' && argv[i+2][0] != '-') {
+				ind_es_create = 1; action_arg = 1;
+				arg_es_name = argv[++i];
+				arg_es_pattern = argv[++i];
+			} else {
 			ind_es = 1; action_arg = 1;
+			}
 		} else if (strcmp(arg, "--P") == 0 || strcmp(arg, "--pattern") == 0) {
 			ind_P = 1; action_arg = 1;
+		} else if (strcmp(arg, "--E") == 0) {
+			ind_E = 1; action_arg = 1;
+		} else if (strcmp(arg, "--induced") == 0 && i + 1 < argc) {
+			ind_induced = 1; action_arg = 1; arg_induced = argv[++i];
+		} else if (strcmp(arg, "--induced-single") == 0 && i + 1 < argc) {
+			ind_induced_single = 1; action_arg = 1; arg_induced_single = argv[++i];
+		} else if (strcmp(arg, "--lpp") == 0 && i + 2 < argc) {
+			ind_lpp = 1; action_arg = 1; arg_lpp_es1 = argv[++i]; arg_lpp_es2 = argv[++i];
 		} else if (strcmp(arg, "--wants") == 0) {
 			ind_wants = 1; action_arg = 1;
 		} else if (strcmp(arg, "--wants-status") == 0) {
@@ -2695,6 +2723,9 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
+
+
 
 
 
@@ -2858,7 +2889,12 @@ if (ind_file_argument) {
 	             ind_learn +
 	             ind_log_stochastic_count_joint +
 	             ind_trace +
-	             ind_P;
+	             ind_P +
+	             ind_E +
+	             ind_induced +
+	             ind_induced_single +
+	             ind_lpp +
+	             ind_es_create;
 	
 	if (action_arg > 1) {
 		prt("Error: Only one action argument may be used at a time.\n");
@@ -2869,7 +2905,7 @@ if (ind_file_argument) {
 	check_dirs();
 
 	// Get code database if needed (for most commands)
-	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es && !ind_P) {
+	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es && !ind_P && !ind_E && !ind_induced && !ind_induced_single && !ind_lpp && !ind_es_create) {
 		get_code();
 	}
 	
@@ -3166,8 +3202,36 @@ if (ind_file_argument) {
 		flush_exit(0);
 	}
 
+	if (ind_E) {
+		handle_E();
+		flush_exit(0);
+	}
+
+	if (ind_induced) {
+		handle_induced(arg_induced);
+		flush_exit(0);
+	}
+
+	if (ind_induced_single) {
+		handle_induced_single(arg_induced_single);
+		flush_exit(0);
+	}
+
+	if (ind_lpp) {
+		handle_lpp(arg_lpp_es1, arg_lpp_es2);
+		flush_exit(0);
+	}
+
+	if (ind_es_create) {
+		handle_es_create(arg_es_name, arg_es_pattern);
+		flush_exit(0);
+	}
+
 	// No action arg - return to enter interactive mode
 }
+
+
+
 
 
 
@@ -8296,7 +8360,7 @@ span help_text_summary(span s) {
     return S(
 "cmpr code swiss army knife\n"
 "\n"
-"Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version|--status] [(--print-block [--ofra]|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--llm] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all|--inbox] [--after <id>] [--before <ts>] [(--replace|--replace-comment|--replace-code|--replace-current) <id>] [--run <block_id>] [--agents] [--install-agent <name>] [--install-script <name>] [--checksum] [--find-deleted] [--T0] [--event <string> --strength <value>] [--event-stdin --strength <value>] [--event-file <path> --strength <value>] [--query <string>] [--memorize] [--recall] [--recall-first] [--T] [--trace] [--work [event]] [--event-spaces|--es] [--P|--pattern] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs] [FILE|-]\n"
+"Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version|--status] [(--print-block [--ofra]|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--llm] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all|--inbox] [--after <id>] [--before <ts>] [(--replace|--replace-comment|--replace-code|--replace-current) <id>] [--run <block_id>] [--agents] [--install-agent <name>] [--install-script <name>] [--checksum] [--find-deleted] [--T0] [--event <string> --strength <value>] [--event-stdin --strength <value>] [--event-file <path> --strength <value>] [--query <string>] [--memorize] [--recall] [--recall-first] [--T] [--trace] [--work [event]] [--event-spaces|--es] [--P|--pattern] [--E] [--induced <es>] [--induced-single <event>] [--lpp <es1> <es2>] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs] [FILE|-]\n"
 "\n"
 "For help on available topics: cmpr --help topics\n"
 "Every CLI flag can also be used after --help to get a description of that flag or usage examples: cmpr --help --grep\n"
@@ -8304,6 +8368,9 @@ span help_text_summary(span s) {
   else
     return nullspan();
 }
+
+
+
 
 
 /* #help_text_topics_impl */
@@ -8740,7 +8807,8 @@ span help_text_nl2pl(span s) {
 
 /* #help_text_events_impl */
 span help_text_events(span s) {
-  if (empty(s) || span_eq(S("help_text_events"), s)) return S(
+  if (empty(s) || span_eq(S("help_text_events"), s))
+    return S(
 "Event System (Temporal Reasoning)\n"
 "==================================\n"
 "\n"
@@ -8752,6 +8820,7 @@ span help_text_events(span s) {
 "  E - Events (strings with associated strength values)\n"
 "  S - Strength (0=false, 255=true, values between represent uncertainty)\n"
 "  ES - Event Space (a filter that matches a category of events)\n"
+"  P - Pattern (total reactive machinery: ES + induced + LPP)\n"
 "  SN - Strength Notation: \"event string\" strength.\n"
 "\n"
 "Basic Commands:\n"
@@ -8822,6 +8891,23 @@ span help_text_events(span s) {
 "  Useful for focused work sessions watching T state.\n"
 "  Example: cmpr --work \"Starting task: #myblock\"\n"
 "\n"
+"Pattern Overview Commands:\n"
+"\n"
+"--P (or --pattern)\n"
+"  Show complete reactive pattern overview.\n"
+"  Displays all event spaces, induced scripts, induced-single triggers,\n"
+"  surprise handlers, and LPP patterns with their connections.\n"
+"  Shows what reactive automation is configured.\n"
+"  Example: cmpr --P\n"
+"\n"
+"--E\n"
+"  Show event system statistics.\n"
+"  Displays: |E| unique events ever observed, |M| total memories,\n"
+"  event space coverage (how many indexed events match each ES),\n"
+"  and current T event count.\n"
+"  Rebuilds .cmpr/event-names index if stale.\n"
+"  Example: cmpr --E\n"
+"\n"
 "Event Spaces (ES):\n"
 "\n"
 "An Event Space is a filter that matches a category of events.\n"
@@ -8833,14 +8919,41 @@ span help_text_events(span s) {
 "  Shows induced patterns, surprise handlers, and LPP connections.\n"
 "  Example: cmpr --es\n"
 "\n"
+"--es <name> <pattern>\n"
+"  Create a new event space.\n"
+"  Creates .cmpr/es/<name> as executable grep -E filter.\n"
+"  Example: cmpr --es myevents '^\"My event:'\n"
+"\n"
 "Open vs Closed ES:\n"
 "  Open ES: Variable part (e.g., \"The blockid is: #foo\")\n"
 "  Closed ES: Fixed set of states (e.g., \"The block is justified.\")\n"
-"  \n"
+"\n"
 "  Pattern: Bind open ES once, then reference closed ES for states.\n"
 "  Example:\n"
 "    cmpr --event \"The blockid is: #myblock\" --strength 255  # bind open\n"
 "    cmpr --event \"The block is justified.\" --strength 255   # closed state\n"
+"\n"
+"Reactive Automation:\n"
+"\n"
+"--induced <es>\n"
+"  Install induced script template for an event space.\n"
+"  Creates .cmpr/induced/<es> with hello-world template.\n"
+"  Edit the script to define actual behavior.\n"
+"  Requires ES to exist; errors if script already exists.\n"
+"  Example: cmpr --induced BID\n"
+"\n"
+"--induced-single <event>\n"
+"  Install exact-match trigger for a specific event.\n"
+"  Creates .cmpr/induced-single/N/name and script.\n"
+"  Fires only when this exact event is added to T.\n"
+"  Example: cmpr --induced-single \"Build completed successfully.\"\n"
+"\n"
+"--lpp <es1> <es2>\n"
+"  Create LPP (Latent Pattern Propagation) pattern file.\n"
+"  Creates .cmpr/patterns/<es1>-<es2> with template.\n"
+"  LPP defines cross-product inference rules between two event spaces.\n"
+"  Both ES must exist.\n"
+"  Example: cmpr --lpp BID status\n"
 "\n"
 "Induced Patterns:\n"
 "\n"
@@ -8864,8 +8977,9 @@ span help_text_events(span s) {
 "prevent collisions.\n"
 "\n"
 "See also: cmpr --help agents, cmpr --help wants\n"
-"\n"
-); else return nullspan();
+    ); 
+  else
+    return nullspan();
 }
 
 /* #help_text_agents_impl */
@@ -9292,7 +9406,9 @@ span get_help_text(span topic) {
             span_eq(flag, S("memorize")) || span_eq(flag, S("recall")) || span_eq(flag, S("recall-first")) ||
             span_eq(flag, S("query")) || span_eq(flag, S("trace")) || span_eq(flag, S("work")) ||
             span_eq(flag, S("es")) || span_eq(flag, S("event-spaces")) ||
-            span_eq(flag, S("event-stdin")) || span_eq(flag, S("event-file")) || span_eq(flag, S("strength"))) {
+            span_eq(flag, S("event-stdin")) || span_eq(flag, S("event-file")) || span_eq(flag, S("strength")) ||
+            span_eq(flag, S("P")) || span_eq(flag, S("pattern")) || span_eq(flag, S("E")) ||
+            span_eq(flag, S("induced")) || span_eq(flag, S("induced-single")) || span_eq(flag, S("lpp"))) {
             return help_text_events(nullspan());
         }
         // Blocks
@@ -10605,6 +10721,370 @@ void handle_P() {
   prt("\nSummary: %d ES, %d induced, %d induced-single, %d surprise, %d LPP\n",
       es_count, induced_count, single_count, surprise_count, lpp_count);
 
+  flush();
+}
+/* #handle_E */
+void handle_E() {
+  span index_path = S(".cmpr/event-names");
+  span events_dir = S(".cmpr/events/");
+  span es_dir = S(".cmpr/es/");
+  span T_path = S(".cmpr/T");
+
+  // List memory files (sorted by name, which is timestamp-based)
+  spans memories = dir_listing(events_dir);
+  int memories_count = memories.n;
+
+  // Check if index exists and is complete
+  struct stat index_stat;
+  int have_index = (stat(s(index_path), &index_stat) == 0);
+  time_t index_mtime = have_index ? index_stat.st_mtime : 0;
+  
+  // Check if oldest memory is older than index - if so, index is incomplete
+  if (have_index && memories.n > 0) {
+    span oldest = concat(events_dir, memories.a[0]);
+    struct stat oldest_stat;
+    if (stat(s(oldest), &oldest_stat) == 0) {
+      if (oldest_stat.st_mtime < index_mtime) {
+        unlink(s(index_path));
+        have_index = 0;
+        index_mtime = 0;
+      }
+    }
+  }
+
+  // Scan memories newer than index (or all if no index)
+  // Use streaming: save/restore cmp.end to reuse buffer space
+  int updated = 0;
+  for (int i = 0; i < memories.n; i++) {
+    span memfile = concat(events_dir, memories.a[i]);
+    struct stat mem_stat;
+    if (stat(s(memfile), &mem_stat) != 0) continue;
+    
+    if (have_index && mem_stat.st_mtime <= index_mtime) continue;
+    
+    // Save cmp position
+    u8 *saved_cmp_end = cmp.end;
+    
+    span content = read_file_into_cmp(memfile);
+    
+    while (!empty(content)) {
+      span line = head_line(&content);
+      if (empty(line)) continue;
+      
+      while (!empty(line) && (*line.buf == ' ' || *line.buf == '\t')) line.buf++;
+      if (empty(line)) continue;
+      if (*line.buf != '"') continue;
+      line.buf++;
+      
+      u8 *p = line.end - 1;
+      if (p < line.buf || *p != '.') continue;
+      p--;
+      
+      u8 *digits_end = p + 1;
+      while (p >= line.buf && *p >= '0' && *p <= '9') p--;
+      u8 *digits_start = p + 1;
+      if (digits_start >= digits_end) continue;
+      
+      if (p < line.buf || *p != ' ') continue;
+      p--;
+      if (p < line.buf || *p != '"') continue;
+      
+      span event_str = (span){line.buf, p};
+      event_get_id(event_str);
+      updated++;
+    }
+    
+    // Restore cmp position - reuse buffer space
+    cmp.end = saved_cmp_end;
+  }
+
+  // Read the index to count unique events
+  int event_count = 0;
+  spans event_lines = {0};
+  if (readable_file(index_path)) {
+    span index_content = read_file_into_cmp(index_path);
+    event_lines = spans_alloc(256);
+    while (!empty(index_content)) {
+      span line = next_line(&index_content);
+      if (len(trim(line)) > 0) {
+        spans_push(&event_lines, line);
+        event_count++;
+      }
+    }
+  }
+
+  // Get ES list and extract patterns
+  spans es_list = dir_listing(es_dir);
+  int *es_counts = calloc(es_list.n, sizeof(int));
+  int unclassified = 0;
+  
+  char **es_patterns = calloc(es_list.n, sizeof(char*));
+  int *es_extended = calloc(es_list.n, sizeof(int));
+  
+  for (int j = 0; j < es_list.n; j++) {
+    span es_path = concat(es_dir, es_list.a[j]);
+    span content = read_file_into_cmp(es_path);
+    es_extended[j] = (strstr(s(content), "-E") != NULL) ? 1 : 0;
+    int q1 = find_char(content, '\'');
+    if (q1 >= 0) {
+      span rest = skip_n(content, q1 + 1);
+      int q2 = find_char(rest, '\'');
+      if (q2 > 0) {
+        char *pat = malloc(q2 + 1);
+        memcpy(pat, rest.buf, q2);
+        pat[q2] = 0;
+        es_patterns[j] = pat;
+      }
+    }
+  }
+  
+  // Match events against patterns
+  for (int i = 0; i < event_lines.n; i++) {
+    span event = event_lines.a[i];
+    char sn_buf[4096];
+    int n = len(event);
+    if (n > 4000) n = 4000;
+    snprintf(sn_buf, sizeof(sn_buf), "\"%.*s\" 255.", n, event.buf);
+    
+    int matched = 0;
+    for (int j = 0; j < es_list.n; j++) {
+      if (!es_patterns[j]) continue;
+      
+      regex_t regex;
+      int flags = REG_NOSUB;
+      if (es_extended[j]) flags |= REG_EXTENDED;
+      
+      if (regcomp(&regex, es_patterns[j], flags) == 0) {
+        if (regexec(&regex, sn_buf, 0, NULL, 0) == 0) {
+          es_counts[j]++;
+          matched = 1;
+        }
+        regfree(&regex);
+      }
+    }
+    if (!matched) unclassified++;
+  }
+  
+  for (int j = 0; j < es_list.n; j++) {
+    if (es_patterns[j]) free(es_patterns[j]);
+  }
+  free(es_patterns);
+  free(es_extended);
+
+  // Read current T
+  int T_count = 0;
+  if (readable_file(T_path)) {
+    span T_content = read_file_into_cmp(T_path);
+    while (!empty(T_content)) {
+      span line = next_line(&T_content);
+      if (len(trim(line)) > 0 && *trim(line).buf == '"') T_count++;
+    }
+  }
+
+  // Print output
+  prt("EVENT SYSTEM\n");
+  prt("============\n\n");
+  prt("|E| = %d unique events ever observed\n", event_count);
+  prt("|M| = %d memories in .cmpr/events/\n", memories_count);
+  if (!have_index && updated > 0) {
+    prt("(rebuilt index from %d event occurrences)\n", updated);
+  }
+  prt("\nCurrent T: %d events\n", T_count);
+
+  prt("\nEvent Space Coverage:\n");
+  prt("  %-20s %s\n", "ES", "Indexed Events");
+  prt("  ");
+  for (int i = 0; i < 35; i++) prt("-");
+  prt("\n");
+  
+  for (int i = 0; i < es_list.n; i++) {
+    if (es_counts[i] > 0) {
+      prt("  %-20s %d\n", s(es_list.a[i]), es_counts[i]);
+    }
+  }
+  if (unclassified > 0) {
+    prt("  %-20s %d\n", "(unclassified)", unclassified);
+  }
+
+  free(es_counts);
+  flush();
+}
+/* #handle_induced */
+void handle_induced(char *es_name) {
+  // Check ES exists
+  span es_path = prs(".cmpr/es/%s", es_name);
+  if (!readable_file(es_path)) {
+    prt("Error: Event space '%s' does not exist.\n", es_name);
+    prt("Create it first or check .cmpr/es/ for available ES.\n");
+    flush_exit(1);
+  }
+  
+  // Check induced script doesn't already exist
+  span induced_path = prs(".cmpr/induced/%s", es_name);
+  if (readable_file(induced_path)) {
+    prt("Error: Induced script already exists: %s\n", s(induced_path));
+    prt("Edit it directly or remove it first.\n");
+    flush_exit(1);
+  }
+  
+  // Create induced directory if needed
+  mkdir(".cmpr/induced", 0755);
+  
+  // Write hello-world template
+  FILE *f = fopen(s(induced_path), "w");
+  if (!f) {
+    prt("Error: Cannot create %s\n", s(induced_path));
+    flush_exit(1);
+  }
+  
+  fprintf(f, "#!/bin/bash\n");
+  fprintf(f, "# Induced script for ES: %s\n", es_name);
+  fprintf(f, "# This runs when events matching this ES enter T.\n");
+  fprintf(f, "# Edit this script to define the desired behavior.\n");
+  fprintf(f, "\n");
+  fprintf(f, "echo \"[induced/%s] fired\" >&2\n", es_name);
+  fprintf(f, "cmpr --event \"Induced %s ran.\" --strength 255\n", es_name);
+  fclose(f);
+  
+  // Make executable
+  chmod(s(induced_path), 0755);
+  
+  prt("Created: %s\n", s(induced_path));
+  prt("Edit this script to define what happens when %s events enter T.\n", es_name);
+  flush();
+}
+/* #handle_induced_single */
+void handle_induced_single(char *event_str) {
+  // Find next available slot number
+  mkdir(".cmpr/induced-single", 0755);
+  
+  int slot = 1;
+  while (1) {
+    span dir_path = prs(".cmpr/induced-single/%d", slot);
+    struct stat st;
+    if (stat(s(dir_path), &st) != 0) break;
+    slot++;
+    if (slot > 9999) {
+      prt("Error: Too many induced-single entries.\n");
+      flush_exit(1);
+    }
+  }
+  
+  // Create the slot directory
+  span slot_dir = prs(".cmpr/induced-single/%d", slot);
+  mkdir(s(slot_dir), 0755);
+  
+  // Write the name file
+  span name_path = prs(".cmpr/induced-single/%d/name", slot);
+  FILE *f = fopen(s(name_path), "w");
+  if (!f) {
+    prt("Error: Cannot create %s\n", s(name_path));
+    flush_exit(1);
+  }
+  fprintf(f, "%s\n", event_str);
+  fclose(f);
+  
+  // Write hello-world script
+  span script_path = prs(".cmpr/induced-single/%d/script", slot);
+  f = fopen(s(script_path), "w");
+  if (!f) {
+    prt("Error: Cannot create %s\n", s(script_path));
+    flush_exit(1);
+  }
+  
+  fprintf(f, "#!/bin/bash\n");
+  fprintf(f, "# Induced-single script for exact event:\n");
+  fprintf(f, "# \"%s\"\n", event_str);
+  fprintf(f, "# This runs when this exact event enters T.\n");
+  fprintf(f, "# Edit this script to define the desired behavior.\n");
+  fprintf(f, "\n");
+  fprintf(f, "echo \"[induced-single/%d] fired\" >&2\n", slot);
+  fprintf(f, "cmpr --event \"Induced-single %d ran.\" --strength 255\n", slot);
+  fclose(f);
+  
+  chmod(s(script_path), 0755);
+  
+  prt("Created induced-single slot %d:\n", slot);
+  prt("  %s\n", s(name_path));
+  prt("  %s\n", s(script_path));
+  prt("Edit the script to define what happens when this event enters T.\n");
+  flush();
+}
+/* #handle_lpp */
+void handle_lpp(char *es1, char *es2) {
+  // Check both ES exist
+  span es1_path = prs(".cmpr/es/%s", es1);
+  span es2_path = prs(".cmpr/es/%s", es2);
+  
+  if (!readable_file(es1_path)) {
+    prt("Error: Event space '%s' does not exist.\n", es1);
+    flush_exit(1);
+  }
+  if (!readable_file(es2_path)) {
+    prt("Error: Event space '%s' does not exist.\n", es2);
+    flush_exit(1);
+  }
+  
+  // Create patterns directory if needed
+  mkdir(".cmpr/patterns", 0755);
+  
+  span pattern_path = prs(".cmpr/patterns/%s-%s", es1, es2);
+  
+  if (readable_file(pattern_path)) {
+    prt("LPP pattern file exists: %s\n", s(pattern_path));
+    prt("Edit it directly to add or modify rules.\n");
+    flush_exit(0);
+  }
+  
+  // Write template
+  FILE *f = fopen(s(pattern_path), "w");
+  if (!f) {
+    prt("Error: Cannot create %s\n", s(pattern_path));
+    flush_exit(1);
+  }
+  
+  fprintf(f, "# LPP Pattern: %s x %s\n", es1, es2);
+  fprintf(f, "# Inference rules for when events from both ES co-occur in T.\n");
+  fprintf(f, "#\n");
+  fprintf(f, "# Format: Each line is a rule that fires when both ES match.\n");
+  fprintf(f, "# Edit this file to define inference rules.\n");
+  fprintf(f, "#\n");
+  fprintf(f, "# Example rule (uncomment and modify):\n");
+  fprintf(f, "# if %s and %s then infer X\n", es1, es2);
+  fclose(f);
+  
+  prt("Created: %s\n", s(pattern_path));
+  prt("Edit this file to define inference rules between %s and %s.\n", es1, es2);
+  flush();
+}
+/* #handle_es_create */
+void handle_es_create(char *name, char *pattern) {
+  // Check ES doesn't already exist
+  span es_path = prs(".cmpr/es/%s", name);
+  if (readable_file(es_path)) {
+    prt("Error: Event space '%s' already exists.\n", name);
+    prt("Edit it directly or remove it first.\n");
+    flush_exit(1);
+  }
+  
+  // Create es directory if needed
+  mkdir(".cmpr/es", 0755);
+  
+  // Write the ES filter script
+  FILE *f = fopen(s(es_path), "w");
+  if (!f) {
+    prt("Error: Cannot create %s\n", s(es_path));
+    flush_exit(1);
+  }
+  
+  fprintf(f, "#!/bin/sh\n");
+  fprintf(f, "grep -E '%s'\n", pattern);
+  fclose(f);
+  
+  chmod(s(es_path), 0755);
+  
+  prt("Created: %s\n", s(es_path));
+  prt("Pattern: %s\n", pattern);
   flush();
 }
 /* #grep_blocks */
