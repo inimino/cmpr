@@ -4008,8 +4008,7 @@ span read_file_into(span filename, rope *r) {
 
     return file_span;
 }
-
-
+/* #get_revs_2 */
 void get_revs_2() {
     clear_display();
     time_t latest_rev_timestamp;
@@ -4065,7 +4064,6 @@ void get_revs_2() {
 
     free(working_set);
 }
-/* #get_revs_2 */
 /* #revs_cache_design */
 /* #get_revs_cache_get */
 int get_revs_cache_get(span bname, span rev_contents) {
@@ -9355,70 +9353,73 @@ span help_text_claude_setup(span s) {
 
 /* #help_text_history_impl */
 span help_text_history(span s) {
-  if (empty(s) || span_eq(S("help_text_history"), s))
-    return S(
-      "Block History\n"
-      "=============\n"
-      "\n"
-      "--history [#blockid] [--log-gap [factor]] [--limit N]\n"
-      "  Show block change history from the revision store.\n"
-      "\n"
-      "  Without arguments:\n"
-      "    Lists recently changed blocks across the codebase (most recent first).\n"
-      "    Each line shows: timestamp, block ID.\n"
-      "    Useful for \"what changed recently?\" at a glance.\n"
-      "\n"
-      "  With #blockid:\n"
-      "    Shows timestamps when that specific block's content changed.\n"
-      "    Tracks the block by ID across time, including renames and moves.\n"
-      "    Duplicate content (reverts) are collapsed to earliest timestamp.\n"
-      "\n"
-      "  Options:\n"
-      "    --log-gap [factor]\n"
-      "      Show recent changes densely, older changes sparsely.\n"
-      "      The gap between shown entries doubles (or multiplies by factor) going\n"
-      "      back in time. Default factor: 2.0\n"
-      "\n"
-      "      This reflects how recent changes matter more than ancient history.\n"
-      "      Without --log-gap, all changes in range are shown.\n"
-      "\n"
-      "      Example: with factor 2.0, gaps are 1s, 2s, 4s, 8s, 16s, ...\n"
-      "      The 10th entry is at least 512 seconds older than the 9th.\n"
-      "\n"
-      "    --limit N\n"
-      "      Show at most N entries. Applied after --log-gap filtering.\n"
-      "      Reports how many entries were skipped if limit was exceeded.\n"
-      "\n"
-      "  Examples:\n"
-      "    cmpr --history                     # recent changes, all blocks\n"
-      "    cmpr --history '#root'             # history of #root block\n"
-      "    cmpr --history --log-gap           # sparse view of recent changes\n"
-      "    cmpr --history --log-gap 1.5       # gentler thinning (factor 1.5)\n"
-      "    cmpr --history '#foo' --limit 10   # last 10 changes to #foo\n"
-      "\n"
-      "  Output format:\n"
-      "    Without blockid (recent changes):\n"
-      "      YYYY-MM-DD HH:MM:SS  #blockid\n"
-      "      YYYY-MM-DD HH:MM:SS  #other\n"
-      "      ... (+3 skipped)\n"
-      "      YYYY-MM-DD HH:MM:SS  #another\n"
-      "\n"
-      "    With blockid (block history):\n"
-      "      YYYY-MM-DD HH:MM:SS  245 bytes  12 lines\n"
-      "      YYYY-MM-DD HH:MM:SS  198 bytes  10 lines\n"
-      "      ... (+5 skipped)\n"
-      "      YYYY-MM-DD HH:MM:SS  150 bytes  8 lines\n"
-      "\n"
-      "  Notes:\n"
-      "    - Timestamps are local time (same as TUI's 'U' Select Block Version).\n"
-      "    - Uses the same revision store as the TUI's 'U' keybinding.\n"
-      "    - Block identity follows IDs; content-identical reverts are deduplicated.\n"
-      "    - \"Skipped\" counts show entries filtered by --log-gap or --limit.\n"
-      "\n"
-      "  See also: TUI 'U' keybinding for interactive block version selection.\n"
-      );
-  else return nullspan();
+  if (empty(s) || span_eq(S("help_text_history"), s)) return S(
+"Block History\n"
+"=============\n"
+"\n"
+"--history [#blockid] [--log-gap [factor]] [--limit N]\n"
+"  Show block change history from the revision store.\n"
+"\n"
+"  Without arguments:\n"
+"    Lists recently changed blocks across the codebase (most recent first).\n"
+"    Each line shows: timestamp, block ID.\n"
+"    Useful for \"what changed recently?\" at a glance.\n"
+"\n"
+"  With #blockid:\n"
+"    Shows timestamps when that specific block's content changed.\n"
+"    Tracks the block by ID across time, including renames and moves.\n"
+"    Duplicate content (reverts) are collapsed to earliest timestamp.\n"
+"\n"
+"  Options:\n"
+"    --log-gap [factor]\n"
+"      Show recent changes densely, older changes sparsely.\n"
+"      The gap between shown entries doubles (or multiplies by factor) going\n"
+"      back in time. Default factor: 2.0\n"
+"\n"
+"      This reflects how recent changes matter more than ancient history.\n"
+"      Without --log-gap, all changes in range are shown.\n"
+"\n"
+"      Example: with factor 2.0, gaps are 1s, 2s, 4s, 8s, 16s, ...\n"
+"      The 10th entry is at least 512 seconds older than the 9th.\n"
+"\n"
+"    --limit N\n"
+"      Show at most N entries. Applied after --log-gap filtering.\n"
+"      Reports how many entries were skipped if limit was exceeded.\n"
+"\n"
+"  Examples:\n"
+"    cmpr --history                     # recent changes, all blocks\n"
+"    cmpr --history '#root'             # history of #root block\n"
+"    cmpr --history --log-gap           # sparse view of recent changes\n"
+"    cmpr --history --log-gap 1.5       # gentler thinning (factor 1.5)\n"
+"    cmpr --history '#foo' --limit 10   # last 10 changes to #foo\n"
+"\n"
+"  Output format:\n"
+"    Without blockid (recent changes):\n"
+"      YYYY-MM-DD HH:MM:SS  #blockid\n"
+"      YYYY-MM-DD HH:MM:SS  #other\n"
+"      ... (+3 skipped)\n"
+"      YYYY-MM-DD HH:MM:SS  #another\n"
+"\n"
+"    With blockid (block history):\n"
+"      YYYY-MM-DD HH:MM:SS  245 bytes  12 lines\n"
+"      YYYY-MM-DD HH:MM:SS  198 bytes  10 lines\n"
+"      ... (+5 skipped)\n"
+"      YYYY-MM-DD HH:MM:SS  150 bytes  8 lines\n"
+"\n"
+"  Notes:\n"
+"    - Timestamps are local time (same as TUI's 'U' Select Block Version).\n"
+"    - Uses the same revision store as the TUI's 'U' keybinding.\n"
+"    - Block identity follows IDs; content-identical reverts are deduplicated.\n"
+"    - \"Skipped\" counts show entries filtered by --log-gap or --limit.\n"
+"    - Duplicate block IDs appear as separate entries. If the same #blockid\n"
+"      appears multiple times in the output at the same timestamp, you have\n"
+"      multiple blocks with identical IDs (use cmpr --files-blocks to find them).\n"
+"\n"
+"  See also: TUI 'U' keybinding for interactive block version selection.\n"
+"\n"
+); else return nullspan();
 }
+
 /* #agent_script_claude_impl */
 span agent_script_claude(span s) {
     if (empty(s) || span_eq(S("agent_script_claude"), s)) return S(
