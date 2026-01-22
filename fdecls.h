@@ -202,7 +202,7 @@ void handle_prompt(int block_idx);
 void handle_checksum(void);
 void handle_event_large_stdin(int strength);
 void handle_event_large_file(span path, int strength);
-void handle_wants();
+void handle_wants(int show_blocks);
 void handle_wants_status();
 void handle_agents_wants();
 void handle_wants_dashboard();

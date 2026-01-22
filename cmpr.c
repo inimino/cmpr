@@ -2486,6 +2486,7 @@ int ind_conf = 0;
 	int ind_map_error = 0;
 	int ind_test_block_map = 0;
 	int ind_wants = 0;
+	int ind_blocks = 0;
 	int ind_wants_status = 0;
 	int ind_agents_wants = 0;
 	int ind_wants_dashboard = 0;
@@ -2553,6 +2554,7 @@ int ind_conf = 0;
 	char *arg_limit = NULL;
 
 	int action_arg = 0;
+
 
 
 
@@ -2688,6 +2690,8 @@ for (int i = 1; i < argc; i++) {
 			ind_lpp = 1; action_arg = 1; arg_lpp_es1 = argv[++i]; arg_lpp_es2 = argv[++i];
 		} else if (strcmp(arg, "--wants") == 0) {
 			ind_wants = 1; action_arg = 1;
+		} else if (strcmp(arg, "--blocks") == 0) {
+			ind_blocks = 1;
 		} else if (strcmp(arg, "--wants-status") == 0) {
 			ind_wants_status = 1; action_arg = 1;
 		} else if (strcmp(arg, "--agents-wants") == 0) {
@@ -2743,6 +2747,7 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
 
 
 
@@ -3159,7 +3164,7 @@ if (ind_file_argument) {
 // }
 	
 	if (ind_wants) {
-		handle_wants();
+		handle_wants(ind_blocks);
 		flush_exit(0);
 	}
 
@@ -3258,6 +3263,7 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
+
 
 
 
@@ -4705,105 +4711,77 @@ checksums load_revblock_checksums(int revblock_idx) {
 /* #load_revblock_ids */
 spans load_revblock_ids(int revblock_idx) {
     rev_block* rb = &state->revs.revblocks[revblock_idx];
-    // Get timestamp string for cache filename
-    char timestamp_str[17];
     time_t ts = rb->timestamp;
-    strftime(timestamp_str, sizeof(timestamp_str), "%Y%m%d-%H%M%S", localtime(&ts));
-    span cmprdir = state->cmprdir;
-    span cache_path = prs("%.*s/cache/v8/revs/%s", (int)len(cmprdir), cmprdir.buf, timestamp_str);
-
-    if (!readable_file(cache_path)) {
-        spans empty = { .n = 0, .a = NULL, .cap = 0 };
+    int found = 0;
+    span fname = nullspan();
+    for (int i = 0; i < state->revs.filenames.n; ++i) {
+        if (parse_rev_fname(state->revs.filenames.a[i]) == ts) {
+            fname = state->revs.filenames.a[i];
+            found = 1;
+            break;
+        }
+    }
+    if (!found) {
+        spans empty = {0, NULL, 0};
         return empty;
     }
-
+    span cache_path = prs("%.*s/cache/v8/revs/%.*s", len(state->cmprdir), state->cmprdir.buf, len(fname), fname.buf);
+    if (!readable_file(cache_path)) {
+        spans empty = {0, NULL, 0};
+        return empty;
+    }
     u8* cmp_save = cmp.end;
     span cache_contents = read_file_into_cmp(cache_path);
 
-    // Determine which block number this is in the rev file
     int n_block = 0;
-    time_t want_ts = rb->timestamp;
-    for (int i = 0; i <= revblock_idx; ++i)
-        if (state->revs.revblocks[i].timestamp == want_ts)
+    for (int i = 0; i <= revblock_idx; ++i) {
+        if (state->revs.revblocks[i].timestamp == ts)
             ++n_block;
-
+    }
     span want_section = prs("block %d ids", n_block);
-    // Scan to our section
-    span input = cache_contents;
-    span line;
-    int found_section = 0;
-    int num_lines = 0;
 
-    // skip header
-    while (!empty(input)) {
-        line = next_line(&input);
+    span rem = cache_contents;
+    span line;
+    int in_desired_section = 0, num_lines = 0, found_section = 0;
+    // Skip header: move until blank line
+    while (!empty(rem)) {
+        line = next_line(&rem);
         if (empty(trim(line))) break;
     }
-
-    // search for section
-    while (!empty(input)) {
-        span sectline = next_line(&input);
-        if (span_eq(trim(sectline), want_section)) {
-            found_section = 1;
-            break;
-        }
+    // Find section
+    while (!empty(rem)) {
+        line = next_line(&rem);
+        if (empty(trim(line))) continue;
+        if (span_eq(trim(line), want_section)) { found_section = 1; break; }
     }
     if (!found_section) {
         cmp.end = cmp_save;
-        spans empty = { .n = 0, .a = NULL, .cap = 0 };
+        spans empty = {0, NULL, 0};
         return empty;
     }
-
-    span content = rb->contents;
-    // Count lines in this section until blank line or end
-    u8* pos = input.buf;
-    u8* end = input.end;
-    for (;;) {
-        // find next '\n' or end
-        u8* nl = memchr(pos, '\n', end - pos);
-        span thisline;
-        if (nl)
-            thisline = (span){.buf = pos, .end = nl};
-        else
-            thisline = (span){.buf = pos, .end = end};
-        if (empty(trim(thisline))) break;
-        ++num_lines;
-        if (!nl) break;
-        pos = nl + 1;
-    }
-
-    spans ids = spans_alloc(num_lines);
-    input = cache_contents;
-    // skip header again
-    while (!empty(input)) {
-        line = next_line(&input);
+    // Count num_lines in section (lines up to blank line or EOF)
+    u8* sec_save = rem.buf;
+    while (!empty(rem)) {
+        line = next_line(&rem);
         if (empty(trim(line))) break;
+        ++num_lines;
     }
-    // go to section again
-    while (!empty(input)) {
-        span sectline = next_line(&input);
-        if (span_eq(trim(sectline), want_section)) {
-            break;
-        }
-    }
-
-    // Parse the section lines
-    while (!empty(input) && num_lines > 0) {
-        span sid = next_line(&input);
-        if (empty(trim(sid))) break;
-        // parse start,end
-        int comma = find_char(sid, ',');
+    // Allocate
+    spans ids = spans_alloc(num_lines);
+    // Re-scan the section for actual lines/ids
+    rem.buf = sec_save;
+    for (int i = 0; i < num_lines; ++i) {
+        line = next_line(&rem);
+        int comma = find_char(line, ',');
         if (comma < 0) continue;
-        span s_start = (span){sid.buf, sid.buf + comma};
-        span s_end = (span){sid.buf + comma + 1, sid.end};
+        span s_start = first_n(line, comma);
+        span s_end = skip_n(line, comma + 1);
         int start = parse_int(s_start);
         int endval = parse_int(s_end);
-        if (start > endval || start < 0 || endval > len(content)) continue;
-        span idspan = (span){content.buf + start, content.buf + endval};
+        if (start > endval || start < 0 || endval > len(rb->contents)) continue;
+        span idspan = (span){rb->contents.buf + start, rb->contents.buf + endval};
         spans_push(&ids, idspan);
-        --num_lines;
     }
-
     cmp.end = cmp_save;
     return ids;
 }
@@ -5604,40 +5582,47 @@ void delete_block() {
 }
 /* #find_last_deleted_block */
 span find_last_deleted_block() {
-    for(int i = 0; i < state->revs.n_revblocks; ++i) {
+    u8 *cmp_save = cmp.end;
+    time_t cached_ts = 0;
+    span cached_cache = nullspan();
+    for (int i = 0; i < state->revs.n_revblocks; ++i) {
         rev_block *rb = &state->revs.revblocks[i];
-        if(rb->ids.n == -1) {
-            spans_arena_push();
-            spans ids = load_revblock_ids(i);
-            int found_in_current = 0;
-            for(int j = 0; j < ids.n && !found_in_current; ++j) {
-                for(int k = 0; k < state->block_idx.n; ++k) {
-                    if(span_eq(ids.a[j], state->block_idx.a[k])) {
-                        found_in_current = 1;
-                        break;
-                    }
-                }
+        if (rb->timestamp != cached_ts) {
+            cmp.end = cmp_save;
+            char tsbuf[32];
+            struct tm tm;
+            localtime_r(&rb->timestamp, &tm);
+            strftime(tsbuf, sizeof(tsbuf), "%Y%m%d-%H%M%S", &tm);
+            span cache_path = prs("%.*s/cache/v8/revs/%s", len(state->cmprdir), state->cmprdir.buf, tsbuf);
+            if (readable_file(cache_path)) {
+                cached_cache = read_file_into_cmp(cache_path);
+            } else {
+                cached_cache = nullspan();
             }
+            cached_ts = rb->timestamp;
+        }
+        if (empty(cached_cache)) continue;
+        spans_arena_push();
+        spans ids = load_revblock_ids(i);
+        if (ids.n == 0) {
             spans_arena_pop();
-            if(!found_in_current && ids.n > 0) {
-                return rb->contents;
-            }
             continue;
         }
-        if(rb->ids.n == 0) continue;
         int found_in_current = 0;
-        for(int j = 0; j < rb->ids.n && !found_in_current; ++j) {
-            for(int k = 0; k < state->block_idx.n; ++k) {
-                if(span_eq(rb->ids.a[j], state->block_idx.a[k])) {
-                    found_in_current = 1;
-                    break;
-                }
+        for (int j = 0; j < ids.n; ++j) {
+            if (index_of(ids.a[j], state->block_idx) != -1) {
+                found_in_current = 1;
+                break;
             }
         }
-        if(!found_in_current) {
+        if (!found_in_current) {
+            spans_arena_pop();
+            cmp.end = cmp_save;
             return rb->contents;
         }
+        spans_arena_pop();
     }
+    cmp.end = cmp_save;
     return nullspan();
 }
 
@@ -9279,7 +9264,8 @@ span help_text_agent_qa(span s) {
 
 /* #help_text_claude_setup_impl */
 span help_text_claude_setup(span s) {
-  if (empty(s) || span_eq(S("help_text_claude_setup"),s)) return S(
+  if (empty(s) || span_eq(S("help_text_claude_setup"),s))
+    return S(
 "Claude Code Integration Guide\n"
 "=============================\n"
 "\n"
@@ -9289,6 +9275,8 @@ span help_text_claude_setup(span s) {
 "  Run this command at the beginning of every session:\n"
 "  \n"
 "  cmpr --help && cmpr --count-blocks && cmpr --T && cmpr --print-block '#root'\n"
+"\n"
+"Put what you are working on into T with --event, so that other agents (and humans) can see your progress.\n"
 "\n"
 "Key Principles:\n"
 "\n"
@@ -9345,10 +9333,14 @@ span help_text_claude_setup(span s) {
 "  When you learn something useful, create an experience report:\n"
 "  cat report.txt | cmpr --after '#INBOX'\n"
 "  Use naming: #claude_experience_report_<topic>_<date>\n"
+"  Then put \"The experience report is: ...\" in T, and memorize.\n"
+"  You can later use --recall.\n"
 "\n"
 "See also: cmpr --help basic, cmpr --help blocks, cmpr --help events\n"
 "\n"
-); else return nullspan();
+    );
+  else
+    return nullspan();
 }
 
 /* #help_text_history_impl */
@@ -9718,51 +9710,53 @@ void handle_event_large_file(span path, int strength) {
     prt("Stored %zu bytes in %.*s\n", len(content), (int)len(rev_path), rev_path.buf);
 }
 /* #handle_wants */
-void handle_wants() {
+void handle_wants(int show_blocks) {
     get_code();
-    
-    // Track seen wants to dedupe
+
+    // Track seen wants to dedupe (store want line + block index)
     span seen[1024];
+    int seen_block_idx[1024];
     int seen_count = 0;
-    
+
     for (int i = 0; i < state->blocks.n; i++) {
         span block = state->blocks.a[i];
-        
+        span block_copy = block;  // Keep original for ids_for_block
+
         while (block.buf < block.end) {
             span line = head_line(&block);
-            
+
             // Skip leading whitespace
             while (line.buf < line.end && (*line.buf == ' ' || *line.buf == '\t')) {
                 line.buf++;
             }
-            
+
             u8 *line_start = line.buf;
-            
+
             // Line must start with "
             if (line.buf >= line.end || *line.buf != '"') continue;
-            
+
             // Search backwards for " <digits>.
             u8 *p = line.end - 1;
             if (p < line.buf || *p != '.') continue;
             u8 *line_end = p + 1;
             p--;
-            
+
             u8 *digit_end = p + 1;
             while (p >= line.buf && *p >= '0' && *p <= '9') p--;
             if (p < line.buf || p + 1 == digit_end) continue;
             if (*p != ' ') continue;
             p--;
             if (p < line.buf || *p != '"') continue;
-            
+
             span event_str = {line.buf + 1, p};
             span want_prefix = S("We want ");
             int prefix_len = want_prefix.end - want_prefix.buf;
-            
+
             if (event_str.end - event_str.buf >= prefix_len &&
                 memcmp(event_str.buf, want_prefix.buf, prefix_len) == 0) {
-                
+
                 span sn_line = {line_start, line_end};
-                
+
                 // Check if already seen
                 int is_dup = 0;
                 for (int j = 0; j < seen_count; j++) {
@@ -9771,19 +9765,36 @@ void handle_wants() {
                         break;
                     }
                 }
-                
+
                 if (!is_dup && seen_count < 1024) {
-                    seen[seen_count++] = sn_line;
+                    seen[seen_count] = sn_line;
+                    seen_block_idx[seen_count] = i;
+                    seen_count++;
+
                     wrs(sn_line);
+
+                    if (show_blocks) {
+                        spans ids = ids_for_block(block_copy);
+                        if (ids.n > 0) {
+                            prt(" [");
+                            for (int k = 0; k < ids.n; k++) {
+                                if (k > 0) prt(" ");
+                                wrs(ids.a[k]);
+                            }
+                            prt("]");
+                        } else {
+                            prt(" [block %d]", i + 1);
+                        }
+                    }
+
                     terpri();
                 }
             }
         }
     }
-    
+
     flush();
 }
-
 /* #handle_wants_status */
 void handle_wants_status() {
     // Find the wants_status_report block
