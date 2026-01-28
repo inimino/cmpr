@@ -3190,12 +3190,7 @@ if (ind_file_argument) {
 
 	if (ind_find_deleted) {
 		get_revs();
-		span deleted = find_last_deleted_block();
-		if (len(deleted) == 0) {
-			prt("No deleted block found\n");
-		} else {
-			prt("%.*s", (int)len(deleted), deleted.buf);
-		}
+		find_all_deleted_blocks();
 		flush_exit(0);
 	}
 
@@ -3263,6 +3258,8 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
+
+
 
 
 
@@ -3916,6 +3913,8 @@ span get_revdir() {
 /* #complain_and_exit */
 /* #complain_and_prompt */
 /* #get_revs */
+void get_revs_2();
+
 void get_revs() {
     span revdir = get_revdir();
     DIR *dir = opendir(s(revdir));
@@ -3983,6 +3982,7 @@ void get_revs() {
     //state->revs.revrope = rope_new(16 * 1024 * 1024);
     get_revs_2();
 }
+
 
 
 /* #read_file_into */
@@ -4722,12 +4722,12 @@ spans load_revblock_ids(int revblock_idx) {
         }
     }
     if (!found) {
-        spans empty = {0, NULL, 0};
+        spans empty = {NULL, 0, 0};
         return empty;
     }
     span cache_path = prs("%.*s/cache/v8/revs/%.*s", len(state->cmprdir), state->cmprdir.buf, len(fname), fname.buf);
     if (!readable_file(cache_path)) {
-        spans empty = {0, NULL, 0};
+        spans empty = {NULL, 0, 0};
         return empty;
     }
     u8* cmp_save = cmp.end;
@@ -4742,7 +4742,7 @@ spans load_revblock_ids(int revblock_idx) {
 
     span rem = cache_contents;
     span line;
-    int in_desired_section = 0, num_lines = 0, found_section = 0;
+    int num_lines = 0, found_section = 0;
     // Skip header: move until blank line
     while (!empty(rem)) {
         line = next_line(&rem);
@@ -4756,7 +4756,7 @@ spans load_revblock_ids(int revblock_idx) {
     }
     if (!found_section) {
         cmp.end = cmp_save;
-        spans empty = {0, NULL, 0};
+        spans empty = {NULL, 0, 0};
         return empty;
     }
     // Count num_lines in section (lines up to blank line or EOF)
@@ -4785,6 +4785,7 @@ spans load_revblock_ids(int revblock_idx) {
     cmp.end = cmp_save;
     return ids;
 }
+
 
 /* #sbv_populate */
 void sbv_populate(sbv_state* sbvs) {
@@ -5581,51 +5582,290 @@ void delete_block() {
     state->scrolled_lines = 0;
 }
 /* #find_last_deleted_block */
+typedef struct {
+    span id;
+    span contents;
+    time_t last_seen;
+    time_t deleted_at;
+} deleted_block_info;
+
+// Helper: Check if block ID exists in current codebase
+static int block_id_exists_in_current(span id) {
+    return index_of(id, state->block_idx) != -1;
+}
+
+// Helper: Load cache for timestamp, returns cached_cache span
+static span load_cache_for_timestamp(time_t ts, u8 **cmp_save_ptr) {
+    for (int fi = 0; fi < state->revs.filenames.n; fi++) {
+        if (parse_rev_fname(state->revs.filenames.a[fi]) == ts) {
+            span cache_path = prs("%.*s/cache/v8/revs/%.*s",
+                len(state->cmprdir), state->cmprdir.buf,
+                len(state->revs.filenames.a[fi]), state->revs.filenames.a[fi].buf);
+            if (readable_file(cache_path))
+                return read_file_into_cmp(cache_path);
+            break;
+        }
+    }
+    return nullspan();
+}
+
+// Helper: Parse first block ID from cache section
+// Returns the first ID span if block is deleted (ID not in current), nullspan() otherwise
+// Also sets *is_deleted to 1 if block has IDs but none exist in current
+static span parse_first_deleted_id_from_cache(span cache, int block_num, rev_block *rb, int *is_deleted) {
+    *is_deleted = 0;
+    if (empty(cache)) return nullspan();
+
+    // Find "block N ids" section
+    u8 *p = cache.buf, *e = cache.end;
+    // Skip header lines until blank
+    while (p < e) { u8 *l = p; while (p < e && *p != '\n') p++; if (p == l) { p++; break; } p++; }
+
+    char ids_hdr[64];
+    snprintf(ids_hdr, sizeof(ids_hdr), "block %d ids", block_num);
+    int ids_hdr_len = strlen(ids_hdr);
+
+    u8 *idssec = NULL;
+    while (p < e) {
+        u8 *ls = p;
+        while (p < e && *p != '\n') p++;
+        int linelen = p - ls;
+        p++;
+        if (linelen >= ids_hdr_len && memcmp(ls, ids_hdr, ids_hdr_len) == 0) { idssec = p; break; }
+    }
+
+    if (!idssec) return nullspan();
+
+    // Parse IDs and check against current block_idx
+    int found_in_current = 0, has_id = 0;
+    span first_id = nullspan();
+    p = idssec;
+    while (p < e) {
+        u8 *il = p;
+        while (p < e && *p != '\n') p++;
+        if (p == il) break;
+        span line = (span){il, p};
+        p++;
+        int comma = find_char(line, ',');
+        if (comma < 0) continue;
+        int start = parse_int(first_n(line, comma));
+        int endval = parse_int(skip_n(line, comma + 1));
+        if (start < 0 || endval <= start || endval > len(rb->contents)) continue;
+        span id = (span){rb->contents.buf + start, rb->contents.buf + endval};
+        if (!has_id) {
+            first_id = id;
+            has_id = 1;
+        }
+        if (block_id_exists_in_current(id)) found_in_current = 1;
+    }
+
+    if (has_id && !found_in_current) {
+        *is_deleted = 1;
+        return first_id;
+    }
+    return nullspan();
+}
+
 span find_last_deleted_block() {
     u8 *cmp_save = cmp.end;
     time_t cached_ts = 0;
     span cached_cache = nullspan();
-    for (int i = 0; i < state->revs.n_revblocks; ++i) {
-        rev_block *rb = &state->revs.revblocks[i];
-        if (rb->timestamp != cached_ts) {
-            cmp.end = cmp_save;
-            char tsbuf[32];
-            struct tm tm;
-            localtime_r(&rb->timestamp, &tm);
-            strftime(tsbuf, sizeof(tsbuf), "%Y%m%d-%H%M%S", &tm);
-            span cache_path = prs("%.*s/cache/v8/revs/%s", len(state->cmprdir), state->cmprdir.buf, tsbuf);
-            if (readable_file(cache_path)) {
-                cached_cache = read_file_into_cmp(cache_path);
-            } else {
-                cached_cache = nullspan();
-            }
-            cached_ts = rb->timestamp;
+    int block_num = 0;
+    int total = state->revs.n_revblocks;
+
+    for (int i = total - 1; i >= 0; i--) {
+        if ((total - 1 - i) % 10000 == 0) {
+            fprintf(stderr, "\033[Hfind deleted: %d/%d", total - 1 - i, total);
+            fflush(stderr);
         }
-        if (empty(cached_cache)) continue;
-        spans_arena_push();
-        spans ids = load_revblock_ids(i);
-        if (ids.n == 0) {
-            spans_arena_pop();
+        rev_block *rb = &state->revs.revblocks[i];
+
+        // When we see a new timestamp, count total blocks with that timestamp
+        if (i == total - 1 || rb->timestamp != state->revs.revblocks[i+1].timestamp) {
+            block_num = 0;
+            for (int j = i; j >= 0 && state->revs.revblocks[j].timestamp == rb->timestamp; j--)
+                block_num++;
+        }
+
+        if (rb->ids.n == 0) { block_num--; continue; }
+
+        // IDs already loaded (not sentinel)
+        if (rb->ids.n != (size_t)-1) {
+            int found = 0;
+            for (size_t j = 0; j < rb->ids.n && !found; j++)
+                if (block_id_exists_in_current(rb->ids.a[j])) found = 1;
+            if (!found) {
+                fprintf(stderr, "\033[H\033[K");
+                fflush(stderr);
+                cmp.end = cmp_save;
+                return rb->contents;
+            }
+            block_num--;
             continue;
         }
-        int found_in_current = 0;
-        for (int j = 0; j < ids.n; ++j) {
-            if (index_of(ids.a[j], state->block_idx) != -1) {
-                found_in_current = 1;
-                break;
-            }
+
+        // Load cache if new timestamp
+        if (rb->timestamp != cached_ts) {
+            cmp.end = cmp_save;
+            cached_cache = nullspan();
+            cached_ts = rb->timestamp;
+            cached_cache = load_cache_for_timestamp(cached_ts, &cmp_save);
         }
-        if (!found_in_current) {
-            spans_arena_pop();
+
+        if (empty(cached_cache)) { block_num--; continue; }
+
+        int is_deleted = 0;
+        span first_id = parse_first_deleted_id_from_cache(cached_cache, block_num, rb, &is_deleted);
+
+        if (is_deleted && !empty(first_id)) {
+            fprintf(stderr, "\033[H\033[K");
+            fflush(stderr);
             cmp.end = cmp_save;
             return rb->contents;
         }
-        spans_arena_pop();
+        block_num--;
     }
+
+    fprintf(stderr, "\033[H\033[K");
+    fflush(stderr);
     cmp.end = cmp_save;
     return nullspan();
 }
 
+void find_all_deleted_blocks() {
+    u8 *cmp_save = cmp.end;
+    time_t cached_ts = 0;
+    span cached_cache = nullspan();
+    int block_num = 0;
+    int total = state->revs.n_revblocks;
+
+    // Limit search to avoid processing entire history (which can have 500k+ blocks)
+    // Process at most 50000 revblocks (roughly 100-200 recent revisions)
+    int max_revblocks = 50000;
+    int start_idx = total - 1;
+    int end_idx = (total > max_revblocks) ? total - max_revblocks : 0;
+
+    // Collect deleted blocks - use malloc, not spans arena
+    deleted_block_info *deleted = NULL;
+    int n_deleted = 0;
+    int cap_deleted = 0;
+
+    for (int i = start_idx; i >= end_idx; i--) {
+        if ((start_idx - i) % 5000 == 0) {
+            fprintf(stderr, "\033[Hfind deleted: %d/%d", start_idx - i, start_idx - end_idx);
+            fflush(stderr);
+        }
+        rev_block *rb = &state->revs.revblocks[i];
+
+        // When we see a new timestamp, count total blocks with that timestamp
+        if (i == total - 1 || rb->timestamp != state->revs.revblocks[i+1].timestamp) {
+            block_num = 0;
+            for (int j = i; j >= 0 && state->revs.revblocks[j].timestamp == rb->timestamp; j--)
+                block_num++;
+        }
+
+        if (rb->ids.n == 0) { block_num--; continue; }
+
+        span primary_id = nullspan();
+        int is_deleted = 0;
+
+        // IDs already loaded (not sentinel)
+        if (rb->ids.n != (size_t)-1) {
+            int found_in_current = 0;
+            for (size_t j = 0; j < rb->ids.n && !found_in_current; j++)
+                if (block_id_exists_in_current(rb->ids.a[j])) found_in_current = 1;
+            if (!found_in_current && rb->ids.n > 0) {
+                is_deleted = 1;
+                primary_id = rb->ids.a[0];
+            }
+        } else {
+            // Load cache if new timestamp
+            if (rb->timestamp != cached_ts) {
+                cmp.end = cmp_save;
+                cached_cache = nullspan();
+                cached_ts = rb->timestamp;
+                cached_cache = load_cache_for_timestamp(cached_ts, &cmp_save);
+            }
+
+            primary_id = parse_first_deleted_id_from_cache(cached_cache, block_num, rb, &is_deleted);
+        }
+
+        // If deleted and we haven't seen this ID yet, record it
+        if (is_deleted && !empty(primary_id)) {
+            // Check if already seen (search in deleted array)
+            int already_seen = 0;
+            for (int di = 0; di < n_deleted && !already_seen; di++) {
+                if (span_eq(deleted[di].id, primary_id)) already_seen = 1;
+            }
+            if (!already_seen) {
+                // Grow array if needed
+                if (n_deleted >= cap_deleted) {
+                    cap_deleted = cap_deleted ? cap_deleted * 2 : 64;
+                    deleted = realloc(deleted, cap_deleted * sizeof(deleted_block_info));
+                }
+                deleted[n_deleted].id = primary_id;
+                deleted[n_deleted].contents = rb->contents;
+                deleted[n_deleted].last_seen = rb->timestamp;
+                deleted[n_deleted].deleted_at = 0;  // Will compute below
+                n_deleted++;
+            }
+        }
+
+        block_num--;
+    }
+
+    // Compute deleted_at timestamps: find first rev timestamp after last_seen
+    // Filenames are in chronological order
+    for (int di = 0; di < n_deleted; di++) {
+        time_t last_seen = deleted[di].last_seen;
+        time_t deleted_at = 0;
+
+        for (int fi = 0; fi < state->revs.filenames.n; fi++) {
+            time_t ts = parse_rev_fname(state->revs.filenames.a[fi]);
+            if (ts > last_seen) {
+                deleted_at = ts;
+                break;
+            }
+        }
+        deleted[di].deleted_at = deleted_at;
+    }
+
+    // Sort by deleted_at descending (most recently deleted first)
+    // Simple bubble sort since n_deleted is typically small
+    for (int i = 0; i < n_deleted - 1; i++) {
+        for (int j = 0; j < n_deleted - 1 - i; j++) {
+            if (deleted[j].deleted_at < deleted[j+1].deleted_at) {
+                deleted_block_info tmp = deleted[j];
+                deleted[j] = deleted[j+1];
+                deleted[j+1] = tmp;
+            }
+        }
+    }
+
+    // Clear progress line
+    fprintf(stderr, "\033[H\033[K");
+    fflush(stderr);
+
+    // Print results
+    if (n_deleted == 0) {
+        prt("No deleted blocks found\n");
+    } else {
+        for (int di = 0; di < n_deleted; di++) {
+            char timestamp[32];
+            if (deleted[di].deleted_at > 0) {
+                struct tm *tm_info = localtime(&deleted[di].deleted_at);
+                strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
+            } else {
+                snprintf(timestamp, sizeof(timestamp), "(deleted after last rev)");
+            }
+            prt("%s %.*s\n", timestamp, (int)len(deleted[di].id), deleted[di].id.buf);
+        }
+    }
+    flush();
+
+    if (deleted) free(deleted);
+    cmp.end = cmp_save;
+}
 /* #paste_after */
 void paste_after() {
     if (state->curr_block_idx == -1 || state->blocks.n == 0) {
@@ -8473,13 +8713,15 @@ span help_text_basic(span s) {
       "  Example: cat file.txt | cmpr --checksum\n"
       "\n"
       "--find-deleted\n"
-      "  Find and print the most recently deleted block.\n"
-      "  Searches revision history for blocks that no longer exist.\n"
-      "  Useful for recovering accidentally deleted blocks.\n"
+      "  List all deleted blocks with their deletion timestamps.\n"
+      "  Prints blocks in reverse order of when they were deleted (most recent first).\n"
+      "  Each line shows: timestamp block_id (where timestamp is when the block was deleted).\n"
+      "  Searches recent revision history for blocks that no longer exist.\n"
       "  Example: cmpr --find-deleted\n"
       );
   else return nullspan();
 }
+
 
 /* #help_text_blocks_impl */
 span help_text_blocks(span s) {
@@ -9713,9 +9955,8 @@ void handle_event_large_file(span path, int strength) {
 void handle_wants(int show_blocks) {
     get_code();
 
-    // Track seen wants to dedupe (store want line + block index)
+    // Track seen wants to dedupe
     span seen[1024];
-    int seen_block_idx[1024];
     int seen_count = 0;
 
     for (int i = 0; i < state->blocks.n; i++) {
@@ -9768,7 +10009,6 @@ void handle_wants(int show_blocks) {
 
                 if (!is_dup && seen_count < 1024) {
                     seen[seen_count] = sn_line;
-                    seen_block_idx[seen_count] = i;
                     seen_count++;
 
                     wrs(sn_line);
@@ -9795,6 +10035,7 @@ void handle_wants(int show_blocks) {
 
     flush();
 }
+
 /* #handle_wants_status */
 void handle_wants_status() {
     // Find the wants_status_report block
