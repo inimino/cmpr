@@ -2471,6 +2471,7 @@ int ind_conf = 0;
 	int ind_replace_code = 0;
 	int ind_replace_current = 0;
 	int ind_run = 0;
+	int ind_build = 0;
 	int ind_agents = 0;
 	int ind_checksum = 0;
 	int ind_T0 = 0;
@@ -2566,6 +2567,7 @@ int ind_conf = 0;
 
 
 
+
 /* #handle_args_3 */
 for (int i = 1; i < argc; i++) {
 		char *arg = argv[i];
@@ -2639,6 +2641,8 @@ for (int i = 1; i < argc; i++) {
 		} else if (strcmp(arg, "--run") == 0) {
 			if (i+1 >= argc) { prt("Missing <block_id> argument for --run\n"); flush(); exit(1); }
 			ind_run = 1; run_block_id = argv[++i]; action_arg = 1;
+		} else if (strcmp(arg, "--build") == 0) {
+			ind_build = 1; action_arg = 1;
 		} else if (strcmp(arg, "--agents") == 0) {
 			ind_agents = 1; action_arg = 1;
 		} else if (strcmp(arg, "--agent-run") == 0) {
@@ -2747,6 +2751,7 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
 
 
 
@@ -2899,7 +2904,7 @@ if (ind_file_argument) {
 	action_arg = ind_print_block + ind_print_comment + ind_print_code + ind_expand_block +
 	             ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all +
 	             ind_rewritepl + ind_prompt + ind_llm + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_replace_current +
-	             ind_run + ind_agents + ind_checksum +
+	             ind_run + ind_build + ind_agents + ind_checksum +
 	             ind_map_error + ind_test_block_map +
 	             ind_wants +
 	             ind_wants_status +
@@ -2932,7 +2937,7 @@ if (ind_file_argument) {
 	check_dirs();
 
 	// Get code database if needed (for most commands)
-	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es && !ind_P && !ind_E && !ind_induced && !ind_induced_single && !ind_lpp && !ind_es_create) {
+	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_build && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es && !ind_P && !ind_E && !ind_induced && !ind_induced_single && !ind_lpp && !ind_es_create) {
 		get_code();
 	}
 	
@@ -3063,7 +3068,15 @@ if (ind_file_argument) {
 		handle_run(run_block_id);
 		flush_exit(0);
 	}
-	
+
+	if (ind_build) {
+		ensure_conf_var(&state->buildcmd, S("The build command to run"), nullspan());
+		char buf[2048] = {0};
+		s_buffer(buf, sizeof(buf), state->buildcmd);
+		int status = system(buf);
+		flush_exit(WIFEXITED(status) ? WEXITSTATUS(status) : 1);
+	}
+
 	if (ind_agents) {
 		handle_agents();
 		flush_exit(0);
@@ -3258,6 +3271,7 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
+
 
 
 
@@ -8610,7 +8624,7 @@ span help_text_summary(span s) {
     return S(
 "cmpr code swiss army knife\n"
 "\n"
-"Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version|--status] [(--print-block [--ofra]|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--llm] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all|--inbox] [--after <id>] [--before <ts>] [(--replace|--replace-comment|--replace-code|--replace-current) <id>] [--run <block_id>] [--agents] [--install-agent <name>] [--install-script <name>] [--checksum] [--find-deleted] [--T0] [--event <string> --strength <value>] [--event-stdin --strength <value>] [--event-file <path> --strength <value>] [--query <string>] [--memorize] [--recall] [--recall-first] [--T] [--trace] [--work [event]] [--event-spaces|--es] [--P|--pattern] [--E] [--induced <es>] [--induced-single <event>] [--lpp <es1> <es2>] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs] [FILE|-]\n"
+"Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version|--status] [(--print-block [--ofra]|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--llm] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all|--inbox] [--after <id>] [--before <ts>] [(--replace|--replace-comment|--replace-code|--replace-current) <id>] [--run <block_id>] [--build] [--agents] [--install-agent <name>] [--install-script <name>] [--checksum] [--find-deleted] [--T0] [--event <string> --strength <value>] [--event-stdin --strength <value>] [--event-file <path> --strength <value>] [--query <string>] [--memorize] [--recall] [--recall-first] [--T] [--trace] [--work [event]] [--event-spaces|--es] [--P|--pattern] [--E] [--induced <es>] [--induced-single <event>] [--lpp <es1> <es2>] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs] [FILE|-]\n"
 "\n"
 "For help on available topics: cmpr --help topics\n"
 "Every CLI flag can also be used after --help to get a description of that flag or usage examples: cmpr --help --grep\n"
@@ -8618,6 +8632,7 @@ span help_text_summary(span s) {
   else
     return nullspan();
 }
+
 
 
 
@@ -8671,7 +8686,7 @@ span help_text_basic(span s) {
       "Each language line applies to all file lines up to the next language line.\n"
       "\n"
       "Replace buildcmd with your actual build command.\n"
-      "This only applies to the TUI currently, specifically the 'B' keybinding.\n"
+      "Use 'B' in the TUI or `cmpr --build` from the command line to run it.\n"
       "\n"
       "cmpr can be used via TUI, reached by running `cmpr` with no arguments (or with a single filename).\n"
       "It can be used from the shell via CLI, see cmpr --help for basic usage.\n"
@@ -8707,6 +8722,10 @@ span help_text_basic(span s) {
       "  Shows: inbox items, total wants, total blocks, anonymous blocks.\n"
       "  Example: cmpr --status\n"
       "\n"
+      "--build\n"
+      "  Run the configured buildcmd and exit with the build command's exit status.\n"
+      "  Example: cmpr --build\n"
+      "\n"
       "--checksum\n"
       "  Compute checksum of input from stdin.\n"
       "  Useful for verifying content integrity.\n"
@@ -8721,6 +8740,7 @@ span help_text_basic(span s) {
       );
   else return nullspan();
 }
+
 
 
 /* #help_text_blocks_impl */
@@ -9771,7 +9791,7 @@ span get_help_text(span topic) {
         }
         // Basic
         if (span_eq(flag, S("init")) || span_eq(flag, S("version")) || span_eq(flag, S("conf")) ||
-            span_eq(flag, S("print-conf")) || span_eq(flag, S("status")) ||
+            span_eq(flag, S("print-conf")) || span_eq(flag, S("status")) || span_eq(flag, S("build")) ||
             span_eq(flag, S("checksum")) || span_eq(flag, S("find-deleted"))) {
             return help_text_basic(nullspan());
         }
@@ -9795,6 +9815,7 @@ span get_agent_script(span name) {
     }
     return nullspan();
 }
+
 
 /* #handle_help_topic */
 void handle_help_topic(char *topic) {
