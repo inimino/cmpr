@@ -11488,136 +11488,206 @@ void handle_es_create(char *name, char *pattern) {
 void handle_history(span blockid, double log_gap_factor, int limit) {
     get_revs();
     clear_display();
-    
-    int have_blockid = len(blockid) > 0;
-    size_t total = state->revs.n_revblocks;
-    int effective_limit = limit > 0 ? limit : 20;  // default limit for performance
-    
-    if (have_blockid) {
-        // === BLOCKID MODE ===
-        typedef struct { checksum ck; time_t ts; int bytes, lines; } version;
-        version *versions = malloc(256 * sizeof(version));
-        int n_ver = 0, ver_cap = 256;
-        
-        for (size_t i = 0; i < total; i++) {
-            if (i % 1000 == 0) { fprintf(stderr, "\rScanning: %zu/%zu", i, total); fflush(stderr); }
-            
-            rev_block *rb = &state->revs.revblocks[i];
-            spans_arena_push();
-            spans ids = load_revblock_ids(i);
-            int match = 0;
-            for (int j = 0; j < ids.n && !match; j++)
-                if (span_eq(ids.a[j], blockid)) match = 1;
-            spans_arena_pop();
-            if (!match) continue;
-            
-            checksum ck = selected_checksum(rb->contents);
-            int found = -1;
-            for (int j = 0; j < n_ver; j++)
-                if (versions[j].ck.__u == ck.__u) { found = j; break; }
-            
-            if (found >= 0) {
-                if (rb->timestamp < versions[found].ts) versions[found].ts = rb->timestamp;
-            } else {
-                if (n_ver >= ver_cap) { ver_cap *= 2; versions = realloc(versions, ver_cap * sizeof(version)); }
-                versions[n_ver].ck = ck;
-                versions[n_ver].ts = rb->timestamp;
-                versions[n_ver].bytes = len(rb->contents);
-                int lines = 0; span tmp = rb->contents;
-                while (len(tmp) > 0) { next_line(&tmp); lines++; }
-                versions[n_ver].lines = lines;
-                n_ver++;
-            }
-        }
-        fprintf(stderr, "\r                              \r");
-        
-        // Sort newest first
-        for (int i = 0; i < n_ver - 1; i++)
-            for (int j = i + 1; j < n_ver; j++)
-                if (versions[j].ts > versions[i].ts) { version t = versions[i]; versions[i] = versions[j]; versions[j] = t; }
-        
-        int shown = 0, skipped = 0;
-        time_t last_ts = 0; double gap = 1.0;
-        prt("History for %.*s\n\n", (int)len(blockid), blockid.buf);
-        for (int i = 0; i < n_ver && (limit <= 0 || shown < limit); i++) {
-            if (log_gap_factor > 0 && shown > 0 && last_ts - versions[i].ts < gap) { skipped++; continue; }
-            char ts[32]; struct tm *tm = localtime(&versions[i].ts);
-            strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", tm);
-            prt("  %s  %d bytes  %d lines\n", ts, versions[i].bytes, versions[i].lines);
-            last_ts = versions[i].ts; if (log_gap_factor > 0) gap *= log_gap_factor; shown++;
-        }
-        free(versions);
-        
+    if (len(blockid) > 0) {
+        handle_history_blockid(blockid, log_gap_factor, limit);
     } else {
-        // === RECENT CHANGES MODE (limited scan) ===
-        typedef struct { span id; checksum ck; time_t ts; } state_entry;
-        state_entry *states = malloc(1024 * sizeof(state_entry));
-        int n_states = 0, state_cap = 1024;
-        
-        typedef struct { time_t ts; span id; } event;
-        event *events = malloc(512 * sizeof(event));
-        int n_events = 0, event_cap = 512;
-        
-        // Scan newest-first, stop when we have enough events
-        for (size_t i = 0; i < total && n_events < effective_limit * 3; i++) {
-            if (i % 1000 == 0) { fprintf(stderr, "\rScanning: %zu (found %d)", i, n_events); fflush(stderr); }
-            
-            rev_block *rb = &state->revs.revblocks[i];
-            spans_arena_push();
-            spans ids = load_revblock_ids(i);
-            if (ids.n > 0) {
-                span bid = ids.a[0];
-                checksum ck = selected_checksum(rb->contents);
-                
-                int found = -1;
-                for (int k = 0; k < n_states; k++)
-                    if (span_eq(states[k].id, bid)) { found = k; break; }
-                
-                if (found >= 0) {
-                    if (states[found].ck.__u != ck.__u) {
-                        if (n_events >= event_cap) { event_cap *= 2; events = realloc(events, event_cap * sizeof(event)); }
-                        events[n_events].ts = states[found].ts;
-                        events[n_events].id = states[found].id;
-                        n_events++;
-                        states[found].ck = ck;
-                        states[found].ts = rb->timestamp;
-                    }
-                } else {
-                    if (n_states >= state_cap) { state_cap *= 2; states = realloc(states, state_cap * sizeof(state_entry)); }
-                    u8 *copy = malloc(len(bid)); memcpy(copy, bid.buf, len(bid));
-                    states[n_states].id = (span){copy, copy + len(bid)};
-                    states[n_states].ck = ck;
-                    states[n_states].ts = rb->timestamp;
-                    n_states++;
-                }
-            }
-            spans_arena_pop();
-        }
-        fprintf(stderr, "\r                              \r");
-        
-        // Sort by timestamp
-        for (int i = 0; i < n_events - 1; i++)
-            for (int j = i + 1; j < n_events; j++)
-                if (events[j].ts > events[i].ts) { event t = events[i]; events[i] = events[j]; events[j] = t; }
-        
-        int shown = 0, skipped = 0;
-        time_t last_ts = 0; double gap = 1.0;
-        prt("Recent block changes\n\n");
-        for (int i = 0; i < n_events && shown < effective_limit; i++) {
-            if (log_gap_factor > 0 && shown > 0 && last_ts - events[i].ts < gap) { skipped++; continue; }
-            char ts[32]; struct tm *tm = localtime(&events[i].ts);
-            strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", tm);
-            prt("  %s  %.*s\n", ts, (int)len(events[i].id), events[i].id.buf);
-            last_ts = events[i].ts; if (log_gap_factor > 0) gap *= log_gap_factor; shown++;
-        }
-        
-        for (int i = 0; i < n_states; i++) free((void*)states[i].id.buf);
-        free(events);
-        free(states);
+        handle_history_recent(log_gap_factor, limit);
     }
-    
+}
+
+/* #handle_history_blockid */
+void handle_history_blockid(span blockid, double log_gap_factor, int limit) {
+    struct version_entry {
+        checksum ck;
+        time_t ts;
+        int bytes;
+        int lines;
+    };
+    size_t cap = 256, n = 0;
+    struct version_entry* versions = malloc(cap * sizeof(*versions));
+
+    size_t scan_total = state->revs.n_revblocks;
+    for (size_t i = 0; i < scan_total; ++i) {
+        if (i % 1000 == 0) {
+            fprintf(stderr, "\rScanning: %zu/%zu", i, scan_total);
+            fflush(stderr);
+        }
+        spans_arena_push();
+        spans ids = load_revblock_ids(i);
+        int found = 0;
+        for (int j = 0; j < ids.n; ++j) {
+            if (span_eq(ids.a[j], blockid)) {
+                found = 1;
+                break;
+            }
+        }
+        spans_arena_pop();
+        if (!found)
+            continue;
+        rev_block* rb = &state->revs.revblocks[i];
+        checksum ckval = selected_checksum(rb->contents);
+        int exists = 0;
+        for (size_t j = 0; j < n; ++j) {
+            if (versions[j].ck.__u == ckval.__u) {
+                if (rb->timestamp < versions[j].ts)
+                    versions[j].ts = rb->timestamp;
+                exists = 1;
+                break;
+            }
+        }
+        if (exists)
+            continue;
+        int linecount = 0;
+        span iter = rb->contents;
+        while (!empty(iter)) {
+            (void)next_line(&iter);
+            ++linecount;
+        }
+        if (n == cap) {
+            cap *= 2;
+            versions = realloc(versions, cap * sizeof(*versions));
+        }
+        versions[n].ck = ckval;
+        versions[n].ts = rb->timestamp;
+        versions[n].bytes = len(rb->contents);
+        versions[n].lines = linecount;
+        ++n;
+    }
+    fprintf(stderr, "\r%*s\r", 40, ""); fflush(stderr);
+
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = i+1; j < n; ++j) {
+            if (versions[j].ts > versions[i].ts) {
+                struct version_entry tmp = versions[i];
+                versions[i] = versions[j];
+                versions[j] = tmp;
+            }
+        }
+    }
+
+    prt("History for %.*s\n\n", len(blockid), blockid.buf);
+    int shown = 0;
+    time_t last_ts = 0;
+    double gap = 1.0;
+    char timebuf[32];
+    for (size_t i = 0; i < n; ++i) {
+        if (limit > 0 && shown >= limit)
+            break;
+        time_t ts = versions[i].ts;
+        if (log_gap_factor > 0 && shown > 0 && difftime(last_ts, ts) < gap)
+            continue;
+        struct tm tmres;
+        localtime_r(&ts, &tmres);
+        strftime(timebuf, sizeof timebuf, "%Y-%m-%d %H:%M:%S", &tmres);
+        prt("  %s  %d bytes  %d lines\n", timebuf, versions[i].bytes, versions[i].lines);
+        last_ts = ts;
+        gap *= log_gap_factor > 0 ? log_gap_factor : 1.0;
+        ++shown;
+    }
+    free(versions);
     flush();
 }
+
+/* #handle_history_recent */
+void handle_history_recent(double log_gap_factor, int limit) {
+    typedef struct { span id; checksum ck; time_t ts; } state_ent;
+    typedef struct { time_t ts; span id; } event_ent;
+
+    size_t n_revblocks = state->revs.n_revblocks;
+    size_t states_cap = 1024, states_n = 0;
+    state_ent* states = malloc(states_cap * sizeof(state_ent));
+
+    size_t events_cap = 512, events_n = 0;
+    event_ent* events = malloc(events_cap * sizeof(event_ent));
+
+    int effective_limit = limit > 0 ? limit : 20;
+
+    for (size_t i = 0; i < n_revblocks && events_n < (size_t)effective_limit * 3; i++) {
+        if (i % 1000 == 0 && i > 0) {
+            fprintf(stderr, "\rScanning revblock %zu/%zu...", i, n_revblocks);
+            fflush(stderr);
+        }
+        spans_arena_push();
+        rev_block* rb = &state->revs.revblocks[i];
+        spans ids = load_revblock_ids((int)i);
+        if (ids.n == 0) { spans_arena_pop(); continue; }
+        span bid = ids.a[0];
+        checksum ck = selected_checksum(bid);
+
+        // Search state for id
+        size_t state_idx = 0;
+        int found = 0;
+        for (; state_idx < states_n; state_idx++) {
+            if (len(bid) == len(states[state_idx].id) &&
+                memcmp(bid.buf, states[state_idx].id.buf, len(bid)) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (found) {
+            // Compare checksums
+            if (ck.__u != states[state_idx].ck.__u) {
+                // Record event
+                if (events_n == events_cap) { events_cap *= 2; events = realloc(events, events_cap * sizeof(event_ent)); }
+                span idcopy = malloc(len(bid));
+                memcpy(idcopy, bid.buf, len(bid));
+                events[events_n++] = (event_ent){states[state_idx].ts, (span){idcopy, idcopy + len(bid)}};
+                // Update state
+                free(states[state_idx].id.buf); // Free old id copy
+                span newcopy = malloc(len(bid));
+                memcpy(newcopy, bid.buf, len(bid));
+                states[state_idx].id = (span){newcopy, newcopy+len(bid)};
+                states[state_idx].ck = ck;
+                states[state_idx].ts = rb->timestamp;
+            } else {
+                // Keep oldest occurrence
+                if (rb->timestamp < states[state_idx].ts)
+                    states[state_idx].ts = rb->timestamp;
+            }
+        } else {
+            if (states_n == states_cap) { states_cap *= 2; states = realloc(states, states_cap * sizeof(state_ent)); }
+            span idcopy = malloc(len(bid));
+            memcpy(idcopy, bid.buf, len(bid));
+            states[states_n++] = (state_ent){(span){idcopy, idcopy+len(bid)}, ck, rb->timestamp};
+        }
+        spans_arena_pop();
+    }
+    fprintf(stderr, "\r%*s\r", 40, ""); // Clear progress
+
+    // Bubble sort events newest-first (small N)
+    for (size_t i = 0; i + 1 < events_n; i++) {
+        for (size_t j = 0; j + 1 < events_n - i; j++) {
+            if (events[j].ts < events[j+1].ts) {
+                event_ent tmp = events[j];
+                events[j] = events[j+1];
+                events[j+1] = tmp;
+            }
+        }
+    }
+
+    prt("Recent block changes\n\n");
+    size_t printed = 0;
+    time_t last_ts = 0;
+    for (size_t i = 0; i < events_n && (int)printed < effective_limit; i++) {
+        if (printed == 0 || log_gap_factor <= 0 ||
+            last_ts == 0 || difftime(last_ts, events[i].ts) > log_gap_factor * log1p((double)(last_ts - events[i].ts))) {
+            char tsbuf[32];
+            struct tm tm;
+            localtime_r(&events[i].ts, &tm);
+            strftime(tsbuf, sizeof(tsbuf), "%Y-%m-%d %H:%M:%S", &tm);
+            prt("  %s  %.*s\n", tsbuf, (int)len(events[i].id), events[i].id.buf);
+            last_ts = events[i].ts;
+            printed++;
+        }
+    }
+
+    for (size_t i = 0; i < states_n; i++) free(states[i].id.buf);
+    for (size_t i = 0; i < events_n; i++) free(events[i].id.buf);
+    free(states);
+    free(events);
+    flush();
+}
+
 /* #grep_blocks */
 void grep_blocks(span pattern) {
     regex_t regex;
