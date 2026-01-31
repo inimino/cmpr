@@ -274,6 +274,7 @@ void handle_es_create(char *name, char *pattern);
 void handle_history(span blockid, double log_gap_factor, int limit);
 void handle_history_blockid(span blockid, double log_gap_factor, int limit);
 void handle_history_recent(double log_gap_factor, int limit);
+span span_dup(span s);
 int check_file_changed(int file_index);
 void reload_file(int file_index);
 void handle_args(int argc, char **argv);

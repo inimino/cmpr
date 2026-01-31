@@ -11488,13 +11488,11 @@ void handle_es_create(char *name, char *pattern) {
 void handle_history(span blockid, double log_gap_factor, int limit) {
     get_revs();
     clear_display();
-    if (len(blockid) > 0) {
+    if (!empty(blockid))
         handle_history_blockid(blockid, log_gap_factor, limit);
-    } else {
+    else
         handle_history_recent(log_gap_factor, limit);
-    }
 }
-
 /* #handle_history_blockid */
 void handle_history_blockid(span blockid, double log_gap_factor, int limit) {
     struct version_entry {
@@ -11629,12 +11627,12 @@ void handle_history_recent(double log_gap_factor, int limit) {
             if (ck.__u != states[state_idx].ck.__u) {
                 // Record event
                 if (events_n == events_cap) { events_cap *= 2; events = realloc(events, events_cap * sizeof(event_ent)); }
-                span idcopy = malloc(len(bid));
+                u8 *idcopy = malloc(len(bid));
                 memcpy(idcopy, bid.buf, len(bid));
                 events[events_n++] = (event_ent){states[state_idx].ts, (span){idcopy, idcopy + len(bid)}};
                 // Update state
                 free(states[state_idx].id.buf); // Free old id copy
-                span newcopy = malloc(len(bid));
+                u8 *newcopy = malloc(len(bid));
                 memcpy(newcopy, bid.buf, len(bid));
                 states[state_idx].id = (span){newcopy, newcopy+len(bid)};
                 states[state_idx].ck = ck;
@@ -11646,7 +11644,7 @@ void handle_history_recent(double log_gap_factor, int limit) {
             }
         } else {
             if (states_n == states_cap) { states_cap *= 2; states = realloc(states, states_cap * sizeof(state_ent)); }
-            span idcopy = malloc(len(bid));
+            u8 *idcopy = malloc(len(bid));
             memcpy(idcopy, bid.buf, len(bid));
             states[states_n++] = (state_ent){(span){idcopy, idcopy+len(bid)}, ck, rb->timestamp};
         }
@@ -11687,7 +11685,6 @@ void handle_history_recent(double log_gap_factor, int limit) {
     free(events);
     flush();
 }
-
 /* #grep_blocks */
 void grep_blocks(span pattern) {
     regex_t regex;
