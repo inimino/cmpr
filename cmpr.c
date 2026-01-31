@@ -3008,7 +3008,7 @@ if (ind_file_argument) {
 	
 	if (ind_print_all) {
 		for (int i = 0; i < state->blocks.n; i++) {
-			print_block(i);
+			wrs(state->blocks.a[i]);
 		}
 		flush_exit(0);
 	}
@@ -3271,6 +3271,7 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
+
 
 
 
@@ -8624,7 +8625,7 @@ span help_text_summary(span s) {
     return S(
 "cmpr code swiss army knife\n"
 "\n"
-"Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version|--status] [(--print-block [--ofra]|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--llm] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all|--inbox] [--after <id>] [--before <ts>] [(--replace|--replace-comment|--replace-code|--replace-current) <id>] [--run <block_id>] [--build] [--agents] [--install-agent <name>] [--install-script <name>] [--checksum] [--find-deleted] [--T0] [--event <string> --strength <value>] [--event-stdin --strength <value>] [--event-file <path> --strength <value>] [--query <string>] [--memorize] [--recall] [--recall-first] [--T] [--trace] [--work [event]] [--event-spaces|--es] [--P|--pattern] [--E] [--induced <es>] [--induced-single <event>] [--lpp <es1> <es2>] [--wants] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs] [FILE|-]\n"
+"Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version|--status] [(--print-block [--ofra]|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--llm] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all|--inbox] [--after <id>] [--before <ts>] [(--replace|--replace-comment|--replace-code|--replace-current) <id>] [--run <block_id>] [--build] [--agents] [--install-agent <name>] [--install-script <name>] [--checksum] [--find-deleted] [--T0] [--event <string> --strength <value>] [--event-stdin --strength <value>] [--event-file <path> --strength <value>] [--query <string>] [--memorize] [--recall] [--recall-first] [--T] [--trace] [--work [event]] [--event-spaces|--es] [--P|--pattern] [--E] [--induced <es>] [--induced-single <event>] [--lpp <es1> <es2>] [--wants [--blocks]] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs] [--history [#blockid] [--log-gap [factor]] [--limit N]] [FILE|-]\n"
 "\n"
 "For help on available topics: cmpr --help topics\n"
 "Every CLI flag can also be used after --help to get a description of that flag or usage examples: cmpr --help --grep\n"
@@ -8632,6 +8633,7 @@ span help_text_summary(span s) {
   else
     return nullspan();
 }
+
 
 
 
@@ -10693,7 +10695,8 @@ void handle_status() {
         inbox_count = end_inbox_idx - inbox_idx - 1;
     }
     
-    // Count wants (simple grep for "We want " at start of SN lines)
+    // Count wants (deduped, consistent with --wants)
+    span seen[1024];
     int want_count = 0;
     for (int i = 0; i < state->blocks.n; i++) {
         span block = state->blocks.a[i];
@@ -10701,9 +10704,28 @@ void handle_status() {
             span line = head_line(&block);
             while (line.buf < line.end && (*line.buf == ' ' || *line.buf == '\t')) line.buf++;
             if (line.buf >= line.end || *line.buf != '"') continue;
-            span want_prefix = S("\"We want ");
-            if (line.end - line.buf >= 10 && memcmp(line.buf, want_prefix.buf, 9) == 0) {
-                want_count++;
+
+            // Parse SN format: "event" N.
+            u8 *p = line.end - 1;
+            if (p < line.buf || *p != '.') continue;
+            p--;
+            while (p >= line.buf && *p >= '0' && *p <= '9') p--;
+            if (p < line.buf || *p != ' ') continue;
+            p--;
+            if (p < line.buf || *p != '"') continue;
+
+            span event_str = {line.buf + 1, p};
+            span want_prefix = S("We want ");
+            if (event_str.end - event_str.buf >= 8 &&
+                memcmp(event_str.buf, want_prefix.buf, 8) == 0) {
+                // Check if already seen
+                int is_dup = 0;
+                for (int j = 0; j < want_count; j++) {
+                    if (span_eq(seen[j], event_str)) { is_dup = 1; break; }
+                }
+                if (!is_dup && want_count < 1024) {
+                    seen[want_count++] = event_str;
+                }
             }
         }
     }
@@ -10724,6 +10746,7 @@ void handle_status() {
     
     flush();
 }
+
 /* #handle_event_report */
 void handle_event_report() {
     const char *report_path = "public_html/event_activity.html";
