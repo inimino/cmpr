@@ -2120,27 +2120,6 @@ void read_(int argc, char** argv) {
         }
         state->curr_block_idx = idx;
     }
-
-    // Handle inbox mode (--inbox)
-    if (state->inbox_mode) {
-        int inbox_idx = block_from_arg("#INBOX");
-        int end_inbox_idx = block_from_arg("#END_INBOX");
-        if (inbox_idx < 0 || inbox_idx >= state->blocks.n) {
-            prt("Error: #INBOX block not found. See `cmpr --help inbox` for setup.\n");
-            flush_exit(1);
-        }
-        if (end_inbox_idx < 0 || end_inbox_idx >= state->blocks.n) {
-            prt("Error: #END_INBOX block not found. See `cmpr --help inbox` for setup.\n");
-            flush_exit(1);
-        }
-        if (end_inbox_idx <= inbox_idx) {
-            prt("Error: #END_INBOX must come after #INBOX\n");
-            flush_exit(1);
-        }
-        state->inbox_start_idx = inbox_idx;
-        state->inbox_end_idx = end_inbox_idx;
-        state->curr_block_idx = inbox_idx;
-    }
 }
 /* #call_llm */
 void call_llm(span model, json messages, llm_message_handler cb) {
@@ -2846,41 +2825,36 @@ if (ind_file_argument) {
 		state->open_block_id = S(arg_open_block);
 	}
 
-	// Handle --inbox (TUI filtered to inbox region)
-	if (ind_inbox) {
-		state->inbox_mode = 1;
-	}
-
 // Handle --help, --version, --init first
 	if (ind_help) {
 		//get_code();
 		handle_help_topic(help_topic);
 		// handle_help_topic calls flush_exit, so we never reach here
 	}
-	
+
 	if (ind_version) {
 		prt("Version: $VERSION$\n");
 		flush_exit(0);
 	}
-	
+
 	if (ind_init && ind_conf) {
 		prt("Error: --init and --conf cannot be used together\n");
 		flush_exit(1);
 	}
-	
+
 	if (ind_init) {
 		cmpr_init();
 		flush_exit(0);
 	}
-	
+
 	// Update config file path if --conf was used
 	if (ind_conf) {
 		state->config_file_path = S(conf_filepath);
 	}
-	
+
 	// Parse config file (always do this unless --init was used)
 	parse_config();
-	
+
 	// Handle --print-conf
 	if (ind_print_conf) {
 		print_config();
@@ -2903,6 +2877,7 @@ if (ind_file_argument) {
 	// Count action flags (excluding event-related flags which are handled separately)
 	action_arg = ind_print_block + ind_print_comment + ind_print_code + ind_expand_block +
 	             ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all +
+	             ind_inbox +
 	             ind_rewritepl + ind_prompt + ind_llm + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_replace_current +
 	             ind_run + ind_build + ind_agents + ind_checksum +
 	             ind_map_error + ind_test_block_map +
@@ -2927,7 +2902,7 @@ if (ind_file_argument) {
 	             ind_lpp +
 	             ind_es_create +
 	             ind_history;
-	
+
 	if (action_arg > 1) {
 		prt("Error: Only one action argument may be used at a time.\n");
 		flush_exit(1);
@@ -2940,7 +2915,7 @@ if (ind_file_argument) {
 	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_build && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es && !ind_P && !ind_E && !ind_induced && !ind_induced_single && !ind_lpp && !ind_es_create) {
 		get_code();
 	}
-	
+
 	// Dispatch to handlers
 	if (ind_print_block) {
 		int idx = block_from_arg(arg_print_block);
@@ -2955,7 +2930,7 @@ if (ind_file_argument) {
 		}
 		flush_exit(0);
 	}
-	
+
 	if (ind_print_comment) {
 		int idx = block_from_arg(arg_print_comment);
 		if (idx < 0 || idx >= state->blocks.n) {
@@ -2965,7 +2940,7 @@ if (ind_file_argument) {
 		print_comment(idx);
 		flush_exit(0);
 	}
-	
+
 	if (ind_print_code) {
 		int idx = block_from_arg(arg_print_code);
 		if (idx < 0 || idx >= state->blocks.n) {
@@ -2975,7 +2950,7 @@ if (ind_file_argument) {
 		print_code(idx);
 		flush_exit(0);
 	}
-	
+
 	if (ind_expand_block) {
 		int idx = block_from_arg(arg_expand_block);
 		if (idx < 0 || idx >= state->blocks.n) {
@@ -2985,34 +2960,60 @@ if (ind_file_argument) {
 		expand_block(idx);
 		flush_exit(0);
 	}
-	
+
 	if (ind_content_index) {
 		content_index(S(content_index_search));
 		flush_exit(0);
 	}
-	
+
 	if (ind_grep) {
 		grep_blocks(S(grep_pattern));
 		flush_exit(0);
 	}
-	
+
 	if (ind_count_blocks) {
 		prt("%d\n", state->blocks.n);
 		flush_exit(0);
 	}
-	
+
 	if (ind_files_blocks) {
 		print_files_blocks();
 		flush_exit(0);
 	}
-	
+
 	if (ind_print_all) {
 		for (int i = 0; i < state->blocks.n; i++) {
 			wrs(state->blocks.a[i]);
 		}
 		flush_exit(0);
 	}
-	
+
+	if (ind_inbox) {
+		int inbox_idx = block_from_arg("#INBOX");
+		int end_inbox_idx = block_from_arg("#END_INBOX");
+		if (inbox_idx < 0 || inbox_idx >= state->blocks.n) {
+			prt("Error: #INBOX block not found. See `cmpr --help inbox` for setup.\n");
+			flush_exit(1);
+		}
+		if (end_inbox_idx < 0 || end_inbox_idx >= state->blocks.n) {
+			prt("Error: #END_INBOX block not found. See `cmpr --help inbox` for setup.\n");
+			flush_exit(1);
+		}
+		if (end_inbox_idx <= inbox_idx + 1) {
+			prt("Inbox is empty.\n");
+			flush_exit(0);
+		}
+		for (int i = inbox_idx + 1; i < end_inbox_idx; i++) {
+			span id = id_for_block(state->blocks.a[i]);
+			if (!empty(id)) {
+				prt("%.*s\n", len(id), id.buf);
+			} else {
+				prt("(anonymous block %d)\n", i + 1);
+			}
+		}
+		flush_exit(0);
+	}
+
 	if (ind_rewritepl) {
 		int idx = block_from_arg(arg_rewritepl);
 		if (idx < 0 || idx >= state->blocks.n) {
@@ -3023,7 +3024,7 @@ if (ind_file_argument) {
 		nl2pl_rewrite();
 		flush_exit(0);
 	}
-	
+
 	if (ind_prompt) {
 		int idx = block_from_arg(arg_prompt);
 		if (idx < 0 || idx >= state->blocks.n) {
@@ -3033,27 +3034,27 @@ if (ind_file_argument) {
 		handle_prompt(idx);
 		flush_exit(0);
 	}
-	
+
 	if (ind_llm) {
 		handle_llm();
 		flush_exit(0);
 	}
-	
+
 	if (ind_after) {
 		after(S(arg_after));
 		flush_exit(0);
 	}
-	
+
 	if (ind_replace) {
 		replace(S(arg_replace));
 		flush_exit(0);
 	}
-	
+
 	if (ind_replace_comment) {
 		replace_comment(S(arg_replace_comment));
 		flush_exit(0);
 	}
-	
+
 	if (ind_replace_code) {
 		replace_code(S(arg_replace_code));
 		flush_exit(0);
@@ -3081,12 +3082,12 @@ if (ind_file_argument) {
 		handle_agents();
 		flush_exit(0);
 	}
-	
+
 	if (ind_checksum) {
 		handle_checksum();
 		flush_exit(0);
 	}
-	
+
 	if (ind_snapshot_join) {
 		handle_snapshot_join(S(arg_snapshot_join_es1), S(arg_snapshot_join_es2));
 		flush_exit(0);
@@ -3101,7 +3102,7 @@ if (ind_file_argument) {
 		handle_log_stochastic_count_joint();
 		flush_exit(0);
 	}
-	
+
 	// Event system commands (have special validation)
 	if (ind_T0 || ind_event || ind_strength || ind_query || ind_memorize || ind_recall || ind_recall_first || ind_event_stdin || ind_event_file || ind_T) {
 		if ((ind_event || ind_event_stdin || ind_event_file) && !ind_strength) {
@@ -3112,17 +3113,17 @@ if (ind_file_argument) {
 			prt("Error: --strength must be used with --event\n");
 			flush_exit(1);
 		}
-		
+
 		int event_actions = ind_T0 + ind_event + ind_event_stdin + ind_event_file + ind_query + ind_memorize + ind_recall + ind_recall_first + ind_T;
 		if (event_actions > 1) {
 			prt("Error: --T0, --event, --event-stdin, --event-file, --query, --memorize, --recall, --recall-first, and --T cannot be combined\n");
 			flush_exit(1);
 		}
-		
+
 		check_conf_vars();
 		check_dirs();
 		event_load_T();
-		
+
 		if (ind_T0) {
 			event_T0();
 			flush_exit(0);
@@ -3165,17 +3166,17 @@ if (ind_file_argument) {
 			flush_exit(0);
 		}
 	}
-	
+
 	if (ind_map_error) {
 		prt("Error: --map-error not yet implemented\n");
 		flush_exit(1);
 	}
-	
+
 // if (ind_test_block_map) {
 // block_map_selftest();
 // flush_exit(0);
 // }
-	
+
 	if (ind_wants) {
 		handle_wants(ind_blocks);
 		flush_exit(0);
@@ -3271,27 +3272,6 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /* #handle_snapshot_join */
 void handle_snapshot_join(span es1, span es2) {
@@ -8898,14 +8878,13 @@ span help_text_inbox(span s) {
 "## Commands\n"
 "\n"
 "--inbox\n"
-"  Open the TUI filtered to show only blocks in the inbox region.\n"
-"  Navigation (j/k/g/G) is constrained to blocks between #INBOX and #END_INBOX.\n"
-"  Press 'q' to exit back to the shell.\n"
+"  List the block IDs in the inbox region (between #INBOX and #END_INBOX), one per line.\n"
+"  Prints \"Inbox is empty.\" if there are no blocks between the markers.\n"
 "\n"
 "## Workflow\n"
 "\n"
 "1. AI assistants add blocks using `cmpr --after '#INBOX'`\n"
-"2. Run `cmpr --inbox` to review pending items\n"
+"2. Run `cmpr --inbox` to see what's pending\n"
 "3. Move blocks to their proper locations (or delete if not needed)\n"
 "4. The inbox shrinks as items graduate to permanent homes\n"
 "\n"
