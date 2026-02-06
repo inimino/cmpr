@@ -1124,6 +1124,7 @@ json json_parse_prefix(span *input) {
     ret.s.end = input->buf;
     return ret;
 }
+
 /* #json_s2s */
 // Utility to convert a hex digit to its integer value
 int hex_to_int(char c) {
@@ -1350,11 +1351,10 @@ typedef struct {
     span contents;
     checksum cksum;
     checksum load_checksum;
+    int readonly;
 } projfile;
 
 MAKE_ARENA(projfile, projfiles, 256)
-
-
 /* #rope */
 #define SEGMENT_SIZE (32 * 1024 * 1024)
 
@@ -3453,6 +3453,9 @@ void print_files_blocks() {
     for (int f = 0; f < state->files.n; f++) {
         projfile *file = &state->files.a[f];
         prt("file: %s", s(file->path));
+        if (file->readonly) {
+            prt(" (ro)");
+        }
         terpri();
 	if (empty(file->contents)) continue;
         int first = first_block_in_file(f);
@@ -3469,7 +3472,6 @@ void print_files_blocks() {
     }
     flush();
 }
-
 /* #clear_display */
 void clear_display() {
     prt("\033[2J\033[H"); // Escape codes to clear the screen and move the cursor to the top-left corner
@@ -3480,8 +3482,8 @@ void clear_display() {
 /* #block_sanity_check */
 void block_sanity_check(span file, spans blocks) {
     if (empty(file)) {
-        if (blocks.n != 1 || !empty(blocks.a[0])) {
-            prt("Error: Empty file must have exactly one empty block.\n");
+        if (blocks.n != 0) {
+            prt("Error: Empty file must have zero blocks.\n");
             flush();
             exit(EXIT_FAILURE);
         }
@@ -3511,8 +3513,6 @@ void block_sanity_check(span file, spans blocks) {
         }
     }
 }
-
-
 /* #inp_sanity_checks */
 void inp_sanity_checks() {
     // Check blocks tile inp
@@ -4870,6 +4870,14 @@ int rev_block_match(sbv_state* sbvs, int revblock_idx) {
 /* #select_block_version */
 void select_block_version() {
     if (state->curr_block_idx == -1) return;
+
+    if (file_is_readonly(state->curr_file_idx)) {
+        prt("Cannot restore version: file is read-only.\n");
+        flush();
+        getch();
+        return;
+    }
+
     get_revs();
     sbv_state sbvs;
     sbvs.max_index = -1;
@@ -4897,8 +4905,6 @@ void select_block_version() {
 
     free(sbvs.revblock_indices);
 }
-
-
 /* #sorted_line_checksums */
 // fix for clang
 int checksum_cmp(const void* a, const void* b) {
@@ -5532,12 +5538,25 @@ void delete_block() {
         return;
     }
 
+    if (file_is_readonly(state->curr_file_idx)) {
+        prt("Cannot delete: file is read-only.\n");
+        flush();
+        getch();
+        return;
+    }
+
     int count = state->count_prefix > 0 ? state->count_prefix : 1;
     int deleted = 0;
 
     for (int i = 0; i < count && state->curr_block_idx != -1; i++) {
         span block = state->blocks.a[state->curr_block_idx];
         int file_idx = file_for_block(block);
+
+        // Check if we've crossed into a readonly file
+        if (file_is_readonly(file_idx)) {
+            prt("Stopped at read-only file boundary.\n");
+            break;
+        }
 
         // Find block ID if any (first #token on first line)
         span block_copy = block;
@@ -5888,6 +5907,13 @@ void paste_after() {
         return;
     }
 
+    if (file_is_readonly(state->curr_file_idx)) {
+        prt("Cannot paste: file is read-only.\n");
+        flush();
+        getch();
+        return;
+    }
+
     get_revs();
     span deleted = find_last_deleted_block();
     if (len(deleted) == 0) {
@@ -5922,6 +5948,13 @@ void paste_after() {
 void paste_before() {
     if (state->curr_block_idx == -1 || state->blocks.n == 0) {
         prt("No current block\n");
+        return;
+    }
+
+    if (file_is_readonly(state->curr_file_idx)) {
+        prt("Cannot paste: file is read-only.\n");
+        flush();
+        getch();
         return;
     }
 
@@ -6943,11 +6976,19 @@ void handle_conf_language(span language) {
 }
 
 void handle_conf_file(span file_path) {
-    projfile file = { .path = file_path, .language = state->current_language, .contents = nullspan() };
+    projfile file = { .path = file_path, .language = state->current_language, .contents = nullspan(), .readonly = 0 };
     projfiles_push(&state->files, file);
 }
 
+void handle_conf_file_ro(span file_path) {
+    projfile file = { .path = file_path, .language = state->current_language, .contents = nullspan(), .readonly = 1 };
+    projfiles_push(&state->files, file);
+}
 
+int file_is_readonly(int file_idx) {
+    if (file_idx < 0 || file_idx >= state->files.n) return 0;
+    return state->files.a[file_idx].readonly;
+}
 /* #parse_config */
 void parse_config() {
     span cmp_free_space = cmp_compl();
@@ -6972,6 +7013,8 @@ void parse_config() {
             if (!manual_file) handle_conf_language(value);
         } else if (span_eq(key, S("file"))) {
             if (!manual_file) handle_conf_file(value);
+        } else if (span_eq(key, S("file(ro)"))) {
+            if (!manual_file) handle_conf_file_ro(value);
         } else {
             // Handle general configuration keys
             #define X(name) \
@@ -6991,7 +7034,6 @@ void parse_config() {
 
     state->ollama_models = split_commas_ws(state->ollamas);
 }
-
 /* #read_line */
 span read_line(span *buffer, span default_value) {
     assert(len(*buffer) > 0); // Ensure buffer is not empty
@@ -7029,10 +7071,13 @@ void save_conf_files() {
             last_written_language = state->files.a[i].language;
             prt("\nlanguage: %.*s\n", len(last_written_language), last_written_language.buf);
         }
-        prt("file: %.*s\n", len(state->files.a[i].path), state->files.a[i].path.buf);
+        if (state->files.a[i].readonly) {
+            prt("file(ro): %.*s\n", len(state->files.a[i].path), state->files.a[i].path.buf);
+        } else {
+            prt("file: %.*s\n", len(state->files.a[i].path), state->files.a[i].path.buf);
+        }
     }
 }
-
 /* #save_conf */
 void save_conf() {
     span original_cmp_end = {cmp.end, cmp.end};
@@ -7130,6 +7175,13 @@ void edit_current_block() {
         return;
     }
 
+    if (file_is_readonly(state->curr_file_idx)) {
+        prt("Cannot edit: file is read-only.\n");
+        flush();
+        getch();
+        return;
+    }
+
     span tmp_file = tmp_filename();
     span content_to_write;
 
@@ -7153,12 +7205,16 @@ void edit_current_block() {
         getch();
     }
 }
-
-
-
 /* #insert_block_after */
 void insert_block_after() {
     if (state->curr_block_idx == -1 || state->blocks.n == 0) {
+        return;
+    }
+
+    if (file_is_readonly(state->curr_file_idx)) {
+        prt("Cannot insert: file is read-only.\n");
+        flush();
+        getch();
         return;
     }
 
@@ -7213,6 +7269,13 @@ void insert_block_after() {
 /* #insert_block_before */
 void insert_block_before() {
     if (state->curr_block_idx == -1 || state->blocks.n == 0) {
+        return;
+    }
+
+    if (file_is_readonly(state->curr_file_idx)) {
+        prt("Cannot insert: file is read-only.\n");
+        flush();
+        getch();
         return;
     }
 
@@ -8680,12 +8743,15 @@ span help_text_basic(span s) {
       "language: C\n"
       "file: .cmpr/conf\n"
       "file: my-project-code\n"
+      "file(ro): ../shared-lib/utils.c\n"
       "\n"
       "Note that \"language: C\" only refers to the cmpr \"blockizing style\".\n"
       "You should use \"C\" regardless of the actual programming language in your project, unless it is Python.\n"
       "\n"
       "Only use \"language: Python\" for Python files, and \"language: none\" for files that you don't want to be blockized at all.\n"
       "Each language line applies to all file lines up to the next language line.\n"
+      "\n"
+      "Use `file(ro):` for read-only files (e.g., from external projects). Their blocks can be read and referenced but not modified.\n"
       "\n"
       "Replace buildcmd with your actual build command.\n"
       "Use 'B' in the TUI or `cmpr --build` from the command line to run it.\n"
@@ -8742,9 +8808,6 @@ span help_text_basic(span s) {
       );
   else return nullspan();
 }
-
-
-
 /* #help_text_blocks_impl */
 span help_text_blocks(span s) {
   static char txt[] =
@@ -11784,6 +11847,16 @@ void after(span arg) {
         exit(1);
     }
 
+    span block = state->blocks.a[block_idx];
+    int file_idx = file_for_block(block);
+
+    if (file_is_readonly(file_idx)) {
+        prt("Error: cannot modify read-only file: %.*s\n", 
+            len(state->files.a[file_idx].path), state->files.a[file_idx].path.buf);
+        flush_err();
+        exit(1);
+    }
+
     span new_content = read_stdin_into_cmp();
     dbgd(len(new_content));
     if (len(inp) + len(new_content) >= BUF_SZ) {
@@ -11791,9 +11864,6 @@ void after(span arg) {
         flush_err();
         exit(1);
     }
-
-    span block = state->blocks.a[block_idx];
-    int file_idx = file_for_block(block);
 
     projfile *pf = &state->files.a[file_idx];
 
@@ -11816,15 +11886,21 @@ void after(span arg) {
 
     new_rev(S(""), file_idx);
 }
-
-
-
-
 /* #replace */
 void replace(span arg) {
     int block_idx = block_id_arg(arg);
     if (block_idx == -1) {
         prt("Block not found: %.*s\n", len(arg), arg.buf);
+        flush_err();
+        exit(1);
+    }
+
+    span block = state->blocks.a[block_idx];
+    int file_idx = file_for_block(block);
+
+    if (file_is_readonly(file_idx)) {
+        prt("Error: cannot modify read-only file: %.*s\n", 
+            len(state->files.a[file_idx].path), state->files.a[file_idx].path.buf);
         flush_err();
         exit(1);
     }
@@ -11845,9 +11921,6 @@ void replace(span arg) {
         flush_err();
         exit(1);
     }
-
-    span block = state->blocks.a[block_idx];
-    int file_idx = file_for_block(block);
 
     projfile *pf = &state->files.a[file_idx];
 
@@ -11884,8 +11957,6 @@ void replace(span arg) {
 
     new_rev(S(""), file_idx);
 }
-
-
 /* #handle_replace_current */
 void handle_replace_current(void) {
     span input = read_stdin_into_cmp();
@@ -11957,6 +12028,14 @@ void handle_replace_current(void) {
     }
     
     span block = state->blocks.a[block_idx];
+    int file_idx = file_for_block(block);
+
+    // Check if file is read-only
+    if (file_is_readonly(file_idx)) {
+        prt("Error: cannot modify read-only file: %.*s\n", 
+            len(state->files.a[file_idx].path), state->files.a[file_idx].path.buf);
+        flush_exit(1);
+    }
     
     // Compute current checksum
     checksum current_cs = selected_checksum(block);
@@ -11980,7 +12059,6 @@ void handle_replace_current(void) {
     }
     
     // Perform replacement (similar to replace())
-    int file_idx = file_for_block(block);
     projfile *pf = &state->files.a[file_idx];
     
     size_t old_block_len = len(block);
@@ -12024,6 +12102,16 @@ void replace_comment(span arg) {
         exit(1);
     }
 
+    span block = state->blocks.a[block_idx];
+    int file_idx = file_for_block(block);
+
+    if (file_is_readonly(file_idx)) {
+        prt("Error: cannot modify read-only file: %.*s\n", 
+            len(state->files.a[file_idx].path), state->files.a[file_idx].path.buf);
+        flush_err();
+        exit(1);
+    }
+
     span new_comment = read_stdin_into_cmp();
     if (len(new_comment) == 0 || new_comment.end[-1] != '\n') {
         if (cmp.end + 1 >= cmp_space + BUF_SZ) {
@@ -12035,7 +12123,6 @@ void replace_comment(span arg) {
         new_comment.end++;
     }
 
-    span block = state->blocks.a[block_idx];
     span code_part = block_code_part(block);
 
     // Append code part to cmp after new comment
@@ -12055,7 +12142,6 @@ void replace_comment(span arg) {
         exit(1);
     }
 
-    int file_idx = file_for_block(block);
     projfile *pf = &state->files.a[file_idx];
 
     size_t old_block_len = len(block);
@@ -12100,6 +12186,16 @@ void replace_code(span arg) {
         exit(1);
     }
 
+    span block = state->blocks.a[block_idx];
+    int file_idx = file_for_block(block);
+
+    if (file_is_readonly(file_idx)) {
+        prt("Error: cannot modify read-only file: %.*s\n", 
+            len(state->files.a[file_idx].path), state->files.a[file_idx].path.buf);
+        flush_err();
+        exit(1);
+    }
+
     span new_code = read_stdin_into_cmp();
     if (len(new_code) == 0 || new_code.end[-1] != '\n') {
         if (cmp.end + 1 >= cmp_space + BUF_SZ) {
@@ -12111,7 +12207,6 @@ void replace_code(span arg) {
         new_code.end++;
     }
 
-    span block = state->blocks.a[block_idx];
     span comment_part = block_comment_part(block);
 
     // Build new content in cmp: move new_code after comment_part
@@ -12136,7 +12231,6 @@ void replace_code(span arg) {
         exit(1);
     }
 
-    int file_idx = file_for_block(block);
     projfile *pf = &state->files.a[file_idx];
 
     size_t old_block_len = len(block);
@@ -12172,8 +12266,6 @@ void replace_code(span arg) {
 
     new_rev(S(""), file_idx);
 }
-
-
 /* #expand_block */
 void expand_block(int idx) {
     if (idx < 0 || idx >= state->blocks.n) {
@@ -13145,24 +13237,33 @@ llm_message_handler simple_message_handler(void(*f)(span)) {
 
 /* #nl2pl_rewrite */
 void nl2pl_rewrite() {
+    if (file_is_readonly(state->curr_file_idx)) {
+        prt("Cannot rewrite: file is read-only.\n");
+        flush();
+        getch();
+        return;
+    }
+
     span op = S("nl2pl_rewrite");
     span template = get_prompt_template(op);
     spans vars = current_block_template_vars();
     span expanded_prompt = expand_template(template, vars);
     send_to_llm(expanded_prompt, simple_message_handler(replace_block_code_part));
 }
-
-
 /* #pl2nl_rewrite */
 void pl2nl_rewrite() {
+    if (file_is_readonly(state->curr_file_idx)) {
+        prt("Cannot rewrite: file is read-only.\n");
+        flush();
+        getch();
+        return;
+    }
+
     span template = get_prompt_template(S("pl2nl_rewrite"));
     spans vars = current_block_template_vars();
     span expanded = expand_template(template, vars);
     send_to_llm(expanded, simple_message_handler(pl2nl_rewrite_cb));
 }
-
-
-
 /* #pl2nl_rewrite_cb */
 void pl2nl_rewrite_cb(span message) {
     span received_comment = strip_markdown_codeblock(message);

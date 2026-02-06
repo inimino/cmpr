@@ -148,6 +148,8 @@ span get_debug_info();
 int print_matching_physical_lines(span block, span match);
 void handle_conf_language(span);
 void handle_conf_file(span);
+void handle_conf_file_ro(span);
+int file_is_readonly(int file_idx);
 void parse_config();
 void save_conf_files();
 void save_conf();
