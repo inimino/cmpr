@@ -4819,20 +4819,28 @@ int block_id_match(spans curr_ids, spans rev_ids) {
 
 int rev_block_match(sbv_state* sbvs, int revblock_idx) {
     rev_block* current_revblock = &state->revs.revblocks[revblock_idx];
-    
+
     for (int i = 0; i <= sbvs->max_index; i++) {
         if (span_eq(current_revblock->contents, state->revs.revblocks[sbvs->revblock_indices[i]].contents)) {
             return 0;
         }
     }
-    if (block_id_match(sbvs->curr_block_ids, current_revblock->ids)) {
-        return 1;
+    if (current_revblock->ids.n == -1) {
+        spans_arena_push();
+        spans rev_ids = load_revblock_ids(revblock_idx);
+        int match = block_id_match(sbvs->curr_block_ids, rev_ids);
+        spans_arena_pop();
+        if (match) return 1;
+    } else {
+        if (block_id_match(sbvs->curr_block_ids, current_revblock->ids)) {
+            return 1;
+        }
     }
-    
+
     int curr_uniq = sbvs->sorted_line_cksums.n;
     int rev_uniq;
     int intersection;
-    
+
     if (current_revblock->sorted_line_cksums.n == -1) {
         checksums_arena_push();
         checksums rev_cksums = load_revblock_checksums(revblock_idx);
@@ -4843,7 +4851,7 @@ int rev_block_match(sbv_state* sbvs, int revblock_idx) {
         rev_uniq = current_revblock->sorted_line_cksums.n;
         intersection = cksums_intersection(sbvs->sorted_line_cksums, current_revblock->sorted_line_cksums);
     }
-    
+
     return (curr_uniq > 8 && rev_uniq > 8 && intersection > 8);
 }
 
@@ -5687,21 +5695,21 @@ span find_last_deleted_block() {
     int block_num = 0;
     int total = state->revs.n_revblocks;
 
-    for (int i = total - 1; i >= 0; i--) {
-        if ((total - 1 - i) % 10000 == 0) {
-            fprintf(stderr, "\033[Hfind deleted: %d/%d", total - 1 - i, total);
+    for (int i = 0; i < total; i++) {
+        if (i % 10000 == 0) {
+            fprintf(stderr, "\033[Hfind deleted: %d/%d", i, total);
             fflush(stderr);
         }
         rev_block *rb = &state->revs.revblocks[i];
 
-        // When we see a new timestamp, count total blocks with that timestamp
-        if (i == total - 1 || rb->timestamp != state->revs.revblocks[i+1].timestamp) {
-            block_num = 0;
-            for (int j = i; j >= 0 && state->revs.revblocks[j].timestamp == rb->timestamp; j--)
-                block_num++;
+        // Track block number within timestamp group (1-indexed)
+        if (i == 0 || rb->timestamp != state->revs.revblocks[i-1].timestamp) {
+            block_num = 1;
+        } else {
+            block_num++;
         }
 
-        if (rb->ids.n == 0) { block_num--; continue; }
+        if (rb->ids.n == 0) { continue; }
 
         // IDs already loaded (not sentinel)
         if (rb->ids.n != (size_t)-1) {
@@ -5714,7 +5722,6 @@ span find_last_deleted_block() {
                 cmp.end = cmp_save;
                 return rb->contents;
             }
-            block_num--;
             continue;
         }
 
@@ -5726,7 +5733,7 @@ span find_last_deleted_block() {
             cached_cache = load_cache_for_timestamp(cached_ts, &cmp_save);
         }
 
-        if (empty(cached_cache)) { block_num--; continue; }
+        if (empty(cached_cache)) { continue; }
 
         int is_deleted = 0;
         span first_id = parse_first_deleted_id_from_cache(cached_cache, block_num, rb, &is_deleted);
@@ -5737,7 +5744,6 @@ span find_last_deleted_block() {
             cmp.end = cmp_save;
             return rb->contents;
         }
-        block_num--;
     }
 
     fprintf(stderr, "\033[H\033[K");
@@ -5756,29 +5762,28 @@ void find_all_deleted_blocks() {
     // Limit search to avoid processing entire history (which can have 500k+ blocks)
     // Process at most 50000 revblocks (roughly 100-200 recent revisions)
     int max_revblocks = 50000;
-    int start_idx = total - 1;
-    int end_idx = (total > max_revblocks) ? total - max_revblocks : 0;
+    int end_idx = (total > max_revblocks) ? max_revblocks : total;
 
     // Collect deleted blocks - use malloc, not spans arena
     deleted_block_info *deleted = NULL;
     int n_deleted = 0;
     int cap_deleted = 0;
 
-    for (int i = start_idx; i >= end_idx; i--) {
-        if ((start_idx - i) % 5000 == 0) {
-            fprintf(stderr, "\033[Hfind deleted: %d/%d", start_idx - i, start_idx - end_idx);
+    for (int i = 0; i < end_idx; i++) {
+        if (i % 5000 == 0) {
+            fprintf(stderr, "\033[Hfind deleted: %d/%d", i, end_idx);
             fflush(stderr);
         }
         rev_block *rb = &state->revs.revblocks[i];
 
-        // When we see a new timestamp, count total blocks with that timestamp
-        if (i == total - 1 || rb->timestamp != state->revs.revblocks[i+1].timestamp) {
-            block_num = 0;
-            for (int j = i; j >= 0 && state->revs.revblocks[j].timestamp == rb->timestamp; j--)
-                block_num++;
+        // Track block number within timestamp group (1-indexed)
+        if (i == 0 || rb->timestamp != state->revs.revblocks[i-1].timestamp) {
+            block_num = 1;
+        } else {
+            block_num++;
         }
 
-        if (rb->ids.n == 0) { block_num--; continue; }
+        if (rb->ids.n == 0) { continue; }
 
         span primary_id = nullspan();
         int is_deleted = 0;
@@ -5824,8 +5829,6 @@ void find_all_deleted_blocks() {
                 n_deleted++;
             }
         }
-
-        block_num--;
     }
 
     // Compute deleted_at timestamps: find first rev timestamp after last_seen
@@ -5880,6 +5883,7 @@ void find_all_deleted_blocks() {
     if (deleted) free(deleted);
     cmp.end = cmp_save;
 }
+
 /* #paste_after */
 void paste_after() {
     if (state->curr_block_idx == -1 || state->blocks.n == 0) {
@@ -11606,6 +11610,13 @@ void handle_history_blockid(span blockid, double log_gap_factor, int limit) {
     }
 
     prt("History for %.*s\n\n", len(blockid), blockid.buf);
+    int dup_count = 0;
+    for (int di = 0; di < state->block_idx.n; di++) {
+        if (span_eq(state->block_idx.a[di], blockid)) dup_count++;
+    }
+    if (dup_count > 1) {
+        prt("Note: %d blocks share this ID\n\n", dup_count);
+    }
     int shown = 0;
     time_t last_ts = 0;
     double gap = 1.0;
@@ -11627,6 +11638,7 @@ void handle_history_blockid(span blockid, double log_gap_factor, int limit) {
     free(versions);
     flush();
 }
+
 
 /* #handle_history_recent */
 void handle_history_recent(double log_gap_factor, int limit) {
@@ -11652,7 +11664,7 @@ void handle_history_recent(double log_gap_factor, int limit) {
         spans ids = load_revblock_ids((int)i);
         if (ids.n == 0) { spans_arena_pop(); continue; }
         span bid = ids.a[0];
-        checksum ck = selected_checksum(bid);
+        checksum ck = selected_checksum(rb->contents);
 
         // Search state for id
         size_t state_idx = 0;
@@ -11727,6 +11739,7 @@ void handle_history_recent(double log_gap_factor, int limit) {
     free(events);
     flush();
 }
+
 /* #grep_blocks */
 void grep_blocks(span pattern) {
     regex_t regex;
