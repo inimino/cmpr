@@ -4784,75 +4784,94 @@ spans load_revblock_ids(int revblock_idx) {
 
 /* #sbv_populate */
 void sbv_populate(sbv_state* sbvs) {
-    int i, max_idx = sbvs->max_index;
-    if (sbvs->current_index > max_idx) {
-        if (max_idx == -1 && sbvs->current_index == 0) {
-            for (i = 0; i < state->revs.n_revblocks; i++) {
-                if (span_eq(state->blocks.a[state->curr_block_idx], state->revs.revblocks[i].contents)) {
-                    sbvs->revblock_indices[0] = i;
-                    sbvs->max_index = 0;
-                    return;
-                }
-            }
-        } else {
-            for (i = sbvs->revblock_indices[max_idx] + 1; i < state->revs.n_revblocks; i++) {
-                if (rev_block_match(sbvs, i)) {
-                    sbvs->revblock_indices[++sbvs->max_index] = i;
-                    return;
-                }
+    if (sbvs->current_index <= sbvs->max_index) return;
+    int prev_max = sbvs->max_index;
+    int start_idx = 0;
+
+    if (sbvs->max_index == -1 && sbvs->current_index == 0) {
+        // Special case: first population, search for current block in revs
+        for (int i = 0; i < state->revs.n_revblocks; ++i) {
+            if (span_eq(state->blocks.a[state->curr_block_idx], state->revs.revblocks[i].contents)) {
+                sbvs->revblock_indices[0] = i;
+                sbvs->max_index = 0;
+                return;
             }
         }
-        sbvs->current_index--;
+        // No matching revblock found
+        return;
     }
+
+    // For current > max, populate the next index
+    int last_rbidx = sbvs->revblock_indices[prev_max];
+    int i = last_rbidx + 1;
+    for (; i < state->revs.n_revblocks; ++i) {
+        int seen = 0;
+        for (int j = 0; j <= prev_max; ++j) {
+            if (span_eq(
+                state->revs.revblocks[sbvs->revblock_indices[j]].contents,
+                state->revs.revblocks[i].contents))
+            {
+                seen = 1;
+                break;
+            }
+        }
+        if (seen) continue;
+        if (rev_block_match(sbvs, i)) {
+            sbvs->revblock_indices[prev_max + 1] = i;
+            sbvs->max_index = prev_max + 1;
+            return;
+        }
+    }
+    // Not found: can't move further
+    sbvs->current_index = prev_max;
 }
 
 int block_id_match(spans curr_ids, spans rev_ids) {
-    for (int i = 0; i < curr_ids.n; i++) {
-        for (int j = 0; j < rev_ids.n; j++) {
-            if (span_eq(curr_ids.a[i], rev_ids.a[j])) {
+    for (size_t i = 0; i < curr_ids.n; ++i)
+        for (size_t j = 0; j < rev_ids.n; ++j)
+            if (span_eq(curr_ids.a[i], rev_ids.a[j]))
                 return 1;
-            }
-        }
-    }
     return 0;
 }
 
 int rev_block_match(sbv_state* sbvs, int revblock_idx) {
-    rev_block* current_revblock = &state->revs.revblocks[revblock_idx];
+    rev_block* rb = &state->revs.revblocks[revblock_idx];
+    spans ids = rb->ids;
+    checksums* rsc = &rb->sorted_line_cksums;
+    int ids_pushed = 0, scs_pushed = 0;
 
-    for (int i = 0; i <= sbvs->max_index; i++) {
-        if (span_eq(current_revblock->contents, state->revs.revblocks[sbvs->revblock_indices[i]].contents)) {
-            return 0;
-        }
-    }
-    if (current_revblock->ids.n == -1) {
+    // Load ids if needed
+    if (ids.n == (size_t)-1) {
         spans_arena_push();
-        spans rev_ids = load_revblock_ids(revblock_idx);
-        int match = block_id_match(sbvs->curr_block_ids, rev_ids);
-        spans_arena_pop();
-        if (match) return 1;
-    } else {
-        if (block_id_match(sbvs->curr_block_ids, current_revblock->ids)) {
-            return 1;
-        }
+        ids = load_revblock_ids(revblock_idx);
+        ids_pushed = 1;
     }
 
-    int curr_uniq = sbvs->sorted_line_cksums.n;
-    int rev_uniq;
-    int intersection;
+    if (block_id_match(sbvs->curr_block_ids, ids)) {
+        if (ids_pushed) spans_arena_pop();
+        return 1;
+    }
 
-    if (current_revblock->sorted_line_cksums.n == -1) {
+    // Load checksums if needed
+    if (rsc->n == (size_t)-1) {
         checksums_arena_push();
-        checksums rev_cksums = load_revblock_checksums(revblock_idx);
-        rev_uniq = rev_cksums.n;
-        intersection = cksums_intersection(sbvs->sorted_line_cksums, rev_cksums);
-        checksums_arena_pop();
-    } else {
-        rev_uniq = current_revblock->sorted_line_cksums.n;
-        intersection = cksums_intersection(sbvs->sorted_line_cksums, current_revblock->sorted_line_cksums);
+        *rsc = load_revblock_checksums(revblock_idx);
+        scs_pushed = 1;
     }
 
-    return (curr_uniq > 8 && rev_uniq > 8 && intersection > 8);
+    size_t n1 = sbvs->sorted_line_cksums.n, n2 = rsc->n;
+    // Compute intersection
+    size_t i = 0, j = 0, inter = 0;
+    while (i < n1 && j < n2) {
+        int cmp = memcmp(&sbvs->sorted_line_cksums.a[i], &rsc->a[j], sizeof(checksum));
+        if (cmp == 0) { ++inter; ++i; ++j; }
+        else if (cmp < 0) ++i;
+        else ++j;
+    }
+    if (scs_pushed) checksums_arena_pop();
+    if (ids_pushed) spans_arena_pop();
+
+    return (n1 > 8 && n2 > 8 && inter > 8);
 }
 
 /* #select_block_version */
@@ -5611,80 +5630,66 @@ typedef struct {
     time_t deleted_at;
 } deleted_block_info;
 
-// Helper: Check if block ID exists in current codebase
 static int block_id_exists_in_current(span id) {
     return index_of(id, state->block_idx) != -1;
 }
 
-// Helper: Load cache for timestamp, returns cached_cache span
 static span load_cache_for_timestamp(time_t ts, u8 **cmp_save_ptr) {
     for (int fi = 0; fi < state->revs.filenames.n; fi++) {
         if (parse_rev_fname(state->revs.filenames.a[fi]) == ts) {
             span cache_path = prs("%.*s/cache/v8/revs/%.*s",
-                len(state->cmprdir), state->cmprdir.buf,
-                len(state->revs.filenames.a[fi]), state->revs.filenames.a[fi].buf);
-            if (readable_file(cache_path))
-                return read_file_into_cmp(cache_path);
+                                  (int)len(state->cmprdir), state->cmprdir.buf,
+                                  (int)len(state->revs.filenames.a[fi]), state->revs.filenames.a[fi].buf);
+            if (readable_file(cache_path)) return read_file_into_cmp(cache_path);
             break;
         }
     }
     return nullspan();
 }
 
-// Helper: Parse first block ID from cache section
-// Returns the first ID span if block is deleted (ID not in current), nullspan() otherwise
-// Also sets *is_deleted to 1 if block has IDs but none exist in current
 static span parse_first_deleted_id_from_cache(span cache, int block_num, rev_block *rb, int *is_deleted) {
     *is_deleted = 0;
     if (empty(cache)) return nullspan();
-
-    // Find "block N ids" section
-    u8 *p = cache.buf, *e = cache.end;
-    // Skip header lines until blank
-    while (p < e) { u8 *l = p; while (p < e && *p != '\n') p++; if (p == l) { p++; break; } p++; }
-
+    u8 *p = cache.buf, *e = cache.end, *il, *l;
+    while (p < e) {
+        il = p;
+        while (il < e && *il != '\n') il++;
+        if (p == il) { p = il < e ? il+1 : il; break; }
+        p = il < e ? il+1 : il;
+    }
     char ids_hdr[64];
     snprintf(ids_hdr, sizeof(ids_hdr), "block %d ids", block_num);
     int ids_hdr_len = strlen(ids_hdr);
-
     u8 *idssec = NULL;
     while (p < e) {
-        u8 *ls = p;
-        while (p < e && *p != '\n') p++;
-        int linelen = p - ls;
-        p++;
-        if (linelen >= ids_hdr_len && memcmp(ls, ids_hdr, ids_hdr_len) == 0) { idssec = p; break; }
+        il = p;
+        while (il < e && *il != '\n') il++;
+        if (il-p == ids_hdr_len && !memcmp(p, ids_hdr, ids_hdr_len)) {
+            p = il < e ? il+1 : il;
+            idssec = p;
+            break;
+        }
+        p = il < e ? il+1 : il;
     }
-
     if (!idssec) return nullspan();
-
-    // Parse IDs and check against current block_idx
     int found_in_current = 0, has_id = 0;
     span first_id = nullspan();
-    p = idssec;
     while (p < e) {
-        u8 *il = p;
-        while (p < e && *p != '\n') p++;
-        if (p == il) break;
-        span line = (span){il, p};
-        p++;
+        l = p;
+        while (l < e && *l != '\n') l++;
+        if (p == l) { p = l<e ? l+1 : l; break; }
+        span line = (span){p, l};
         int comma = find_char(line, ',');
-        if (comma < 0) continue;
+        if (comma == -1) { p = l<e ? l+1 : l; continue; }
         int start = parse_int(first_n(line, comma));
-        int endval = parse_int(skip_n(line, comma + 1));
-        if (start < 0 || endval <= start || endval > len(rb->contents)) continue;
-        span id = (span){rb->contents.buf + start, rb->contents.buf + endval};
-        if (!has_id) {
-            first_id = id;
-            has_id = 1;
-        }
+        int endval = parse_int(skip_n(line, comma+1));
+        if (start < 0 || endval <= start || endval > (int)len(rb->contents)) { p = l<e ? l+1 : l; continue; }
+        span id = (span){rb->contents.buf+start, rb->contents.buf+endval};
+        if (!has_id) { first_id = id; has_id = 1; }
         if (block_id_exists_in_current(id)) found_in_current = 1;
+        p = l<e ? l+1 : l;
     }
-
-    if (has_id && !found_in_current) {
-        *is_deleted = 1;
-        return first_id;
-    }
+    if (has_id && !found_in_current) { *is_deleted = 1; return first_id; }
     return nullspan();
 }
 
@@ -5694,60 +5699,41 @@ span find_last_deleted_block() {
     span cached_cache = nullspan();
     int block_num = 0;
     int total = state->revs.n_revblocks;
-
     for (int i = 0; i < total; i++) {
-        if (i % 10000 == 0) {
-            fprintf(stderr, "\033[Hfind deleted: %d/%d", i, total);
-            fflush(stderr);
-        }
+        if (i % 10000 == 0) { fprintf(stderr, "\033[Hfind deleted: %d/%d", i, total); fflush(stderr); }
         rev_block *rb = &state->revs.revblocks[i];
-
-        // Track block number within timestamp group (1-indexed)
-        if (i == 0 || rb->timestamp != state->revs.revblocks[i-1].timestamp) {
-            block_num = 1;
-        } else {
-            block_num++;
-        }
-
-        if (rb->ids.n == 0) { continue; }
-
-        // IDs already loaded (not sentinel)
+        if (i == 0 || rb->timestamp != state->revs.revblocks[i-1].timestamp) block_num = 1;
+        else block_num++;
+        if (rb->ids.n == 0) continue;
         if (rb->ids.n != (size_t)-1) {
             int found = 0;
-            for (size_t j = 0; j < rb->ids.n && !found; j++)
-                if (block_id_exists_in_current(rb->ids.a[j])) found = 1;
+            for (size_t j = 0; j < rb->ids.n; j++) {
+                if (block_id_exists_in_current(rb->ids.a[j])) { found = 1; break; }
+            }
             if (!found) {
                 fprintf(stderr, "\033[H\033[K");
-                fflush(stderr);
                 cmp.end = cmp_save;
                 return rb->contents;
             }
             continue;
-        }
-
-        // Load cache if new timestamp
-        if (rb->timestamp != cached_ts) {
-            cmp.end = cmp_save;
-            cached_cache = nullspan();
-            cached_ts = rb->timestamp;
-            cached_cache = load_cache_for_timestamp(cached_ts, &cmp_save);
-        }
-
-        if (empty(cached_cache)) { continue; }
-
-        int is_deleted = 0;
-        span first_id = parse_first_deleted_id_from_cache(cached_cache, block_num, rb, &is_deleted);
-
-        if (is_deleted && !empty(first_id)) {
-            fprintf(stderr, "\033[H\033[K");
-            fflush(stderr);
-            cmp.end = cmp_save;
-            return rb->contents;
+        } else {
+            if (rb->timestamp != cached_ts) {
+                cmp.end = cmp_save;
+                cached_cache = nullspan();
+                cached_ts = rb->timestamp;
+                cached_cache = load_cache_for_timestamp(cached_ts, &cmp_save);
+            }
+            if (empty(cached_cache)) continue;
+            int is_deleted = 0;
+            span _id = parse_first_deleted_id_from_cache(cached_cache, block_num, rb, &is_deleted);
+            if (is_deleted && !empty(_id)) {
+                fprintf(stderr, "\033[H\033[K");
+                cmp.end = cmp_save;
+                return rb->contents;
+            }
         }
     }
-
     fprintf(stderr, "\033[H\033[K");
-    fflush(stderr);
     cmp.end = cmp_save;
     return nullspan();
 }
@@ -5758,99 +5744,65 @@ void find_all_deleted_blocks() {
     span cached_cache = nullspan();
     int block_num = 0;
     int total = state->revs.n_revblocks;
-
-    // Limit search to avoid processing entire history (which can have 500k+ blocks)
-    // Process at most 50000 revblocks (roughly 100-200 recent revisions)
-    int max_revblocks = 50000;
-    int end_idx = (total > max_revblocks) ? max_revblocks : total;
-
-    // Collect deleted blocks - use malloc, not spans arena
+    int max_revblocks = 50000, end_idx = total < max_revblocks ? total : max_revblocks;
     deleted_block_info *deleted = NULL;
-    int n_deleted = 0;
-    int cap_deleted = 0;
-
+    int n_deleted = 0, cap_deleted = 0;
     for (int i = 0; i < end_idx; i++) {
-        if (i % 5000 == 0) {
-            fprintf(stderr, "\033[Hfind deleted: %d/%d", i, end_idx);
-            fflush(stderr);
-        }
+        if (i % 5000 == 0) { fprintf(stderr, "\033[Hfind deleted: %d/%d", i, end_idx); fflush(stderr); }
         rev_block *rb = &state->revs.revblocks[i];
-
-        // Track block number within timestamp group (1-indexed)
-        if (i == 0 || rb->timestamp != state->revs.revblocks[i-1].timestamp) {
-            block_num = 1;
-        } else {
-            block_num++;
-        }
-
-        if (rb->ids.n == 0) { continue; }
-
-        span primary_id = nullspan();
+        if (i == 0 || rb->timestamp != state->revs.revblocks[i-1].timestamp) block_num = 1;
+        else block_num++;
+        if (rb->ids.n == 0) continue;
         int is_deleted = 0;
-
-        // IDs already loaded (not sentinel)
+        span primary_id = nullspan();
         if (rb->ids.n != (size_t)-1) {
-            int found_in_current = 0;
-            for (size_t j = 0; j < rb->ids.n && !found_in_current; j++)
-                if (block_id_exists_in_current(rb->ids.a[j])) found_in_current = 1;
-            if (!found_in_current && rb->ids.n > 0) {
+            int found = 0;
+            for (size_t j = 0; j < rb->ids.n; j++) {
+                if (block_id_exists_in_current(rb->ids.a[j])) { found = 1; break; }
+            }
+            if (!found && rb->ids.n > 0) {
                 is_deleted = 1;
                 primary_id = rb->ids.a[0];
             }
         } else {
-            // Load cache if new timestamp
             if (rb->timestamp != cached_ts) {
                 cmp.end = cmp_save;
                 cached_cache = nullspan();
                 cached_ts = rb->timestamp;
                 cached_cache = load_cache_for_timestamp(cached_ts, &cmp_save);
             }
-
+            if (empty(cached_cache)) continue;
             primary_id = parse_first_deleted_id_from_cache(cached_cache, block_num, rb, &is_deleted);
         }
-
-        // If deleted and we haven't seen this ID yet, record it
         if (is_deleted && !empty(primary_id)) {
-            // Check if already seen (search in deleted array)
             int already_seen = 0;
-            for (int di = 0; di < n_deleted && !already_seen; di++) {
-                if (span_eq(deleted[di].id, primary_id)) already_seen = 1;
+            for (int di = 0; di < n_deleted; di++) {
+                if (span_eq(primary_id, deleted[di].id)) { already_seen = 1; break; }
             }
             if (!already_seen) {
-                // Grow array if needed
-                if (n_deleted >= cap_deleted) {
-                    cap_deleted = cap_deleted ? cap_deleted * 2 : 64;
-                    deleted = realloc(deleted, cap_deleted * sizeof(deleted_block_info));
+                if (n_deleted == cap_deleted) {
+                    int newcap = cap_deleted ? cap_deleted*2 : 64;
+                    deleted = realloc(deleted, newcap * sizeof(*deleted));
+                    cap_deleted = newcap;
                 }
                 deleted[n_deleted].id = primary_id;
                 deleted[n_deleted].contents = rb->contents;
                 deleted[n_deleted].last_seen = rb->timestamp;
-                deleted[n_deleted].deleted_at = 0;  // Will compute below
+                deleted[n_deleted].deleted_at = 0;
                 n_deleted++;
             }
         }
     }
-
-    // Compute deleted_at timestamps: find first rev timestamp after last_seen
-    // Filenames are in chronological order
     for (int di = 0; di < n_deleted; di++) {
-        time_t last_seen = deleted[di].last_seen;
-        time_t deleted_at = 0;
-
-        for (int fi = 0; fi < state->revs.filenames.n; fi++) {
-            time_t ts = parse_rev_fname(state->revs.filenames.a[fi]);
-            if (ts > last_seen) {
-                deleted_at = ts;
-                break;
-            }
+        time_t ts = 0;
+        for (int i = 0; i < state->revs.filenames.n; i++) {
+            time_t file_ts = parse_rev_fname(state->revs.filenames.a[i]);
+            if (file_ts > deleted[di].last_seen && (ts == 0 || file_ts < ts)) ts = file_ts;
         }
-        deleted[di].deleted_at = deleted_at;
+        deleted[di].deleted_at = ts;
     }
-
-    // Sort by deleted_at descending (most recently deleted first)
-    // Simple bubble sort since n_deleted is typically small
-    for (int i = 0; i < n_deleted - 1; i++) {
-        for (int j = 0; j < n_deleted - 1 - i; j++) {
+    for (int i = 0; i < n_deleted-1; i++) {
+        for (int j = 0; j < n_deleted-1-i; j++) {
             if (deleted[j].deleted_at < deleted[j+1].deleted_at) {
                 deleted_block_info tmp = deleted[j];
                 deleted[j] = deleted[j+1];
@@ -5858,28 +5810,22 @@ void find_all_deleted_blocks() {
             }
         }
     }
-
-    // Clear progress line
     fprintf(stderr, "\033[H\033[K");
-    fflush(stderr);
-
-    // Print results
     if (n_deleted == 0) {
         prt("No deleted blocks found\n");
     } else {
+        char timestamp[64];
         for (int di = 0; di < n_deleted; di++) {
-            char timestamp[32];
-            if (deleted[di].deleted_at > 0) {
-                struct tm *tm_info = localtime(&deleted[di].deleted_at);
-                strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
+            if (deleted[di].deleted_at) {
+                struct tm *tm = localtime(&deleted[di].deleted_at);
+                strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm);
+                prt("%s %.*s\n", timestamp, (int)len(deleted[di].id), deleted[di].id.buf);
             } else {
-                snprintf(timestamp, sizeof(timestamp), "(deleted after last rev)");
+                prt("(deleted after last rev) %.*s\n", (int)len(deleted[di].id), deleted[di].id.buf);
             }
-            prt("%s %.*s\n", timestamp, (int)len(deleted[di].id), deleted[di].id.buf);
         }
     }
     flush();
-
     if (deleted) free(deleted);
     cmp.end = cmp_save;
 }
@@ -11541,97 +11487,70 @@ void handle_history(span blockid, double log_gap_factor, int limit) {
 }
 /* #handle_history_blockid */
 void handle_history_blockid(span blockid, double log_gap_factor, int limit) {
-    struct version_entry {
+    typedef struct {
         checksum ck;
         time_t ts;
         int bytes;
         int lines;
-    };
+    } version;
     size_t cap = 256, n = 0;
-    struct version_entry* versions = malloc(cap * sizeof(*versions));
-
-    size_t scan_total = state->revs.n_revblocks;
-    for (size_t i = 0; i < scan_total; ++i) {
+    version* versions = (version*)malloc(cap * sizeof(version));
+    for (size_t i = 0; i < state->revs.n_revblocks; ++i) {
         if (i % 1000 == 0) {
-            fprintf(stderr, "\rScanning: %zu/%zu", i, scan_total);
+            fprintf(stderr, "\rScanning: %zu/%zu", i, state->revs.n_revblocks);
             fflush(stderr);
         }
         spans_arena_push();
         spans ids = load_revblock_ids(i);
+        int match = 0;
+        for (int j = 0; j < ids.n; ++j)
+            if (span_eq(ids.a[j], blockid)) { match = 1; break; }
+        spans_arena_pop();
+        if (!match) continue;
+        rev_block* rb = &state->revs.revblocks[i];
+        checksum ck = selected_checksum(rb->contents);
         int found = 0;
-        for (int j = 0; j < ids.n; ++j) {
-            if (span_eq(ids.a[j], blockid)) {
+        for (size_t k = 0; k < n; ++k) {
+            if (versions[k].ck.__u == ck.__u) {
+                if (rb->timestamp < versions[k].ts) versions[k].ts = rb->timestamp;
                 found = 1;
                 break;
             }
         }
-        spans_arena_pop();
-        if (!found)
-            continue;
-        rev_block* rb = &state->revs.revblocks[i];
-        checksum ckval = selected_checksum(rb->contents);
-        int exists = 0;
-        for (size_t j = 0; j < n; ++j) {
-            if (versions[j].ck.__u == ckval.__u) {
-                if (rb->timestamp < versions[j].ts)
-                    versions[j].ts = rb->timestamp;
-                exists = 1;
-                break;
-            }
-        }
-        if (exists)
-            continue;
-        int linecount = 0;
-        span iter = rb->contents;
-        while (!empty(iter)) {
-            (void)next_line(&iter);
-            ++linecount;
-        }
+        if (found) continue;
         if (n == cap) {
             cap *= 2;
-            versions = realloc(versions, cap * sizeof(*versions));
+            versions = (version*)realloc(versions, cap * sizeof(version));
         }
-        versions[n].ck = ckval;
-        versions[n].ts = rb->timestamp;
-        versions[n].bytes = len(rb->contents);
-        versions[n].lines = linecount;
-        ++n;
+        int lcnt = 0;
+        span s = rb->contents;
+        span line;
+        while (!empty(s)) { line = next_line(&s); ++lcnt; }
+        versions[n++] = (version){ck, rb->timestamp, len(rb->contents), lcnt};
     }
-    fprintf(stderr, "\r%*s\r", 40, ""); fflush(stderr);
-
-    for (size_t i = 0; i < n; ++i) {
-        for (size_t j = i+1; j < n; ++j) {
+    fprintf(stderr, "\r%*s\r", 80, "");
+    for (size_t i = 0; i < n; ++i)
+        for (size_t j = i + 1; j < n; ++j)
             if (versions[j].ts > versions[i].ts) {
-                struct version_entry tmp = versions[i];
-                versions[i] = versions[j];
-                versions[j] = tmp;
+                version tmp = versions[j]; versions[j] = versions[i]; versions[i] = tmp;
             }
-        }
-    }
-
     prt("History for %.*s\n\n", len(blockid), blockid.buf);
-    int dup_count = 0;
-    for (int di = 0; di < state->block_idx.n; di++) {
-        if (span_eq(state->block_idx.a[di], blockid)) dup_count++;
-    }
-    if (dup_count > 1) {
-        prt("Note: %d blocks share this ID\n\n", dup_count);
-    }
+    int idcount = 0;
+    for (int i = 0; i < state->block_idx.n; ++i)
+        if (span_eq(state->block_idx.a[i], blockid)) ++idcount;
+    if (idcount > 1) prt("Note: %d blocks share this ID\n\n", idcount);
     int shown = 0;
     time_t last_ts = 0;
     double gap = 1.0;
-    char timebuf[32];
-    for (size_t i = 0; i < n; ++i) {
-        if (limit > 0 && shown >= limit)
-            break;
-        time_t ts = versions[i].ts;
-        if (log_gap_factor > 0 && shown > 0 && difftime(last_ts, ts) < gap)
+    char buf[32];
+    for (size_t i = 0; i < n && (limit <= 0 || shown < limit); ++i) {
+        if (log_gap_factor > 0 && shown > 0 && (last_ts - versions[i].ts) < (time_t)gap)
             continue;
-        struct tm tmres;
-        localtime_r(&ts, &tmres);
-        strftime(timebuf, sizeof timebuf, "%Y-%m-%d %H:%M:%S", &tmres);
-        prt("  %s  %d bytes  %d lines\n", timebuf, versions[i].bytes, versions[i].lines);
-        last_ts = ts;
+        struct tm tm;
+        localtime_r(&versions[i].ts, &tm);
+        strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
+        prt("  %s  %d bytes  %d lines\n", buf, versions[i].bytes, versions[i].lines);
+        last_ts = versions[i].ts;
         gap *= log_gap_factor > 0 ? log_gap_factor : 1.0;
         ++shown;
     }
@@ -11639,102 +11558,96 @@ void handle_history_blockid(span blockid, double log_gap_factor, int limit) {
     flush();
 }
 
-
 /* #handle_history_recent */
 void handle_history_recent(double log_gap_factor, int limit) {
     typedef struct { span id; checksum ck; time_t ts; } state_ent;
     typedef struct { time_t ts; span id; } event_ent;
-
-    size_t n_revblocks = state->revs.n_revblocks;
     size_t states_cap = 1024, states_n = 0;
-    state_ent* states = malloc(states_cap * sizeof(state_ent));
-
     size_t events_cap = 512, events_n = 0;
+    state_ent* states = malloc(states_cap * sizeof(state_ent));
     event_ent* events = malloc(events_cap * sizeof(event_ent));
-
-    int effective_limit = limit > 0 ? limit : 20;
-
+    int effective_limit = (limit > 0 ? limit : 20);
+    size_t n_revblocks = state->revs.n_revblocks;
     for (size_t i = 0; i < n_revblocks && events_n < (size_t)effective_limit * 3; i++) {
-        if (i % 1000 == 0 && i > 0) {
-            fprintf(stderr, "\rScanning revblock %zu/%zu...", i, n_revblocks);
-            fflush(stderr);
+        if (i % 1000 == 0) {
+            prt("\rScanning revblocks... %zu/%zu", i, n_revblocks);
+            flush_err();
         }
         spans_arena_push();
         rev_block* rb = &state->revs.revblocks[i];
-        spans ids = load_revblock_ids((int)i);
-        if (ids.n == 0) { spans_arena_pop(); continue; }
+        spans ids = load_revblock_ids(i);
+        if (!ids.n) {
+            spans_arena_pop();
+            continue;
+        }
         span bid = ids.a[0];
         checksum ck = selected_checksum(rb->contents);
-
-        // Search state for id
-        size_t state_idx = 0;
         int found = 0;
-        for (; state_idx < states_n; state_idx++) {
-            if (len(bid) == len(states[state_idx].id) &&
-                memcmp(bid.buf, states[state_idx].id.buf, len(bid)) == 0) {
+        size_t idx = 0;
+        for (idx = 0; idx < states_n; idx++) {
+            if (len(bid) == len(states[idx].id) && memcmp(bid.buf, states[idx].id.buf, len(bid)) == 0) {
                 found = 1;
                 break;
             }
         }
         if (found) {
-            // Compare checksums
-            if (ck.__u != states[state_idx].ck.__u) {
-                // Record event
-                if (events_n == events_cap) { events_cap *= 2; events = realloc(events, events_cap * sizeof(event_ent)); }
-                u8 *idcopy = malloc(len(bid));
-                memcpy(idcopy, bid.buf, len(bid));
-                events[events_n++] = (event_ent){states[state_idx].ts, (span){idcopy, idcopy + len(bid)}};
-                // Update state
-                free(states[state_idx].id.buf); // Free old id copy
-                u8 *newcopy = malloc(len(bid));
-                memcpy(newcopy, bid.buf, len(bid));
-                states[state_idx].id = (span){newcopy, newcopy+len(bid)};
-                states[state_idx].ck = ck;
-                states[state_idx].ts = rb->timestamp;
+            if (states[idx].ck.__u != ck.__u) {
+                if (events_n < events_cap) {
+                    events[events_n].ts = states[idx].ts;
+                    u8 *evcopy = malloc(len(bid));
+                    memcpy(evcopy, bid.buf, len(bid));
+                    events[events_n].id = (span){evcopy, evcopy + len(bid)};
+                    events_n++;
+                }
+                states[idx].ck = ck;
+                states[idx].ts = rb->timestamp;
             } else {
-                // Keep oldest occurrence
-                if (rb->timestamp < states[state_idx].ts)
-                    states[state_idx].ts = rb->timestamp;
+                if (rb->timestamp < states[idx].ts)
+                    states[idx].ts = rb->timestamp;
             }
         } else {
-            if (states_n == states_cap) { states_cap *= 2; states = realloc(states, states_cap * sizeof(state_ent)); }
-            u8 *idcopy = malloc(len(bid));
-            memcpy(idcopy, bid.buf, len(bid));
-            states[states_n++] = (state_ent){(span){idcopy, idcopy+len(bid)}, ck, rb->timestamp};
+            if (states_n < states_cap) {
+                u8 *copy = malloc(len(bid));
+                memcpy(copy, bid.buf, len(bid));
+                states[states_n].id = (span){copy, copy + len(bid)};
+                states[states_n].ck = ck;
+                states[states_n].ts = rb->timestamp;
+                states_n++;
+            }
         }
         spans_arena_pop();
     }
-    fprintf(stderr, "\r%*s\r", 40, ""); // Clear progress
-
-    // Bubble sort events newest-first (small N)
+    prt("\r%*s\r", 40, ""); flush_err();
     for (size_t i = 0; i + 1 < events_n; i++) {
         for (size_t j = 0; j + 1 < events_n - i; j++) {
-            if (events[j].ts < events[j+1].ts) {
-                event_ent tmp = events[j];
-                events[j] = events[j+1];
-                events[j+1] = tmp;
+            if (events[j].ts < events[j + 1].ts) {
+                event_ent t = events[j];
+                events[j] = events[j + 1];
+                events[j + 1] = t;
             }
         }
     }
-
     prt("Recent block changes\n\n");
-    size_t printed = 0;
+    int shown = 0;
     time_t last_ts = 0;
-    for (size_t i = 0; i < events_n && (int)printed < effective_limit; i++) {
-        if (printed == 0 || log_gap_factor <= 0 ||
-            last_ts == 0 || difftime(last_ts, events[i].ts) > log_gap_factor * log1p((double)(last_ts - events[i].ts))) {
-            char tsbuf[32];
-            struct tm tm;
-            localtime_r(&events[i].ts, &tm);
-            strftime(tsbuf, sizeof(tsbuf), "%Y-%m-%d %H:%M:%S", &tm);
-            prt("  %s  %.*s\n", tsbuf, (int)len(events[i].id), events[i].id.buf);
-            last_ts = events[i].ts;
-            printed++;
-        }
+    double gap = 1.0;
+    for (size_t i = 0; i < events_n && shown < effective_limit; i++) {
+        time_t ts = events[i].ts;
+        if (log_gap_factor > 0 && shown > 0 && last_ts != 0 && (last_ts - ts) < gap)
+            continue;
+        char tmbuf[32];
+        struct tm ltm;
+        localtime_r(&ts, &ltm);
+        strftime(tmbuf, sizeof tmbuf, "%Y-%m-%d %H:%M:%S", &ltm);
+        prt("  %s  %.*s\n", tmbuf, len(events[i].id), events[i].id.buf);
+        last_ts = ts;
+        gap *= log_gap_factor;
+        shown++;
     }
-
-    for (size_t i = 0; i < states_n; i++) free(states[i].id.buf);
-    for (size_t i = 0; i < events_n; i++) free(events[i].id.buf);
+    for (size_t i = 0; i < states_n; i++)
+        free(states[i].id.buf);
+    for (size_t i = 0; i < events_n; i++)
+        free(events[i].id.buf);
     free(states);
     free(events);
     flush();
