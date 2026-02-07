@@ -11560,94 +11560,116 @@ void handle_history_blockid(span blockid, double log_gap_factor, int limit) {
 
 /* #handle_history_recent */
 void handle_history_recent(double log_gap_factor, int limit) {
-    typedef struct { span id; checksum ck; time_t ts; } state_ent;
-    typedef struct { time_t ts; span id; } event_ent;
-    size_t states_cap = 1024, states_n = 0;
-    size_t events_cap = 512, events_n = 0;
-    state_ent* states = malloc(states_cap * sizeof(state_ent));
-    event_ent* events = malloc(events_cap * sizeof(event_ent));
-    int effective_limit = (limit > 0 ? limit : 20);
+    typedef struct {
+        span id;
+        checksum cks[8];
+        int n_cks;
+        time_t ts;
+    } state_ent;
+    typedef struct {
+        time_t ts;
+        span id;
+    } event_ent;
+
     size_t n_revblocks = state->revs.n_revblocks;
-    for (size_t i = 0; i < n_revblocks && events_n < (size_t)effective_limit * 3; i++) {
-        if (i % 1000 == 0) {
-            prt("\rScanning revblocks... %zu/%zu", i, n_revblocks);
-            flush_err();
-        }
+    int effective_limit = (limit > 0) ? limit : 20;
+    state_ent *states = (state_ent*)calloc(1024, sizeof(state_ent));
+    int states_n = 0;
+    event_ent *events = (event_ent*)calloc(512, sizeof(event_ent));
+    int events_n = 0;
+
+    for (size_t i = 0; i < n_revblocks && events_n < effective_limit * 3; i++) {
+        if (i % 1000 == 0 && i > 0)
+            fprintf(stderr, "history scan %zu/%zu\r", i, n_revblocks);
+
         spans_arena_push();
-        rev_block* rb = &state->revs.revblocks[i];
+        rev_block *rb = &state->revs.revblocks[i];
         spans ids = load_revblock_ids(i);
-        if (!ids.n) {
+        if (ids.n == 0) {
             spans_arena_pop();
             continue;
         }
         span bid = ids.a[0];
         checksum ck = selected_checksum(rb->contents);
+
         int found = 0;
-        size_t idx = 0;
-        for (idx = 0; idx < states_n; idx++) {
-            if (len(bid) == len(states[idx].id) && memcmp(bid.buf, states[idx].id.buf, len(bid)) == 0) {
+        for (int s = 0; s < states_n; s++) {
+            int match_ck = 0, j_match = -1;
+            for (int j = 0; j < states[s].n_cks; j++)
+                if (states[s].cks[j].__u == ck.__u) { match_ck=1; j_match = j; break; }
+
+            if (len(bid) == len(states[s].id) &&
+                memcmp(bid.buf, states[s].id.buf, len(bid)) == 0) {
                 found = 1;
+                if (match_ck) {
+                    if (rb->timestamp < states[s].ts)
+                        states[s].ts = rb->timestamp;
+                } else if (states[s].ts == rb->timestamp) {
+                    if (states[s].n_cks < 8) {
+                        states[s].cks[states[s].n_cks++] = ck;
+                    }
+                } else {
+                    if (events_n < 512) {
+                        u8 *copy = malloc(len(bid));
+                        memcpy(copy, bid.buf, len(bid));
+                        events[events_n].id = (span){copy, copy + len(bid)};
+                        events[events_n].ts = states[s].ts;
+                        events_n++;
+                    }
+                    if (states[s].n_cks < 8)
+                        states[s].cks[states[s].n_cks++] = ck;
+                    states[s].ts = rb->timestamp;
+                }
                 break;
             }
         }
-        if (found) {
-            if (states[idx].ck.__u != ck.__u) {
-                if (events_n < events_cap) {
-                    events[events_n].ts = states[idx].ts;
-                    u8 *evcopy = malloc(len(bid));
-                    memcpy(evcopy, bid.buf, len(bid));
-                    events[events_n].id = (span){evcopy, evcopy + len(bid)};
-                    events_n++;
-                }
-                states[idx].ck = ck;
-                states[idx].ts = rb->timestamp;
-            } else {
-                if (rb->timestamp < states[idx].ts)
-                    states[idx].ts = rb->timestamp;
-            }
-        } else {
-            if (states_n < states_cap) {
-                u8 *copy = malloc(len(bid));
-                memcpy(copy, bid.buf, len(bid));
-                states[states_n].id = (span){copy, copy + len(bid)};
-                states[states_n].ck = ck;
-                states[states_n].ts = rb->timestamp;
-                states_n++;
-            }
+        if (!found && states_n < 1024) {
+            u8 *copy = malloc(len(bid));
+            memcpy(copy, bid.buf, len(bid));
+            states[states_n].id = (span){copy, copy + len(bid)};
+            states[states_n].n_cks = 1;
+            states[states_n].cks[0] = ck;
+            states[states_n].ts = rb->timestamp;
+            states_n++;
         }
+
         spans_arena_pop();
     }
-    prt("\r%*s\r", 40, ""); flush_err();
-    for (size_t i = 0; i + 1 < events_n; i++) {
-        for (size_t j = 0; j + 1 < events_n - i; j++) {
-            if (events[j].ts < events[j + 1].ts) {
-                event_ent t = events[j];
-                events[j] = events[j + 1];
-                events[j + 1] = t;
+    fprintf(stderr, "\n");
+
+    for (int i = 0; i < events_n - 1; i++) {
+        for (int j = 0; j < events_n - i - 1; j++) {
+            if (events[j].ts < events[j+1].ts) {
+                event_ent tmp = events[j];
+                events[j] = events[j+1];
+                events[j+1] = tmp;
             }
         }
     }
+
     prt("Recent block changes\n\n");
     int shown = 0;
     time_t last_ts = 0;
     double gap = 1.0;
-    for (size_t i = 0; i < events_n && shown < effective_limit; i++) {
+
+    for (int i = 0; i < events_n && shown < effective_limit; i++) {
         time_t ts = events[i].ts;
-        if (log_gap_factor > 0 && shown > 0 && last_ts != 0 && (last_ts - ts) < gap)
+        if (log_gap_factor > 0.0 && shown > 0 && last_ts - ts < (time_t)gap)
             continue;
-        char tmbuf[32];
-        struct tm ltm;
-        localtime_r(&ts, &ltm);
-        strftime(tmbuf, sizeof tmbuf, "%Y-%m-%d %H:%M:%S", &ltm);
-        prt("  %s  %.*s\n", tmbuf, len(events[i].id), events[i].id.buf);
+        char tb[64];
+        struct tm tm;
+        localtime_r(&ts, &tm);
+        strftime(tb, sizeof(tb), "%Y-%m-%d %H:%M:%S", &tm);
+        prt("  %s  %.*s\n", tb, (int)len(events[i].id), events[i].id.buf);
         last_ts = ts;
-        gap *= log_gap_factor;
+        gap *= log_gap_factor > 0.0 ? log_gap_factor : 1.0;
         shown++;
     }
-    for (size_t i = 0; i < states_n; i++)
-        free(states[i].id.buf);
-    for (size_t i = 0; i < events_n; i++)
-        free(events[i].id.buf);
+
+    for (int i = 0; i < states_n; i++)
+        if (states[i].id.buf) free(states[i].id.buf);
+    for (int i = 0; i < events_n; i++)
+        if (events[i].id.buf) free(events[i].id.buf);
     free(states);
     free(events);
     flush();
