@@ -2481,6 +2481,7 @@ int ind_conf = 0;
 	int ind_file_argument = 0;
 	int ind_open_block = 0;
 	int ind_find_deleted = 0;
+	int ind_build_indices = 0;
 	int ind_status = 0;
 	int ind_work = 0;
 	int ind_trace = 0;
@@ -2534,6 +2535,7 @@ int ind_conf = 0;
 	char *arg_limit = NULL;
 
 	int action_arg = 0;
+
 
 
 
@@ -2687,6 +2689,8 @@ for (int i = 1; i < argc; i++) {
 			ind_export_docs = 1; action_arg = 1;
 		} else if (strcmp(arg, "--find-deleted") == 0) {
 			ind_find_deleted = 1; action_arg = 1;
+		} else if (strcmp(arg, "--build-indices") == 0) {
+			ind_build_indices = 1; action_arg = 1;
 		} else if (strcmp(arg, "--status") == 0) {
 			ind_status = 1; action_arg = 1;
 		} else if (strcmp(arg, "--work") == 0) {
@@ -2730,6 +2734,8 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
+
 
 
 
@@ -2891,6 +2897,7 @@ if (ind_file_argument) {
 	             ind_es +
 	             ind_export_docs +
 	             ind_find_deleted +
+	             ind_build_indices +
 	             ind_snapshot_join +
 	             ind_learn +
 	             ind_log_stochastic_count_joint +
@@ -3202,6 +3209,11 @@ if (ind_file_argument) {
 		flush_exit(0);
 	}
 
+	if (ind_build_indices) {
+		build_all_indices();
+		flush_exit(0);
+	}
+
 	if (ind_find_deleted) {
 		get_revs();
 		find_all_deleted_blocks();
@@ -3272,6 +3284,7 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
+
 
 /* #handle_snapshot_join */
 void handle_snapshot_join(span es1, span es2) {
@@ -4782,6 +4795,675 @@ spans load_revblock_ids(int revblock_idx) {
 }
 
 
+/* #rev_index_types */
+static unsigned cks_hash(const char *s) {
+    unsigned h = 5381;
+    while (*s) h = h * 33 + (unsigned char)*s++;
+    return h;
+}
+
+typedef struct { int cap, n; char (*slots)[20]; } cks_set;
+
+static void cks_set_init(cks_set *s, int cap) {
+    s->cap = cap; s->n = 0;
+    s->slots = calloc(cap, 20);
+}
+
+static int cks_set_has(cks_set *s, const char *key) {
+    unsigned idx = cks_hash(key) & (s->cap - 1);
+    while (s->slots[idx][0]) {
+        if (strcmp(s->slots[idx], key) == 0) return 1;
+        idx = (idx + 1) & (s->cap - 1);
+    }
+    return 0;
+}
+
+static void cks_set_add(cks_set *s, const char *key) {
+    if (s->n * 2 >= s->cap) {
+        int old_cap = s->cap;
+        char (*old)[20] = s->slots;
+        s->cap *= 2; s->n = 0;
+        s->slots = calloc(s->cap, 20);
+        for (int i = 0; i < old_cap; i++)
+            if (old[i][0]) cks_set_add(s, old[i]);
+        free(old);
+    }
+    unsigned idx = cks_hash(key) & (s->cap - 1);
+    while (s->slots[idx][0]) {
+        if (strcmp(s->slots[idx], key) == 0) return;
+        idx = (idx + 1) & (s->cap - 1);
+    }
+    memcpy(s->slots[idx], key, strlen(key) + 1);
+    s->n++;
+}
+
+static void cks_set_free(cks_set *s) { free(s->slots); }
+/* #build_rev_cks */
+void build_rev_cks(void) {
+    span revdir = get_revdir();
+    char idx_dir[2048], idx_path[2048];
+    snprintf(idx_dir, sizeof(idx_dir), "%.*s/../cache/indices",
+             (int)len(revdir), revdir.buf);
+    snprintf(idx_path, sizeof(idx_path), "%s/rev-cks", idx_dir);
+
+    /* ensure directory exists */
+    mkdir(idx_dir, 0755);
+
+    /* load existing index entries into a set for dedup */
+    /* key = "ts\tpath" */
+    int existing_cap = 4096, existing_n = 0;
+    char **existing_lines = malloc(existing_cap * sizeof(char*));
+    int *existing_lens = malloc(existing_cap * sizeof(int));
+
+    /* also track existing keys for dedup */
+    int keys_cap = 4096, keys_n = 0;
+    char **keys = malloc(keys_cap * sizeof(char*));
+
+    FILE *ef = fopen(idx_path, "r");
+    if (ef) {
+        char line[1024];
+        while (fgets(line, sizeof(line), ef)) {
+            int ll = strlen(line);
+            if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+            if (ll == 0) continue;
+
+            /* duplicate line for storage */
+            if (existing_n >= existing_cap) {
+                existing_cap *= 2;
+                existing_lines = realloc(existing_lines, existing_cap * sizeof(char*));
+                existing_lens = realloc(existing_lens, existing_cap * sizeof(int));
+            }
+            existing_lines[existing_n] = strdup(line);
+            existing_lens[existing_n] = ll;
+            existing_n++;
+
+            /* extract key = ts\tpath (first two fields) */
+            char *t1 = strchr(line, '\t');
+            if (!t1) continue;
+            char *t2 = strchr(t1+1, '\t');
+            int keylen = t2 ? (int)(t2 - line) : (int)(t1 - line);
+            if (keys_n >= keys_cap) {
+                keys_cap *= 2;
+                keys = realloc(keys, keys_cap * sizeof(char*));
+            }
+            char *k = malloc(keylen + 1);
+            memcpy(k, line, keylen);
+            k[keylen] = 0;
+            keys[keys_n++] = k;
+        }
+        fclose(ef);
+    }
+
+    /* scan revs directory */
+    char revdir_s[2048];
+    snprintf(revdir_s, sizeof(revdir_s), "%.*s", (int)len(revdir), revdir.buf);
+    DIR *dir = opendir(revdir_s);
+    if (!dir) {
+        for (int i = 0; i < existing_n; i++) free(existing_lines[i]);
+        for (int i = 0; i < keys_n; i++) free(keys[i]);
+        free(existing_lines); free(existing_lens); free(keys);
+        return;
+    }
+
+    int new_n = 0;
+    struct dirent *de;
+    while ((de = readdir(dir)) != NULL) {
+        /* validate YYYYMMDD-HHMMSS format (15 chars) */
+        int namelen = strlen(de->d_name);
+        if (namelen < 15) continue;
+        int valid = 1;
+        for (int i = 0; i < 8; i++)
+            if (!isdigit(de->d_name[i])) { valid = 0; break; }
+        if (valid && de->d_name[8] != '-') valid = 0;
+        for (int i = 9; i < 15 && valid; i++)
+            if (!isdigit(de->d_name[i])) { valid = 0; break; }
+        if (!valid) continue;
+
+        /* extract ts = first 15 chars (or up to dot for fractional) */
+        char ts[32];
+        int tsi = 0;
+        while (tsi < namelen && tsi < 31) {
+            ts[tsi] = de->d_name[tsi];
+            tsi++;
+        }
+        ts[tsi] = 0;
+        /* ts is the full filename for uniqueness */
+        /* but the "ts" column is just the stem (before any dot) */
+        char ts_stem[32];
+        strncpy(ts_stem, de->d_name, 31);
+        ts_stem[31] = 0;
+        char *dot = strchr(ts_stem, '.');
+        if (dot) *dot = 0;
+
+        /* build key = ts_stem\tpath */
+        char key[256];
+        snprintf(key, sizeof(key), "%s\t%s", ts_stem, de->d_name);
+
+        /* check if already indexed */
+        int found = 0;
+        for (int i = 0; i < keys_n; i++) {
+            if (strcmp(keys[i], key) == 0) { found = 1; break; }
+        }
+        if (found) continue;
+
+        /* hash the file */
+        char fpath[2048];
+        snprintf(fpath, sizeof(fpath), "%s/%s", revdir_s, de->d_name);
+        FILE *f = fopen(fpath, "rb");
+        if (!f) continue;
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        u8 *buf = malloc(sz);
+        size_t nread = fread(buf, 1, sz, f);
+        fclose(f);
+
+        span content = {buf, buf + nread};
+        checksum cks = selected_checksum(content);
+        free(buf);
+
+        /* format line: ts\tpath\tbytes\tcks */
+        char line[512];
+        snprintf(line, sizeof(line), "%s\t%s\t%ld\t%016llX",
+                 ts_stem, de->d_name, sz, (unsigned long long)cks.__u);
+
+        if (existing_n >= existing_cap) {
+            existing_cap *= 2;
+            existing_lines = realloc(existing_lines, existing_cap * sizeof(char*));
+            existing_lens = realloc(existing_lens, existing_cap * sizeof(int));
+        }
+        existing_lines[existing_n] = strdup(line);
+        existing_lens[existing_n] = strlen(line);
+        existing_n++;
+
+        if (keys_n >= keys_cap) {
+            keys_cap *= 2;
+            keys = realloc(keys, keys_cap * sizeof(char*));
+        }
+        keys[keys_n++] = strdup(key);
+        new_n++;
+
+        if (new_n % 100 == 0) {
+            fprintf(stderr, "\rrev-cks: indexed %d new revs", new_n);
+            fflush(stderr);
+        }
+    }
+    closedir(dir);
+
+    if (new_n > 0) {
+        fprintf(stderr, "\rrev-cks: indexed %d new revs\n", new_n);
+
+        /* sort all lines by ts,path (lexicographic sort of full line works) */
+        for (int i = 0; i < existing_n - 1; i++)
+            for (int j = i + 1; j < existing_n; j++)
+                if (strcmp(existing_lines[i], existing_lines[j]) > 0) {
+                    char *tmp = existing_lines[i];
+                    existing_lines[i] = existing_lines[j];
+                    existing_lines[j] = tmp;
+                }
+
+        /* write atomically */
+        char tmp_path[2048];
+        snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", idx_path);
+        FILE *out = fopen(tmp_path, "w");
+        if (out) {
+            for (int i = 0; i < existing_n; i++)
+                fprintf(out, "%s\n", existing_lines[i]);
+            fclose(out);
+            rename(tmp_path, idx_path);
+        }
+    }
+
+    for (int i = 0; i < existing_n; i++) free(existing_lines[i]);
+    for (int i = 0; i < keys_n; i++) free(keys[i]);
+    free(existing_lines); free(existing_lens); free(keys);
+}
+/* #build_cks_style */
+void build_cks_style(void) {
+    span revdir = get_revdir();
+    char idx_dir[2048], idx_path[2048], rev_cks_path[2048];
+    snprintf(idx_dir, sizeof(idx_dir), "%.*s/../cache/indices",
+             (int)len(revdir), revdir.buf);
+    snprintf(idx_path, sizeof(idx_path), "%s/cks-style", idx_dir);
+    snprintf(rev_cks_path, sizeof(rev_cks_path), "%s/rev-cks", idx_dir);
+
+    /* load existing cks-style entries */
+    int known_cap = 4096, known_n = 0;
+    char **known_cks = malloc(known_cap * sizeof(char*));
+    char **known_lines = malloc(known_cap * sizeof(char*));
+
+    FILE *ef = fopen(idx_path, "r");
+    if (ef) {
+        char line[256];
+        while (fgets(line, sizeof(line), ef)) {
+            int ll = strlen(line);
+            if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+            if (ll == 0) continue;
+            char *tab = strchr(line, '\t');
+            if (!tab) continue;
+            char cks[32];
+            int ckslen = (int)(tab - line);
+            if (ckslen > 31) continue;
+            memcpy(cks, line, ckslen);
+            cks[ckslen] = 0;
+            if (known_n >= known_cap) {
+                known_cap *= 2;
+                known_cks = realloc(known_cks, known_cap * sizeof(char*));
+                known_lines = realloc(known_lines, known_cap * sizeof(char*));
+            }
+            known_cks[known_n] = strdup(cks);
+            known_lines[known_n] = strdup(line);
+            known_n++;
+        }
+        fclose(ef);
+    }
+
+    /* read rev-cks to find checksums needing style */
+    FILE *rf = fopen(rev_cks_path, "r");
+    if (!rf) {
+        for (int i = 0; i < known_n; i++) { free(known_cks[i]); free(known_lines[i]); }
+        free(known_cks); free(known_lines);
+        return;
+    }
+
+    int new_n = 0;
+    char line[1024];
+    while (fgets(line, sizeof(line), rf)) {
+        int ll = strlen(line);
+        if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+        if (ll == 0) continue;
+
+        /* parse: ts\tpath\tbytes\tcks */
+        char *t1 = strchr(line, '\t');
+        if (!t1) continue;
+        char *t2 = strchr(t1+1, '\t');
+        if (!t2) continue;
+        char *t3 = strchr(t2+1, '\t');
+        if (!t3) continue;
+
+        char *cks = t3 + 1;
+        char *path = t1 + 1;
+        int pathlen = (int)(t2 - path);
+
+        /* check if already known */
+        int found = 0;
+        for (int i = 0; i < known_n; i++)
+            if (strcmp(known_cks[i], cks) == 0) { found = 1; break; }
+        if (found) continue;
+
+        /* try to read the cache file for this rev */
+        char bname[256];
+        if (pathlen > 255) continue;
+        memcpy(bname, path, pathlen);
+        bname[pathlen] = 0;
+
+        char cache_path[2048];
+        snprintf(cache_path, sizeof(cache_path), "%.*s/../cache/v8/revs/%s",
+                 (int)len(revdir), revdir.buf, bname);
+
+        FILE *cf = fopen(cache_path, "r");
+        char style[32] = "C"; /* default */
+        if (cf) {
+            char cline[256];
+            while (fgets(cline, sizeof(cline), cf)) {
+                if (strncmp(cline, "Language: ", 10) == 0) {
+                    int sl = strlen(cline + 10);
+                    if (sl > 0 && cline[10 + sl - 1] == '\n') sl--;
+                    if (sl > 31) sl = 31;
+                    memcpy(style, cline + 10, sl);
+                    style[sl] = 0;
+                    break;
+                }
+                /* stop at first blank line (end of header) */
+                if (cline[0] == '\n') break;
+            }
+            fclose(cf);
+        }
+
+        /* add entry */
+        char entry[128];
+        snprintf(entry, sizeof(entry), "%s\t%s", cks, style);
+
+        if (known_n >= known_cap) {
+            known_cap *= 2;
+            known_cks = realloc(known_cks, known_cap * sizeof(char*));
+            known_lines = realloc(known_lines, known_cap * sizeof(char*));
+        }
+        known_cks[known_n] = strdup(cks);
+        known_lines[known_n] = strdup(entry);
+        known_n++;
+        new_n++;
+    }
+    fclose(rf);
+
+    if (new_n > 0) {
+        fprintf(stderr, "cks-style: %d new entries\n", new_n);
+
+        /* sort by cks */
+        for (int i = 0; i < known_n - 1; i++)
+            for (int j = i + 1; j < known_n; j++)
+                if (strcmp(known_lines[i], known_lines[j]) > 0) {
+                    char *tmp = known_lines[i];
+                    known_lines[i] = known_lines[j];
+                    known_lines[j] = tmp;
+                    tmp = known_cks[i];
+                    known_cks[i] = known_cks[j];
+                    known_cks[j] = tmp;
+                }
+
+        char tmp_path[2048];
+        snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", idx_path);
+        FILE *out = fopen(tmp_path, "w");
+        if (out) {
+            for (int i = 0; i < known_n; i++)
+                fprintf(out, "%s\n", known_lines[i]);
+            fclose(out);
+            rename(tmp_path, idx_path);
+        }
+    }
+
+    for (int i = 0; i < known_n; i++) { free(known_cks[i]); free(known_lines[i]); }
+    free(known_cks); free(known_lines);
+}
+/* #build_blkmap */
+void build_blkmap(void) {
+    span revdir = get_revdir();
+    char idx_dir[2048];
+    snprintf(idx_dir, sizeof(idx_dir), "%.*s/../cache/indices",
+             (int)len(revdir), revdir.buf);
+
+    char rev_cks_path[2048], cks_style_path[2048];
+    char blkmap_path[2048], blkcks_revcks_path[2048], blkcks_id_path[2048];
+    snprintf(rev_cks_path, sizeof(rev_cks_path), "%s/rev-cks", idx_dir);
+    snprintf(cks_style_path, sizeof(cks_style_path), "%s/cks-style", idx_dir);
+    snprintf(blkmap_path, sizeof(blkmap_path), "%s/revcks-blkmap", idx_dir);
+    snprintf(blkcks_revcks_path, sizeof(blkcks_revcks_path), "%s/blkcks-revcks", idx_dir);
+    snprintf(blkcks_id_path, sizeof(blkcks_id_path), "%s/blkcks-id", idx_dir);
+
+    /* load cks->style map into parallel arrays + hash set for fast lookup */
+    int style_cap = 4096, style_n = 0;
+    char **style_cks = malloc(style_cap * sizeof(char*));
+    char **style_val = malloc(style_cap * sizeof(char*));
+
+    FILE *sf = fopen(cks_style_path, "r");
+    if (sf) {
+        char line[256];
+        while (fgets(line, sizeof(line), sf)) {
+            int ll = strlen(line);
+            if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+            char *tab = strchr(line, '\t');
+            if (!tab) continue;
+            *tab = 0;
+            if (style_n >= style_cap) {
+                style_cap *= 2;
+                style_cks = realloc(style_cks, style_cap * sizeof(char*));
+                style_val = realloc(style_val, style_cap * sizeof(char*));
+            }
+            style_cks[style_n] = strdup(line);
+            style_val[style_n] = strdup(tab + 1);
+            style_n++;
+        }
+        fclose(sf);
+    }
+
+    /* load existing revcks from blkmap into hash set for dedup */
+    cks_set done_set;
+    cks_set_init(&done_set, 8192);
+
+    FILE *bf = fopen(blkmap_path, "r");
+    if (bf) {
+        char line[512];
+        while (fgets(line, sizeof(line), bf)) {
+            int ll = strlen(line);
+            if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+            char *tab = strchr(line, '\t');
+            int ckslen = tab ? (int)(tab - line) : ll;
+            if (ckslen > 19) continue;
+            char cks[20];
+            memcpy(cks, line, ckslen);
+            cks[ckslen] = 0;
+            cks_set_add(&done_set, cks);
+        }
+        fclose(bf);
+    }
+
+    /* load existing blkcks from blkcks-id into hash set for dedup */
+    cks_set idone_set;
+    cks_set_init(&idone_set, 8192);
+
+    FILE *idf = fopen(blkcks_id_path, "r");
+    if (idf) {
+        char line[512];
+        while (fgets(line, sizeof(line), idf)) {
+            int ll = strlen(line);
+            if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+            char *tab = strchr(line, '\t');
+            int ckslen = tab ? (int)(tab - line) : ll;
+            if (ckslen > 19) continue;
+            char cks[20];
+            memcpy(cks, line, ckslen);
+            cks[ckslen] = 0;
+            cks_set_add(&idone_set, cks);
+        }
+        fclose(idf);
+    }
+
+    /* open output files for append */
+    FILE *out_blkmap = fopen(blkmap_path, "a");
+    FILE *out_br = fopen(blkcks_revcks_path, "a");
+    FILE *out_id = fopen(blkcks_id_path, "a");
+    if (!out_blkmap || !out_br || !out_id) {
+        if (out_blkmap) fclose(out_blkmap);
+        if (out_br) fclose(out_br);
+        if (out_id) fclose(out_id);
+        goto cleanup;
+    }
+
+    /* read rev-cks, process each unique revcks */
+    FILE *rf = fopen(rev_cks_path, "r");
+    if (!rf) goto close_outputs;
+
+    int processed = 0;
+    char line[1024];
+    while (fgets(line, sizeof(line), rf)) {
+        int ll = strlen(line);
+        if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+        if (ll == 0) continue;
+
+        /* parse: ts\tpath\tbytes\tcks */
+        char *t1 = strchr(line, '\t');
+        if (!t1) continue;
+        char *t2 = strchr(t1+1, '\t');
+        if (!t2) continue;
+        char *t3 = strchr(t2+1, '\t');
+        if (!t3) continue;
+
+        char *path_start = t1 + 1;
+        int pathlen = (int)(t2 - path_start);
+        char *revcks = t3 + 1;
+
+        /* check if already processed */
+        if (cks_set_has(&done_set, revcks)) continue;
+        cks_set_add(&done_set, revcks);
+
+        /* find style for this cks */
+        char style_str[32] = "C";
+        for (int i = 0; i < style_n; i++) {
+            if (strcmp(style_cks[i], revcks) == 0) {
+                strncpy(style_str, style_val[i], 31);
+                style_str[31] = 0;
+                break;
+            }
+        }
+
+        /* read the rev file */
+        char rev_path[2048];
+        char bname[256];
+        if (pathlen > 255) continue;
+        memcpy(bname, path_start, pathlen);
+        bname[pathlen] = 0;
+
+        snprintf(rev_path, sizeof(rev_path), "%.*s/%s",
+                 (int)len(revdir), revdir.buf, bname);
+
+        FILE *f = fopen(rev_path, "rb");
+        if (!f) continue;
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        u8 *buf = malloc(sz + 1);
+        size_t nread = fread(buf, 1, sz, f);
+        fclose(f);
+        buf[nread] = 0;
+
+        span content = {buf, buf + nread};
+
+        /* blockize */
+        spans_arena_push();
+        span lang = S(style_str);
+        spans blocks = find_blocks_language(content, lang);
+
+        for (int b = 0; b < blocks.n; b++) {
+            if (len(blocks.a[b]) == 0) continue;
+            long by0 = blocks.a[b].buf - content.buf;
+            long by1 = blocks.a[b].end - content.buf;
+
+            /* compute block content checksum */
+            checksum bcks = selected_checksum(blocks.a[b]);
+            char bcks_hex[20];
+            snprintf(bcks_hex, sizeof(bcks_hex), "%016llX", (unsigned long long)bcks.__u);
+
+            /* write revcks-blkmap row */
+            fprintf(out_blkmap, "%s\t%d\t%ld\t%ld\t%s\n",
+                    revcks, b + 1, by0, by1, bcks_hex);
+
+            /* write blkcks-revcks row */
+            fprintf(out_br, "%s\t%s\n", bcks_hex, revcks);
+
+            /* extract block ID and write blkcks-id if new */
+            if (!cks_set_has(&idone_set, bcks_hex)) {
+                spans_arena_push();
+                spans ids = ids_for_block(blocks.a[b]);
+                if (ids.n > 0) {
+                    fprintf(out_id, "%s\t%.*s\n", bcks_hex,
+                            (int)len(ids.a[0]), ids.a[0].buf);
+                }
+                spans_arena_pop();
+                cks_set_add(&idone_set, bcks_hex);
+            }
+        }
+        spans_arena_pop();
+        free(buf);
+
+        processed++;
+        if (processed % 100 == 0) {
+            fprintf(stderr, "\rblkmap: processed %d revs", processed);
+            fflush(stderr);
+        }
+    }
+    fclose(rf);
+
+    if (processed > 0)
+        fprintf(stderr, "\rblkmap: processed %d revs\n", processed);
+
+close_outputs:
+    fclose(out_blkmap);
+    fclose(out_br);
+    fclose(out_id);
+
+cleanup:
+    for (int i = 0; i < style_n; i++) { free(style_cks[i]); free(style_val[i]); }
+    free(style_cks); free(style_val);
+    cks_set_free(&done_set);
+    cks_set_free(&idone_set);
+}
+/* #build_cks_rev */
+void build_cks_rev(void) {
+    span revdir = get_revdir();
+    char idx_dir[2048], idx_path[2048], rev_cks_path[2048];
+    snprintf(idx_dir, sizeof(idx_dir), "%.*s/../cache/indices",
+             (int)len(revdir), revdir.buf);
+    snprintf(idx_path, sizeof(idx_path), "%s/cks-rev", idx_dir);
+    snprintf(rev_cks_path, sizeof(rev_cks_path), "%s/rev-cks", idx_dir);
+
+    /* read rev-cks, extract (cks, ts) pairs */
+    FILE *rf = fopen(rev_cks_path, "r");
+    if (!rf) return;
+
+    int cap = 4096, n = 0;
+    char **lines = malloc(cap * sizeof(char*));
+
+    char line[1024];
+    while (fgets(line, sizeof(line), rf)) {
+        int ll = strlen(line);
+        if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+        if (ll == 0) continue;
+
+        /* parse: ts\tpath\tbytes\tcks */
+        char *t1 = strchr(line, '\t');
+        if (!t1) continue;
+        char *t2 = strchr(t1+1, '\t');
+        if (!t2) continue;
+        char *t3 = strchr(t2+1, '\t');
+        if (!t3) continue;
+
+        char ts[32];
+        int tslen = (int)(t1 - line);
+        if (tslen > 31) continue;
+        memcpy(ts, line, tslen);
+        ts[tslen] = 0;
+
+        char *cks = t3 + 1;
+
+        char entry[128];
+        snprintf(entry, sizeof(entry), "%s\t%s", cks, ts);
+
+        if (n >= cap) {
+            cap *= 2;
+            lines = realloc(lines, cap * sizeof(char*));
+        }
+        lines[n++] = strdup(entry);
+    }
+    fclose(rf);
+
+    /* sort by (cks, ts) = lexicographic sort of the line */
+    for (int i = 0; i < n - 1; i++)
+        for (int j = i + 1; j < n; j++)
+            if (strcmp(lines[i], lines[j]) > 0) {
+                char *tmp = lines[i];
+                lines[i] = lines[j];
+                lines[j] = tmp;
+            }
+
+    /* write atomically */
+    char tmp_path[2048];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", idx_path);
+    FILE *out = fopen(tmp_path, "w");
+    if (out) {
+        for (int i = 0; i < n; i++)
+            fprintf(out, "%s\n", lines[i]);
+        fclose(out);
+        rename(tmp_path, idx_path);
+    }
+
+    fprintf(stderr, "cks-rev: %d rows\n", n);
+
+    for (int i = 0; i < n; i++) free(lines[i]);
+    free(lines);
+}
+
+void build_rev_cks(void);
+void build_cks_style(void);
+void build_blkmap(void);
+
+void build_all_indices(void) {
+    fprintf(stderr, "Building revision indices...\n");
+    build_rev_cks();
+    build_cks_style();
+    build_blkmap();
+    build_cks_rev();
+    fprintf(stderr, "Done.\n");
+}
 /* #sbv_populate */
 void sbv_populate(sbv_state* sbvs) {
     if (sbvs->current_index <= sbvs->max_index) return;
@@ -11478,6 +12160,24 @@ void handle_es_create(char *name, char *pattern) {
 }
 /* #handle_history */
 void handle_history(span blockid, double log_gap_factor, int limit) {
+    span revdir = get_revdir();
+    char idx_path[2048];
+    snprintf(idx_path, sizeof(idx_path), "%.*s/../cache/indices/blkcks-id",
+             (int)len(revdir), revdir.buf);
+    FILE *f = fopen(idx_path, "r");
+    if (!f) {
+        build_all_indices();
+        f = fopen(idx_path, "r");
+    }
+    if (f) {
+        fclose(f);
+        clear_display();
+        if (!empty(blockid))
+            handle_history_blockid(blockid, log_gap_factor, limit);
+        else
+            handle_history_recent(log_gap_factor, limit);
+        return;
+    }
     get_revs();
     clear_display();
     if (!empty(blockid))
@@ -11493,8 +12193,227 @@ void handle_history_blockid(span blockid, double log_gap_factor, int limit) {
         int bytes;
         int lines;
     } version;
-    size_t cap = 256, n = 0;
-    version* versions = (version*)malloc(cap * sizeof(version));
+    size_t ver_cap = 256, ver_n = 0;
+    version* versions = (version*)malloc(ver_cap * sizeof(version));
+
+    /* try index-based lookup */
+    span revdir = get_revdir();
+    char idx_dir[2048];
+    snprintf(idx_dir, sizeof(idx_dir), "%.*s/../cache/indices",
+             (int)len(revdir), revdir.buf);
+
+    char blkcks_id_path[2048];
+    snprintf(blkcks_id_path, sizeof(blkcks_id_path), "%s/blkcks-id", idx_dir);
+
+    FILE *f = fopen(blkcks_id_path, "r");
+    if (!f) goto fallback;
+
+    /* Step 1: find matching blkcks from blkcks-id, store in array and hash set */
+    int mblk_cap = 256, mblk_n = 0;
+    char **mblk = malloc(mblk_cap * sizeof(char*));
+    cks_set mblk_set;
+    cks_set_init(&mblk_set, 1024);
+
+    {
+        char line[512];
+        while (fgets(line, sizeof(line), f)) {
+            int ll = strlen(line);
+            if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+            char *tab = strchr(line, '\t');
+            if (!tab) continue;
+            span id_span = {(u8*)(tab+1), (u8*)(line+ll)};
+            if (span_eq(id_span, blockid)) {
+                *tab = 0;
+                if (mblk_n >= mblk_cap) {
+                    mblk_cap *= 2;
+                    mblk = realloc(mblk, mblk_cap * sizeof(char*));
+                }
+                mblk[mblk_n++] = strdup(line);
+                cks_set_add(&mblk_set, line);
+            }
+        }
+        fclose(f);
+    }
+
+    if (mblk_n == 0) {
+        prt("History for %.*s\n\n", (int)len(blockid), blockid.buf);
+        for (int i = 0; i < mblk_n; i++) free(mblk[i]);
+        free(mblk);
+        cks_set_free(&mblk_set);
+        free(versions);
+        flush();
+        return;
+    }
+
+    /* Step 2: load cks-rev map (revcks -> rev_ts) into hash-friendly structure */
+    int cr_cap = 4096, cr_n = 0;
+    char **cr_cks = malloc(cr_cap * sizeof(char*));
+    char **cr_ts = malloc(cr_cap * sizeof(char*));
+    cks_set cr_set;
+    cks_set_init(&cr_set, 8192);
+
+    {
+        char cks_rev_path[2048];
+        snprintf(cks_rev_path, sizeof(cks_rev_path), "%s/cks-rev", idx_dir);
+        FILE *crf = fopen(cks_rev_path, "r");
+        if (crf) {
+            char line[256];
+            while (fgets(line, sizeof(line), crf)) {
+                int ll = strlen(line);
+                if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+                char *tab = strchr(line, '\t');
+                if (!tab) continue;
+                *tab = 0;
+                if (cr_n >= cr_cap) {
+                    cr_cap *= 2;
+                    cr_cks = realloc(cr_cks, cr_cap * sizeof(char*));
+                    cr_ts = realloc(cr_ts, cr_cap * sizeof(char*));
+                }
+                cr_cks[cr_n] = strdup(line);
+                cr_ts[cr_n] = strdup(tab + 1);
+                cr_n++;
+            }
+            fclose(crf);
+        }
+    }
+
+    /* Step 3: scan blkcks-revcks, find earliest timestamp per matching blkcks */
+    /* Map blkcks index -> earliest timestamp and rev_ts string */
+    time_t *earliest_ts = calloc(mblk_n, sizeof(time_t));
+
+    {
+        char br_path[2048];
+        snprintf(br_path, sizeof(br_path), "%s/blkcks-revcks", idx_dir);
+        FILE *brf = fopen(br_path, "r");
+        if (brf) {
+            char line[256];
+            while (fgets(line, sizeof(line), brf)) {
+                int ll = strlen(line);
+                if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+                char *tab = strchr(line, '\t');
+                if (!tab) continue;
+                int ckslen = (int)(tab - line);
+                if (ckslen > 19) continue;
+                char cks[20];
+                memcpy(cks, line, ckslen);
+                cks[ckslen] = 0;
+                if (!cks_set_has(&mblk_set, cks)) continue;
+                /* find index in mblk array */
+                int mi = -1;
+                for (int i = 0; i < mblk_n; i++) {
+                    if (strcmp(mblk[i], cks) == 0) { mi = i; break; }
+                }
+                if (mi < 0) continue;
+                char *revcks = tab + 1;
+                /* look up timestamp in cks-rev */
+                for (int i = 0; i < cr_n; i++) {
+                    if (strcmp(cr_cks[i], revcks) == 0) {
+                        span ts_span = S(cr_ts[i]);
+                        time_t ts = parse_rev_fname(ts_span);
+                        if (earliest_ts[mi] == 0 || ts < earliest_ts[mi]) {
+                            earliest_ts[mi] = ts;
+                        }
+                        break;
+                    }
+                }
+            }
+            fclose(brf);
+        }
+    }
+
+    /* Step 4: scan revcks-blkmap, get byte ranges for each matching blkcks */
+    int *blk_by0 = calloc(mblk_n, sizeof(int));
+    int *blk_by1 = calloc(mblk_n, sizeof(int));
+    char **blk_revcks = calloc(mblk_n, sizeof(char*));
+
+    {
+        char bm_path[2048];
+        snprintf(bm_path, sizeof(bm_path), "%s/revcks-blkmap", idx_dir);
+        FILE *bmf = fopen(bm_path, "r");
+        if (bmf) {
+            char line[512];
+            while (fgets(line, sizeof(line), bmf)) {
+                int ll = strlen(line);
+                if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+                /* parse: revcks\tordinal\tby0\tby1\tblkcks */
+                char *t1 = strchr(line, '\t');
+                if (!t1) continue;
+                char *t2 = strchr(t1+1, '\t');
+                if (!t2) continue;
+                char *t3 = strchr(t2+1, '\t');
+                if (!t3) continue;
+                char *t4 = strchr(t3+1, '\t');
+                if (!t4) continue;
+                char *blkcks_field = t4 + 1;
+                if (!cks_set_has(&mblk_set, blkcks_field)) continue;
+                /* find index, only take first occurrence */
+                int mi = -1;
+                for (int i = 0; i < mblk_n; i++) {
+                    if (strcmp(blkcks_field, mblk[i]) == 0 && blk_revcks[i] == NULL) {
+                        mi = i; break;
+                    }
+                }
+                if (mi < 0) continue;
+                blk_by0[mi] = atoi(t2 + 1);
+                blk_by1[mi] = atoi(t3 + 1);
+                *t1 = 0;
+                blk_revcks[mi] = strdup(line);
+            }
+            fclose(bmf);
+        }
+    }
+
+    /* Step 5: build version entries, read rev files for line counts */
+    for (int i = 0; i < mblk_n; i++) {
+        if (earliest_ts[i] == 0 || blk_revcks[i] == NULL) continue;
+        int bytes = blk_by1[i] - blk_by0[i];
+        int lines = 0;
+        for (int j = 0; j < cr_n; j++) {
+            if (strcmp(cr_cks[j], blk_revcks[i]) == 0) {
+                char rev_path[2048];
+                snprintf(rev_path, sizeof(rev_path), "%.*s/%s",
+                         (int)len(revdir), revdir.buf, cr_ts[j]);
+                FILE *rf = fopen(rev_path, "rb");
+                if (rf) {
+                    fseek(rf, blk_by0[i], SEEK_SET);
+                    int blen = blk_by1[i] - blk_by0[i];
+                    u8 *bbuf = malloc(blen);
+                    size_t rd = fread(bbuf, 1, blen, rf);
+                    fclose(rf);
+                    for (size_t k = 0; k < rd; k++)
+                        if (bbuf[k] == '\n') lines++;
+                    free(bbuf);
+                }
+                break;
+            }
+        }
+        if (ver_n == ver_cap) {
+            ver_cap *= 2;
+            versions = (version*)realloc(versions, ver_cap * sizeof(version));
+        }
+        checksum ck;
+        ck.__u = strtoull(mblk[i], NULL, 16);
+        versions[ver_n++] = (version){ck, earliest_ts[i], bytes, lines};
+    }
+
+    /* cleanup index data */
+    for (int i = 0; i < mblk_n; i++) free(mblk[i]);
+    free(mblk);
+    cks_set_free(&mblk_set);
+    free(earliest_ts);
+    free(blk_by0);
+    free(blk_by1);
+    for (int i = 0; i < mblk_n; i++) if (blk_revcks[i]) free(blk_revcks[i]);
+    free(blk_revcks);
+    for (int i = 0; i < cr_n; i++) { free(cr_cks[i]); free(cr_ts[i]); }
+    free(cr_cks);
+    free(cr_ts);
+    cks_set_free(&cr_set);
+
+    goto display;
+
+fallback:
+    /* O(n) scan when indices not available */
     for (size_t i = 0; i < state->revs.n_revblocks; ++i) {
         if (i % 1000 == 0) {
             fprintf(stderr, "\rScanning: %zu/%zu", i, state->revs.n_revblocks);
@@ -11510,7 +12429,7 @@ void handle_history_blockid(span blockid, double log_gap_factor, int limit) {
         rev_block* rb = &state->revs.revblocks[i];
         checksum ck = selected_checksum(rb->contents);
         int found = 0;
-        for (size_t k = 0; k < n; ++k) {
+        for (size_t k = 0; k < ver_n; ++k) {
             if (versions[k].ck.__u == ck.__u) {
                 if (rb->timestamp < versions[k].ts) versions[k].ts = rb->timestamp;
                 found = 1;
@@ -11518,23 +12437,24 @@ void handle_history_blockid(span blockid, double log_gap_factor, int limit) {
             }
         }
         if (found) continue;
-        if (n == cap) {
-            cap *= 2;
-            versions = (version*)realloc(versions, cap * sizeof(version));
+        if (ver_n == ver_cap) {
+            ver_cap *= 2;
+            versions = (version*)realloc(versions, ver_cap * sizeof(version));
         }
         int lcnt = 0;
         span s = rb->contents;
-        span line;
-        while (!empty(s)) { line = next_line(&s); ++lcnt; }
-        versions[n++] = (version){ck, rb->timestamp, len(rb->contents), lcnt};
+        while (!empty(s)) { next_line(&s); ++lcnt; }
+        versions[ver_n++] = (version){ck, rb->timestamp, (int)len(rb->contents), lcnt};
     }
     fprintf(stderr, "\r%*s\r", 80, "");
-    for (size_t i = 0; i < n; ++i)
-        for (size_t j = i + 1; j < n; ++j)
+
+display:
+    for (size_t i = 0; i < ver_n; ++i)
+        for (size_t j = i + 1; j < ver_n; ++j)
             if (versions[j].ts > versions[i].ts) {
                 version tmp = versions[j]; versions[j] = versions[i]; versions[i] = tmp;
             }
-    prt("History for %.*s\n\n", len(blockid), blockid.buf);
+    prt("History for %.*s\n\n", (int)len(blockid), blockid.buf);
     int idcount = 0;
     for (int i = 0; i < state->block_idx.n; ++i)
         if (span_eq(state->block_idx.a[i], blockid)) ++idcount;
@@ -11543,7 +12463,7 @@ void handle_history_blockid(span blockid, double log_gap_factor, int limit) {
     time_t last_ts = 0;
     double gap = 1.0;
     char buf[32];
-    for (size_t i = 0; i < n && (limit <= 0 || shown < limit); ++i) {
+    for (size_t i = 0; i < ver_n && (limit <= 0 || shown < limit); ++i) {
         if (log_gap_factor > 0 && shown > 0 && (last_ts - versions[i].ts) < (time_t)gap)
             continue;
         struct tm tm;
@@ -11557,8 +12477,21 @@ void handle_history_blockid(span blockid, double log_gap_factor, int limit) {
     free(versions);
     flush();
 }
-
 /* #handle_history_recent */
+typedef struct { char cks[20]; char id[64]; } bi_ent;
+typedef struct { char revcks[20]; char blkcks[20]; } bm_ent;
+typedef struct { char ts[20]; char cks[20]; } rv_ent;
+
+static int cmp_bi_ent(const void *a, const void *b) {
+    return strcmp(((const bi_ent*)a)->cks, ((const bi_ent*)b)->cks);
+}
+static int cmp_bm_ent(const void *a, const void *b) {
+    return strcmp(((const bm_ent*)a)->revcks, ((const bm_ent*)b)->revcks);
+}
+static int cmp_rv_ent_desc(const void *a, const void *b) {
+    return strcmp(((const rv_ent*)b)->ts, ((const rv_ent*)a)->ts);
+}
+
 void handle_history_recent(double log_gap_factor, int limit) {
     typedef struct {
         span id;
@@ -11571,89 +12504,247 @@ void handle_history_recent(double log_gap_factor, int limit) {
         span id;
     } event_ent;
 
-    size_t n_revblocks = state->revs.n_revblocks;
     int effective_limit = (limit > 0) ? limit : 20;
-
     state_ent *states = malloc(1024 * sizeof(state_ent));
     int n_states = 0;
-    event_ent *events = malloc(512 * sizeof(event_ent));
+    int events_cap = 512;
+    event_ent *events = malloc(events_cap * sizeof(event_ent));
     int events_n = 0;
 
-    for (size_t i = 0; i < n_revblocks && events_n < effective_limit * 3; i++) {
-        if (i % 1000 == 0) {
-            fprintf(stderr, "\r%zu/%zu", i, n_revblocks);
-            fflush(stderr);
-        }
-        spans_arena_push();
-        spans ids = load_revblock_ids(i);
-        if (ids.n == 0) {
-            spans_arena_pop();
-            continue;
-        }
-        span bid = ids.a[0];
-        rev_block *rb = &state->revs.revblocks[i];
-        checksum ck = selected_checksum(rb->contents);
-        time_t ts = rb->timestamp;
+    /* try index-based path */
+    span revdir = get_revdir();
+    char idx_dir[2048];
+    snprintf(idx_dir, sizeof(idx_dir), "%.*s/../cache/indices",
+             (int)len(revdir), revdir.buf);
 
-        int found = -1;
-        for (int s = 0; s < n_states; s++) {
-            if (len(states[s].id) == len(bid) && memcmp(states[s].id.buf, bid.buf, len(bid)) == 0) {
-                found = s;
-                break;
+    char blkcks_id_path[2048];
+    snprintf(blkcks_id_path, sizeof(blkcks_id_path), "%s/blkcks-id", idx_dir);
+    FILE *test_f = fopen(blkcks_id_path, "r");
+    if (!test_f) goto fallback;
+    fclose(test_f);
+
+    {
+        /* Step 1: load blkcks-id */
+        int bi_cap = 8192, bi_n = 0;
+        bi_ent *bi = malloc(bi_cap * sizeof(bi_ent));
+
+        {
+            FILE *f = fopen(blkcks_id_path, "r");
+            if (f) {
+                char line[512];
+                while (fgets(line, sizeof(line), f)) {
+                    int ll = strlen(line);
+                    if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+                    char *tab = strchr(line, '\t');
+                    if (!tab) continue;
+                    *tab = 0;
+                    if (strlen(line) > 19 || strlen(tab+1) > 63) continue;
+                    if (bi_n >= bi_cap) { bi_cap *= 2; bi = realloc(bi, bi_cap * sizeof(bi_ent)); }
+                    strcpy(bi[bi_n].cks, line);
+                    strcpy(bi[bi_n].id, tab + 1);
+                    bi_n++;
+                }
+                fclose(f);
             }
         }
-        if (found >= 0) {
-            state_ent *se = &states[found];
-            int cks_match = 0;
-            for (int j = 0; j < se->n_cks; j++) {
-                if (memcmp(&se->cks[j], &ck, sizeof(checksum)) == 0) {
-                    cks_match = 1;
-                    break;
+        qsort(bi, bi_n, sizeof(bi_ent), cmp_bi_ent);
+
+        /* Step 2: load revcks-blkmap (revcks + blkcks only) */
+        int bm_cap = 16384, bm_n = 0;
+        bm_ent *bm = malloc(bm_cap * sizeof(bm_ent));
+
+        {
+            char bm_path[2048];
+            snprintf(bm_path, sizeof(bm_path), "%s/revcks-blkmap", idx_dir);
+            FILE *f = fopen(bm_path, "r");
+            if (f) {
+                char line[512];
+                while (fgets(line, sizeof(line), f)) {
+                    int ll = strlen(line);
+                    if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+                    char *t1 = strchr(line, '\t');
+                    if (!t1) continue;
+                    char *t4 = strrchr(line, '\t');
+                    if (t4 == t1) continue;
+                    int rl = (int)(t1 - line);
+                    if (rl > 19 || strlen(t4+1) > 19) continue;
+                    if (bm_n >= bm_cap) { bm_cap *= 2; bm = realloc(bm, bm_cap * sizeof(bm_ent)); }
+                    memcpy(bm[bm_n].revcks, line, rl);
+                    bm[bm_n].revcks[rl] = 0;
+                    strcpy(bm[bm_n].blkcks, t4 + 1);
+                    bm_n++;
+                }
+                fclose(f);
+            }
+        }
+        qsort(bm, bm_n, sizeof(bm_ent), cmp_bm_ent);
+
+        /* Step 3: load rev-cks sorted by timestamp descending */
+        int rv_cap = 4096, rv_n = 0;
+        rv_ent *rv = malloc(rv_cap * sizeof(rv_ent));
+
+        {
+            char rc_path[2048];
+            snprintf(rc_path, sizeof(rc_path), "%s/rev-cks", idx_dir);
+            FILE *f = fopen(rc_path, "r");
+            if (f) {
+                char line[512];
+                while (fgets(line, sizeof(line), f)) {
+                    int ll = strlen(line);
+                    if (ll > 0 && line[ll-1] == '\n') line[--ll] = 0;
+                    char *t1 = strchr(line, '\t');
+                    if (!t1) continue;
+                    char *t3 = strrchr(line, '\t');
+                    if (t3 == t1) continue;
+                    int tslen = (int)(t1 - line);
+                    if (tslen > 19 || strlen(t3+1) > 19) continue;
+                    if (rv_n >= rv_cap) { rv_cap *= 2; rv = realloc(rv, rv_cap * sizeof(rv_ent)); }
+                    memcpy(rv[rv_n].ts, line, tslen);
+                    rv[rv_n].ts[tslen] = 0;
+                    strcpy(rv[rv_n].cks, t3 + 1);
+                    rv_n++;
+                }
+                fclose(f);
+            }
+        }
+        qsort(rv, rv_n, sizeof(rv_ent), cmp_rv_ent_desc);
+
+        /* Step 4: process rev files newest-first */
+        for (int r = 0; r < rv_n && events_n < effective_limit * 3; r++) {
+            char *revcks = rv[r].cks;
+            span ts_span = S(rv[r].ts);
+            time_t rev_ts = parse_rev_fname(ts_span);
+
+            /* binary search for first bm entry matching revcks */
+            int lo = 0, hi = bm_n - 1, first = -1;
+            while (lo <= hi) {
+                int mid = (lo + hi) / 2;
+                int c = strcmp(bm[mid].revcks, revcks);
+                if (c < 0) lo = mid + 1;
+                else if (c > 0) hi = mid - 1;
+                else { first = mid; hi = mid - 1; }
+            }
+            if (first < 0) continue;
+
+            for (int b = first; b < bm_n && strcmp(bm[b].revcks, revcks) == 0; b++) {
+                char *blkcks = bm[b].blkcks;
+
+                /* binary search blkcks-id for block ID */
+                int blo = 0, bhi = bi_n - 1;
+                char *blockid = NULL;
+                while (blo <= bhi) {
+                    int mid = (blo + bhi) / 2;
+                    int c = strcmp(bi[mid].cks, blkcks);
+                    if (c < 0) blo = mid + 1;
+                    else if (c > 0) bhi = mid - 1;
+                    else { blockid = bi[mid].id; break; }
+                }
+                if (!blockid) continue;
+
+                int bidlen = strlen(blockid);
+                checksum ck;
+                ck.__u = strtoull(blkcks, NULL, 16);
+
+                int found = -1;
+                for (int s = 0; s < n_states; s++) {
+                    if ((int)len(states[s].id) == bidlen &&
+                        memcmp(states[s].id.buf, blockid, bidlen) == 0) {
+                        found = s; break;
+                    }
+                }
+                if (found >= 0) {
+                    state_ent *se = &states[found];
+                    int cks_match = 0;
+                    for (int j = 0; j < se->n_cks; j++)
+                        if (se->cks[j].__u == ck.__u) { cks_match = 1; break; }
+                    if (cks_match) {
+                        se->ts = rev_ts;
+                    } else if (se->ts == rev_ts) {
+                        if (se->n_cks < 8) se->cks[se->n_cks++] = ck;
+                    } else {
+                        if (events_n >= events_cap) { events_cap *= 2; events = realloc(events, events_cap * sizeof(event_ent)); }
+                        u8 *copy = malloc(bidlen);
+                        memcpy(copy, blockid, bidlen);
+                        events[events_n].ts = se->ts;
+                        events[events_n].id = (span){copy, copy + bidlen};
+                        events_n++;
+                        if (se->n_cks < 8) se->cks[se->n_cks++] = ck;
+                        se->ts = rev_ts;
+                    }
+                } else if (n_states < 1024) {
+                    u8 *copy = malloc(bidlen);
+                    memcpy(copy, blockid, bidlen);
+                    states[n_states].id = (span){copy, copy + bidlen};
+                    states[n_states].n_cks = 1;
+                    states[n_states].cks[0] = ck;
+                    states[n_states].ts = rev_ts;
+                    n_states++;
                 }
             }
-            if (cks_match) {
-                se->ts = ts;
-            } else if (se->ts == ts) {
-                if (se->n_cks < 8) se->cks[se->n_cks++] = ck;
-            } else {
-                if (events_n < 512) {
-                    u8 *copy = malloc(len(bid));
-                    memcpy(copy, bid.buf, len(bid));
+        }
+
+        free(bi);
+        free(bm);
+        free(rv);
+    }
+
+    goto display;
+
+fallback:
+    {
+        size_t n_revblocks = state->revs.n_revblocks;
+        for (size_t i = 0; i < n_revblocks && events_n < effective_limit * 3; i++) {
+            if (i % 1000 == 0) {
+                fprintf(stderr, "\r%zu/%zu", i, n_revblocks);
+                fflush(stderr);
+            }
+            spans_arena_push();
+            spans ids = load_revblock_ids(i);
+            if (ids.n == 0) { spans_arena_pop(); continue; }
+            span bid = ids.a[0];
+            rev_block *rb = &state->revs.revblocks[i];
+            checksum ck = selected_checksum(rb->contents);
+            time_t ts = rb->timestamp;
+            int found = -1;
+            for (int s = 0; s < n_states; s++) {
+                if (len(states[s].id) == len(bid) && memcmp(states[s].id.buf, bid.buf, len(bid)) == 0) {
+                    found = s; break;
+                }
+            }
+            if (found >= 0) {
+                state_ent *se = &states[found];
+                int cks_match = 0;
+                for (int j = 0; j < se->n_cks; j++)
+                    if (memcmp(&se->cks[j], &ck, sizeof(checksum)) == 0) { cks_match = 1; break; }
+                if (cks_match) { se->ts = ts; }
+                else if (se->ts == ts) { if (se->n_cks < 8) se->cks[se->n_cks++] = ck; }
+                else {
+                    if (events_n >= events_cap) { events_cap *= 2; events = realloc(events, events_cap * sizeof(event_ent)); }
+                    u8 *copy = malloc(len(bid)); memcpy(copy, bid.buf, len(bid));
                     events[events_n].ts = se->ts;
                     events[events_n].id = (span){copy, copy + len(bid)};
                     events_n++;
+                    if (se->n_cks < 8) se->cks[se->n_cks++] = ck;
+                    se->ts = ts;
                 }
-                if (se->n_cks < 8) se->cks[se->n_cks++] = ck;
-                se->ts = ts;
-            }
-        } else {
-            if (n_states < 1024) {
-                u8 *copy = malloc(len(bid));
-                memcpy(copy, bid.buf, len(bid));
+            } else if (n_states < 1024) {
+                u8 *copy = malloc(len(bid)); memcpy(copy, bid.buf, len(bid));
                 states[n_states].id = (span){copy, copy + len(bid)};
-                states[n_states].n_cks = 1;
-                states[n_states].cks[0] = ck;
-                states[n_states].ts = ts;
-                n_states++;
+                states[n_states].n_cks = 1; states[n_states].cks[0] = ck;
+                states[n_states].ts = ts; n_states++;
             }
+            spans_arena_pop();
         }
-        spans_arena_pop();
+        fprintf(stderr, "\r%*s\r", 30, "");
+        fflush(stderr);
     }
 
-    fprintf(stderr, "\r%*s\r", 30, "");
-    fflush(stderr);
-
-    // Bubble sort events newest first
-    for (int i = 0; i < events_n - 1; i++) {
-        for (int j = 0; j < events_n - i - 1; j++) {
+display:
+    for (int i = 0; i < events_n - 1; i++)
+        for (int j = 0; j < events_n - i - 1; j++)
             if (events[j].ts < events[j + 1].ts) {
-                event_ent tmp = events[j];
-                events[j] = events[j + 1];
-                events[j + 1] = tmp;
+                event_ent tmp = events[j]; events[j] = events[j + 1]; events[j + 1] = tmp;
             }
-        }
-    }
-
     prt("Recent block changes\n\n");
     int shown = 0;
     time_t last_ts = 0;
@@ -11661,8 +12752,7 @@ void handle_history_recent(double log_gap_factor, int limit) {
     char timebuf[64];
     for (int i = 0; i < events_n && shown < effective_limit; i++) {
         time_t ts = events[i].ts;
-        if (log_gap_factor > 0 && shown > 0 && (last_ts - ts) < (time_t)gap)
-            continue;
+        if (log_gap_factor > 0 && shown > 0 && (last_ts - ts) < (time_t)gap) continue;
         struct tm tm;
         localtime_r(&ts, &tm);
         strftime(timebuf, sizeof(timebuf), "%F %T", &tm);
@@ -11671,18 +12761,11 @@ void handle_history_recent(double log_gap_factor, int limit) {
         gap *= log_gap_factor > 0 ? log_gap_factor : 1.0;
         shown++;
     }
-
-    for (int i = 0; i < n_states; i++) {
-        free(states[i].id.buf);
-    }
-    for (int i = 0; i < events_n; i++) {
-        free(events[i].id.buf);
-    }
-    free(states);
-    free(events);
+    for (int i = 0; i < n_states; i++) free(states[i].id.buf);
+    for (int i = 0; i < events_n; i++) free(events[i].id.buf);
+    free(states); free(events);
     flush();
 }
-
 /* #grep_blocks */
 void grep_blocks(span pattern) {
     regex_t regex;

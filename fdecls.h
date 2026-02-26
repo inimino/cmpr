@@ -2,10 +2,18 @@ rope rope_new(size_t);
 int rope_isnull(rope); // 1 if initialized, 0 otherwise
 void rope_release(rope*);
 span rope_alloc_atleast(rope*,size_t);
+void build_rev_cks(void);
+void build_cks_style(void);
+void build_blkmap(void);
 void event_add_internal(span event_str, unsigned char strength);
 spans dir_listing(span dirname);
 void event_parse_sn(span content);
 void event_parse_sn(span);
+void build_cks_rev(void);
+void build_all_indices(void);
+void build_rev_cks(void);
+void build_cks_style(void);
+void build_blkmap(void);
 checksums load_revblock_checksums(int revblock_idx);
 spans load_revblock_ids(int revblock_idx);
 Partial partial_sp_sp(span, void(*)(span,span));
