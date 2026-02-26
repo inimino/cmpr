@@ -11573,76 +11573,83 @@ void handle_history_recent(double log_gap_factor, int limit) {
 
     size_t n_revblocks = state->revs.n_revblocks;
     int effective_limit = (limit > 0) ? limit : 20;
-    state_ent *states = (state_ent*)calloc(1024, sizeof(state_ent));
-    int states_n = 0;
-    event_ent *events = (event_ent*)calloc(512, sizeof(event_ent));
+
+    state_ent *states = malloc(1024 * sizeof(state_ent));
+    int n_states = 0;
+    event_ent *events = malloc(512 * sizeof(event_ent));
     int events_n = 0;
 
     for (size_t i = 0; i < n_revblocks && events_n < effective_limit * 3; i++) {
-        if (i % 1000 == 0 && i > 0)
-            fprintf(stderr, "history scan %zu/%zu\r", i, n_revblocks);
-
+        if (i % 1000 == 0) {
+            fprintf(stderr, "\r%zu/%zu", i, n_revblocks);
+            fflush(stderr);
+        }
         spans_arena_push();
-        rev_block *rb = &state->revs.revblocks[i];
         spans ids = load_revblock_ids(i);
         if (ids.n == 0) {
             spans_arena_pop();
             continue;
         }
         span bid = ids.a[0];
+        rev_block *rb = &state->revs.revblocks[i];
         checksum ck = selected_checksum(rb->contents);
+        time_t ts = rb->timestamp;
 
-        int found = 0;
-        for (int s = 0; s < states_n; s++) {
-            int match_ck = 0, j_match = -1;
-            for (int j = 0; j < states[s].n_cks; j++)
-                if (states[s].cks[j].__u == ck.__u) { match_ck=1; j_match = j; break; }
-
-            if (len(bid) == len(states[s].id) &&
-                memcmp(bid.buf, states[s].id.buf, len(bid)) == 0) {
-                found = 1;
-                if (match_ck) {
-                    if (rb->timestamp < states[s].ts)
-                        states[s].ts = rb->timestamp;
-                } else if (states[s].ts == rb->timestamp) {
-                    if (states[s].n_cks < 8) {
-                        states[s].cks[states[s].n_cks++] = ck;
-                    }
-                } else {
-                    if (events_n < 512) {
-                        u8 *copy = malloc(len(bid));
-                        memcpy(copy, bid.buf, len(bid));
-                        events[events_n].id = (span){copy, copy + len(bid)};
-                        events[events_n].ts = states[s].ts;
-                        events_n++;
-                    }
-                    if (states[s].n_cks < 8)
-                        states[s].cks[states[s].n_cks++] = ck;
-                    states[s].ts = rb->timestamp;
-                }
+        int found = -1;
+        for (int s = 0; s < n_states; s++) {
+            if (len(states[s].id) == len(bid) && memcmp(states[s].id.buf, bid.buf, len(bid)) == 0) {
+                found = s;
                 break;
             }
         }
-        if (!found && states_n < 1024) {
-            u8 *copy = malloc(len(bid));
-            memcpy(copy, bid.buf, len(bid));
-            states[states_n].id = (span){copy, copy + len(bid)};
-            states[states_n].n_cks = 1;
-            states[states_n].cks[0] = ck;
-            states[states_n].ts = rb->timestamp;
-            states_n++;
+        if (found >= 0) {
+            state_ent *se = &states[found];
+            int cks_match = 0;
+            for (int j = 0; j < se->n_cks; j++) {
+                if (memcmp(&se->cks[j], &ck, sizeof(checksum)) == 0) {
+                    cks_match = 1;
+                    break;
+                }
+            }
+            if (cks_match) {
+                se->ts = ts;
+            } else if (se->ts == ts) {
+                if (se->n_cks < 8) se->cks[se->n_cks++] = ck;
+            } else {
+                if (events_n < 512) {
+                    u8 *copy = malloc(len(bid));
+                    memcpy(copy, bid.buf, len(bid));
+                    events[events_n].ts = se->ts;
+                    events[events_n].id = (span){copy, copy + len(bid)};
+                    events_n++;
+                }
+                if (se->n_cks < 8) se->cks[se->n_cks++] = ck;
+                se->ts = ts;
+            }
+        } else {
+            if (n_states < 1024) {
+                u8 *copy = malloc(len(bid));
+                memcpy(copy, bid.buf, len(bid));
+                states[n_states].id = (span){copy, copy + len(bid)};
+                states[n_states].n_cks = 1;
+                states[n_states].cks[0] = ck;
+                states[n_states].ts = ts;
+                n_states++;
+            }
         }
-
         spans_arena_pop();
     }
-    fprintf(stderr, "\n");
 
+    fprintf(stderr, "\r%*s\r", 30, "");
+    fflush(stderr);
+
+    // Bubble sort events newest first
     for (int i = 0; i < events_n - 1; i++) {
         for (int j = 0; j < events_n - i - 1; j++) {
-            if (events[j].ts < events[j+1].ts) {
+            if (events[j].ts < events[j + 1].ts) {
                 event_ent tmp = events[j];
-                events[j] = events[j+1];
-                events[j+1] = tmp;
+                events[j] = events[j + 1];
+                events[j + 1] = tmp;
             }
         }
     }
@@ -11651,25 +11658,26 @@ void handle_history_recent(double log_gap_factor, int limit) {
     int shown = 0;
     time_t last_ts = 0;
     double gap = 1.0;
-
+    char timebuf[64];
     for (int i = 0; i < events_n && shown < effective_limit; i++) {
         time_t ts = events[i].ts;
-        if (log_gap_factor > 0.0 && shown > 0 && last_ts - ts < (time_t)gap)
+        if (log_gap_factor > 0 && shown > 0 && (last_ts - ts) < (time_t)gap)
             continue;
-        char tb[64];
         struct tm tm;
         localtime_r(&ts, &tm);
-        strftime(tb, sizeof(tb), "%Y-%m-%d %H:%M:%S", &tm);
-        prt("  %s  %.*s\n", tb, (int)len(events[i].id), events[i].id.buf);
+        strftime(timebuf, sizeof(timebuf), "%F %T", &tm);
+        prt("  %s  %.*s\n", timebuf, (int)len(events[i].id), events[i].id.buf);
         last_ts = ts;
-        gap *= log_gap_factor > 0.0 ? log_gap_factor : 1.0;
+        gap *= log_gap_factor > 0 ? log_gap_factor : 1.0;
         shown++;
     }
 
-    for (int i = 0; i < states_n; i++)
-        if (states[i].id.buf) free(states[i].id.buf);
-    for (int i = 0; i < events_n; i++)
-        if (events[i].id.buf) free(events[i].id.buf);
+    for (int i = 0; i < n_states; i++) {
+        free(states[i].id.buf);
+    }
+    for (int i = 0; i < events_n; i++) {
+        free(events[i].id.buf);
+    }
     free(states);
     free(events);
     flush();
