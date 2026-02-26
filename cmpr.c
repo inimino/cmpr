@@ -21,6 +21,13 @@
 #include <math.h>
 #include <stddef.h>
 #include <regex.h>
+#if defined(__APPLE__)
+#include <spawn.h>
+#endif
+
+#if defined(__APPLE__)
+extern char **environ;
+#endif
 typedef unsigned char u8;
 typedef uint64_t u64;
 #define flush_exit(n) flush(); exit(n) // used only by handle_args; let's do this differently
@@ -7967,7 +7974,24 @@ int launch_editor(char* filename) {
         editor = "vi"; // Default to vi if EDITOR is not set
     }
 
-    pid_t pid = fork();
+#if defined(__APPLE__)
+    pid_t pid = 0;
+    char *argv[] = { editor, filename, NULL };
+    int spawn_err = posix_spawnp(&pid, editor, NULL, NULL, argv, environ);
+    if (spawn_err != 0) {
+        errno = spawn_err;
+        perror("posix_spawnp failed");
+        return -1;
+    }
+#else
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
+    pid_t pid = vfork();
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
     if (pid == -1) {
         perror("fork failed");
         exit(EXIT_FAILURE);
@@ -7975,8 +7999,7 @@ int launch_editor(char* filename) {
         // Child process
         execlp(editor, editor, filename, (char*)NULL);
         // If execlp returns, it means it failed
-        perror("execlp failed");
-        exit(EXIT_FAILURE);
+        _exit(EXIT_FAILURE);
     } else {
         // Parent process
         int status;
@@ -7987,6 +8010,16 @@ int launch_editor(char* filename) {
             return -1; // Editor didn't exit normally
         }
     }
+#endif
+
+#if defined(__APPLE__)
+    int status;
+    waitpid(pid, &status, 0);
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    return -1;
+#endif
 }
 
 
