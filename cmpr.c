@@ -3644,15 +3644,61 @@ void get_code() {
 
 
 
+/* #write_block_map */
+void write_block_map() {
+    span block_map_content = {cmp.end, cmp.end};
+    out_sav sav = out2cmp();
+
+    for (int f = 0; f < state->files.n; f++) {
+        projfile *file = &state->files.a[f];
+        prt("file: %.*s\n", (int)len(file->path), file->path.buf);
+
+        if (empty(file->contents)) continue;
+
+        int first = first_block_in_file(f);
+        int last = last_block_in_file(f);
+
+        for (int i = first; i <= last; i++) {
+            span block = state->blocks.a[i];
+            int line_num = line_for_block(block, f);
+            spans ids = ids_for_block(block);
+
+            prt("Block %d (line %d)", i + 1, line_num);
+            if (ids.n > 0) {
+                prt(": %.*s", (int)len(ids.a[0]), ids.a[0].buf);
+            }
+            prt("\n");
+        }
+    }
+
+    out_rst(sav);
+    block_map_content.end = cmp.end;
+
+    span block_map_path = prs("%.*s/block-map", (int)len(state->cmprdir), state->cmprdir.buf);
+
+    char path_cstr[4096];
+    snprintf(path_cstr, sizeof(path_cstr), "%.*s", (int)len(block_map_path), block_map_path.buf);
+
+    int should_write = 1;
+    if (access(path_cstr, F_OK) == 0) {
+        span existing = read_file_into_cmp(block_map_path);
+        should_write = !span_eq(existing, block_map_content);
+    }
+
+    if (should_write) {
+        write_to_file_span(block_map_content, block_map_path, 1);
+    }
+
+    cmp.end = block_map_content.buf;
+}
 /* #ingest */
 void ingest() {
     find_all_blocks();
     find_all_lines();
     index_block_ids();
     inp_sanity_checks();
+    write_block_map();
 }
-
-
 /* #blocks */
 /* #files */
 /* #index_block_ids */
@@ -6810,6 +6856,19 @@ int last_block_in_file(int file_idx) {
 }
 
 
+/* #line_for_block */
+int line_for_block(span block, int file_idx) {
+    span file_contents = state->files.a[file_idx].contents;
+    int line_num = 1;
+
+    for (u8 *p = file_contents.buf; p < file_contents.end && p < block.buf; p++) {
+        if (*p == '\n') {
+            line_num++;
+        }
+    }
+
+    return line_num;
+}
 /* #start_search */
 void start_search() {
     static char search_buffer[256] = {"/"}; // Static buffer for search, pre-initialized with "/"
