@@ -257,6 +257,7 @@ int paths_match_for_block_map(span, span);
 int parse_block_map_entry(span, span*, int*, int*, span*);
 spans block_ids_for_file_line(span, span, int);
 int parse_compiler_error_line(span, span*, int*);
+void handle_compiler_error();
 void replace_block_code_part(span);
 void output_save(span operation, span message);
 llm_message_handler make_output_saver(span operation);

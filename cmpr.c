@@ -21,9 +21,17 @@
 #include <math.h>
 #include <stddef.h>
 #include <regex.h>
+#if defined(__APPLE__)
+#include <spawn.h>
+#endif
+
+#if defined(__APPLE__)
+extern char **environ;
+#endif
 typedef unsigned char u8;
 typedef uint64_t u64;
 #define flush_exit(n) flush(); exit(n) // used only by handle_args; let's do this differently
+
 
 /* #dbgx */
 #define dbgd(x) prt(#x ": %d\n", x),flush()
@@ -2691,6 +2699,8 @@ for (int i = 1; i < argc; i++) {
 			ind_find_deleted = 1; action_arg = 1;
 		} else if (strcmp(arg, "--build-indices") == 0) {
 			ind_build_indices = 1; action_arg = 1;
+		} else if (strcmp(arg, "--compiler-error") == 0) {
+			ind_map_error = 1; action_arg = 1;
 		} else if (strcmp(arg, "--status") == 0) {
 			ind_status = 1; action_arg = 1;
 		} else if (strcmp(arg, "--work") == 0) {
@@ -2734,6 +2744,7 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
 
 
 
@@ -3175,8 +3186,8 @@ if (ind_file_argument) {
 	}
 
 	if (ind_map_error) {
-		prt("Error: --map-error not yet implemented\n");
-		flush_exit(1);
+		handle_compiler_error();
+		flush_exit(0);
 	}
 
 // if (ind_test_block_map) {
@@ -3284,6 +3295,7 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
+
 
 
 /* #handle_snapshot_join */
@@ -3658,9 +3670,15 @@ void write_block_map() {
         int first = first_block_in_file(f);
         int last = last_block_in_file(f);
 
+        u8 *pos = file->contents.buf;
+        int line_num = 1;
+
         for (int i = first; i <= last; i++) {
             span block = state->blocks.a[i];
-            int line_num = line_for_block(block, f);
+            while (pos < block.buf && pos < file->contents.end) {
+                if (*pos == '\n') line_num++;
+                pos++;
+            }
             spans ids = ids_for_block(block);
 
             prt("Block %d (line %d)", i + 1, line_num);
@@ -5514,7 +5532,6 @@ void build_all_indices(void) {
 void sbv_populate(sbv_state* sbvs) {
     if (sbvs->current_index <= sbvs->max_index) return;
     int prev_max = sbvs->max_index;
-    int start_idx = 0;
 
     if (sbvs->max_index == -1 && sbvs->current_index == 0) {
         // Special case: first population, search for current block in revs
@@ -5601,6 +5618,7 @@ int rev_block_match(sbv_state* sbvs, int revblock_idx) {
 
     return (n1 > 8 && n2 > 8 && inter > 8);
 }
+
 
 /* #select_block_version */
 void select_block_version() {
@@ -8027,7 +8045,30 @@ int launch_editor(char* filename) {
         editor = "vi"; // Default to vi if EDITOR is not set
     }
 
+#if defined(__APPLE__)
+    pid_t pid = 0;
+    char *argv[] = { editor, filename, NULL };
+    int spawn_err = posix_spawnp(&pid, editor, NULL, NULL, argv, environ);
+    if (spawn_err != 0) {
+        errno = spawn_err;
+        perror("posix_spawnp failed");
+        return -1;
+    }
+    int status;
+    waitpid(pid, &status, 0);
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    return -1;
+#else
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
     pid_t pid = vfork();
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
     if (pid == -1) {
         perror("fork failed");
         exit(EXIT_FAILURE);
@@ -8035,22 +8076,19 @@ int launch_editor(char* filename) {
         // Child process
         execlp(editor, editor, filename, (char*)NULL);
         // If execlp returns, it means it failed
-        perror("execlp failed");
-        exit(EXIT_FAILURE);
+        _exit(EXIT_FAILURE);
     } else {
         // Parent process
         int status;
         waitpid(pid, &status, 0);
         if (WIFEXITED(status)) {
-            return WEXITSTATUS(status); // Return the exit status of the editor
+            return WEXITSTATUS(status);
         } else {
-            return -1; // Editor didn't exit normally
+            return -1;
         }
     }
+#endif
 }
-
-
-
 /* #file_for_block */
 int file_for_block(span block) {
     for (int i = 0; i < state->files.n; ++i) {
@@ -8292,7 +8330,11 @@ void update_projfile(int file_index, span tmp_filename, span rev_path) {
     if (old_checksum.__u != 0)
         known = checksum_is_known(old_checksum);
     if (old_checksum.__u != 0 && !known)
+#ifdef __APPLE__
+        save_external_rev(file_index, file_stat.st_ctimespec);
+#else
         save_external_rev(file_index, file_stat.st_ctim);
+#endif
 
     char revpath_buf[PATH_MAX];
     s_buffer(revpath_buf, PATH_MAX, rev_path);
@@ -8317,6 +8359,7 @@ void update_projfile(int file_index, span tmp_filename, span rev_path) {
         }
     }
 }
+
 
 /* #gpt_message */
 json gpt_message(span role, span message) {
@@ -9704,6 +9747,12 @@ span help_text_search(span s) {
 "  - Use [a-zA-Z0-9_] instead of \\w\n"
 "  - Use [[:space:]] instead of \\s\n"
 "  \n"
+"  \n"
+"  IMPORTANT: Alternation uses | not \\| (this is POSIX ERE, not BRE)\n"
+"  - CORRECT: 'foo|bar'      matches foo or bar\n"
+"  - WRONG:   'foo\\|bar'    matches the literal string foo\\|bar\n"
+"  - CORRECT: '(foo|bar)baz' matches foobaz or barbaz\n"
+"  \n"
 "  Example: cmpr --grep 'handle.*help'\n"
 "  Example: cmpr --grep '#[a-z_]+'      # pointless but it's a way to search for lowercase blockids\n"
 "\n"
@@ -9741,6 +9790,8 @@ span help_text_search(span s) {
 );
   else return nullspan();
 }
+
+
 
 /* #help_text_nl2pl_impl */
 span help_text_nl2pl(span s) {
@@ -10838,193 +10889,187 @@ void handle_wants_status() {
 }
 
 /* #handle_agents_wants */
+typedef struct {
+    char *want_sn_line;  // Full SN line: "We want..." 255.
+    char *block_id;
+    char *agent_id;
+    char *state;  // "tracked", "checked", "assisted", "owned"
+    int has_check;
+    int has_fix;
+    // Event system fields
+    char *event_space;        // e.g., "BR (Block Reachability)"
+    char *last_check_time;    // e.g., "2025-12-27T05:25:46+00:00"
+    char *last_check_status;  // e.g., "constraint not satisfied"
+    int unreferenced_count;   // -1 if not applicable
+} WantInfo;
+
+static char* extract_event_space(const char *block_id_str) {
+    int block_idx = block_for_span(S((char*)block_id_str));
+    if (block_idx == -1) return NULL;
+
+    span block = state->blocks.a[block_idx];
+    span comment = block_comment_part(block);
+    if (empty(comment)) return NULL;
+
+    // Search for "Event space:" in comment
+    span needle = S("Event space:");
+    span rest = comment;
+    while (rest.buf < rest.end) {
+        u8 *line_end = rest.buf;
+        while (line_end < rest.end && *line_end != '\n') line_end++;
+        span line = {rest.buf, line_end};
+
+        if (contains(line, needle)) {
+            // Extract text after "Event space:"
+            u8 *start = line.buf;
+            while (start < line.end && (line.end - start) >= (needle.end - needle.buf)) {
+                if (memcmp(start, needle.buf, needle.end - needle.buf) == 0) {
+                    start += (needle.end - needle.buf);
+                    // Skip whitespace
+                    while (start < line.end && (*start == ' ' || *start == '\t')) start++;
+                    // Extract until end of line or newline
+                    int len = line.end - start;
+                    char *result = malloc(len + 1);
+                    memcpy(result, start, len);
+                    result[len] = '\0';
+                    return result;
+                }
+                start++;
+            }
+        }
+
+        rest.buf = line_end;
+        if (rest.buf < rest.end && *rest.buf == '\n') rest.buf++;
+    }
+
+    return NULL;
+}
+
+static char* find_latest_agent_snapshot(const char *agent_id_str) {
+    // List files in .cmpr/events/
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "grep -l 'Agent: %s' .cmpr/events/* 2>/dev/null | sort -r | head -1", agent_id_str);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) return NULL;
+
+    char path[512];
+    if (fgets(path, sizeof(path), fp)) {
+        // Remove newline
+        char *nl = strchr(path, '\n');
+        if (nl) *nl = '\0';
+        pclose(fp);
+        return strdup(path);
+    }
+
+    pclose(fp);
+    return NULL;
+}
+
+static void parse_agent_snapshot(const char *snapshot_path, WantInfo *want) {
+    FILE *fp = fopen(snapshot_path, "r");
+    if (!fp) return;
+
+    char line[1024];
+    while (fgets(line, sizeof(line), fp)) {
+        // Parse SN lines
+        if (line[0] != '"') continue;
+
+        // Find closing quote and strength
+        char *p = line + strlen(line) - 1;
+        while (p > line && (*p == '\n' || *p == '\r')) p--;
+        if (p <= line || *p != '.') continue;
+        p--;
+        while (p > line && *p >= '0' && *p <= '9') p--;
+        if (p <= line || *p != ' ') continue;
+        p--;
+        if (p <= line || *p != '"') continue;
+
+        *p = '\0';  // Terminate event string
+        char *event = line + 1;  // Skip opening quote
+
+        // Check for known event patterns
+        if (strncmp(event, "Check time: ", 12) == 0) {
+            want->last_check_time = strdup(event + 12);
+        } else if (strncmp(event, "Timestamp: ", 11) == 0 && !want->last_check_time) {
+            want->last_check_time = strdup(event + 11);
+        } else if (strncmp(event, "Agent result: ", 14) == 0) {
+            want->last_check_status = strdup(event + 14);
+        } else if (strncmp(event, "Status: ", 8) == 0 && !want->last_check_status) {
+            want->last_check_status = strdup(event + 8);
+        } else if (strncmp(event, "Unreferenced blocks: ", 21) == 0) {
+            want->unreferenced_count = atoi(event + 21);
+        }
+    }
+
+    fclose(fp);
+}
+
+static void collect_want(span line, WantInfo **wants, int *want_count, int *want_capacity) {
+    // Skip leading whitespace
+    u8 *line_start = line.buf;
+    while (line.buf < line.end && (*line.buf == ' ' || *line.buf == '\t')) {
+        line.buf++;
+    }
+
+    // Save start after whitespace
+    line_start = line.buf;
+
+    if (line.buf >= line.end || *line.buf != '"') return;
+
+    // Search backwards for pattern " <digits>.
+    u8 *p = line.end - 1;
+    if (p < line.buf || *p != '.') return;
+    u8 *line_end = p + 1;  // Save end position (inclusive of '.')
+    p--;
+
+    u8 *digit_end = p + 1;
+    while (p >= line.buf && *p >= '0' && *p <= '9') p--;
+    if (p < line.buf || p + 1 == digit_end) return;
+
+    if (*p != ' ') return;
+    p--;
+
+    if (p < line.buf || *p != '"') return;
+
+    span event_str = {line.buf + 1, p};
+
+    // Check if starts with "We want "
+    span want_prefix = S("We want ");
+    if (event_str.end - event_str.buf >= want_prefix.end - want_prefix.buf &&
+        memcmp(event_str.buf, want_prefix.buf, want_prefix.end - want_prefix.buf) == 0) {
+
+        // Allocate space if needed
+        if (*want_count >= *want_capacity) {
+            *want_capacity = *want_capacity == 0 ? 16 : *want_capacity * 2;
+            *wants = realloc(*wants, *want_capacity * sizeof(WantInfo));
+        }
+
+        // Store full SN line
+        int len = line_end - line_start;
+        (*wants)[*want_count].want_sn_line = malloc(len + 1);
+        memcpy((*wants)[*want_count].want_sn_line, line_start, len);
+        (*wants)[*want_count].want_sn_line[len] = '\0';
+
+        // Initialize other fields
+        (*wants)[*want_count].block_id = NULL;
+        (*wants)[*want_count].agent_id = NULL;
+        (*wants)[*want_count].state = "tracked";
+        (*wants)[*want_count].has_check = 0;
+        (*wants)[*want_count].has_fix = 0;
+        (*wants)[*want_count].event_space = NULL;
+        (*wants)[*want_count].last_check_time = NULL;
+        (*wants)[*want_count].last_check_status = NULL;
+        (*wants)[*want_count].unreferenced_count = -1;
+
+        (*want_count)++;
+    }
+}
+
 void handle_agents_wants() {
-    // Structure to hold want information
-    typedef struct {
-        char *want_sn_line;  // Full SN line: "We want..." 255.
-        char *block_id;
-        char *agent_id;
-        char *state;  // "tracked", "checked", "assisted", "owned"
-        int has_check;
-        int has_fix;
-        // Event system fields
-        char *event_space;        // e.g., "BR (Block Reachability)"
-        char *last_check_time;    // e.g., "2025-12-27T05:25:46+00:00"
-        char *last_check_status;  // e.g., "constraint not satisfied"
-        int unreferenced_count;   // -1 if not applicable
-    } WantInfo;
-    
     WantInfo *wants = NULL;
     int want_count = 0;
     int want_capacity = 0;
-    
-    // Helper: Extract event space from block's NL comment
-    char* extract_event_space(const char *block_id_str) {
-        int block_idx = block_for_span(S((char*)block_id_str));
-        if (block_idx == -1) return NULL;
-        
-        span block = state->blocks.a[block_idx];
-        span comment = block_comment_part(block);
-        if (empty(comment)) return NULL;
-        
-        // Search for "Event space:" in comment
-        span needle = S("Event space:");
-        span rest = comment;
-        while (rest.buf < rest.end) {
-            u8 *line_end = rest.buf;
-            while (line_end < rest.end && *line_end != '\n') line_end++;
-            span line = {rest.buf, line_end};
-            
-            if (contains(line, needle)) {
-                // Extract text after "Event space:"
-                u8 *start = line.buf;
-                while (start < line.end && (line.end - start) >= (needle.end - needle.buf)) {
-                    if (memcmp(start, needle.buf, needle.end - needle.buf) == 0) {
-                        start += (needle.end - needle.buf);
-                        // Skip whitespace
-                        while (start < line.end && (*start == ' ' || *start == '\t')) start++;
-                        // Extract until end of line or newline
-                        int len = line.end - start;
-                        char *result = malloc(len + 1);
-                        memcpy(result, start, len);
-                        result[len] = '\0';
-                        return result;
-                    }
-                    start++;
-                }
-            }
-            
-            rest.buf = line_end;
-            if (rest.buf < rest.end && *rest.buf == '\n') rest.buf++;
-        }
-        
-        return NULL;
-    }
-    
-    // Helper: Find latest snapshot for an agent
-    char* find_latest_agent_snapshot(const char *agent_id_str) {
-        // List files in .cmpr/events/
-        char cmd[512];
-        snprintf(cmd, sizeof(cmd), "grep -l 'Agent: %s' .cmpr/events/* 2>/dev/null | sort -r | head -1", agent_id_str);
-        
-        FILE *fp = popen(cmd, "r");
-        if (!fp) return NULL;
-        
-        char path[512];
-        if (fgets(path, sizeof(path), fp)) {
-            // Remove newline
-            char *nl = strchr(path, '\n');
-            if (nl) *nl = '\0';
-            pclose(fp);
-            return strdup(path);
-        }
-        
-        pclose(fp);
-        return NULL;
-    }
-    
-    // Helper: Parse snapshot file for agent status
-    void parse_agent_snapshot(const char *snapshot_path, WantInfo *want) {
-        FILE *fp = fopen(snapshot_path, "r");
-        if (!fp) return;
-        
-        char line[1024];
-        while (fgets(line, sizeof(line), fp)) {
-            // Parse SN lines
-            if (line[0] != '"') continue;
-            
-            // Find closing quote and strength
-            char *p = line + strlen(line) - 1;
-            while (p > line && (*p == '\n' || *p == '\r')) p--;
-            if (p <= line || *p != '.') continue;
-            p--;
-            while (p > line && *p >= '0' && *p <= '9') p--;
-            if (p <= line || *p != ' ') continue;
-            p--;
-            if (p <= line || *p != '"') continue;
-            
-            *p = '\0';  // Terminate event string
-            char *event = line + 1;  // Skip opening quote
-            
-            // Check for known event patterns
-            if (strncmp(event, "Check time: ", 12) == 0) {
-                want->last_check_time = strdup(event + 12);
-            } else if (strncmp(event, "Timestamp: ", 11) == 0 && !want->last_check_time) {
-                want->last_check_time = strdup(event + 11);
-            } else if (strncmp(event, "Agent result: ", 14) == 0) {
-                want->last_check_status = strdup(event + 14);
-            } else if (strncmp(event, "Status: ", 8) == 0 && !want->last_check_status) {
-                want->last_check_status = strdup(event + 8);
-            } else if (strncmp(event, "Unreferenced blocks: ", 21) == 0) {
-                want->unreferenced_count = atoi(event + 21);
-            }
-        }
-        
-        fclose(fp);
-    }
-    
-    // Step 1: Collect all wants using handle_wants logic
-    // Helper to parse SN line and extract want
-    void collect_want(span line, const char *source_file) {
-        // Skip leading whitespace
-        u8 *line_start = line.buf;
-        while (line.buf < line.end && (*line.buf == ' ' || *line.buf == '\t')) {
-            line.buf++;
-        }
-        
-        // Save start after whitespace
-        line_start = line.buf;
-        
-        if (line.buf >= line.end || *line.buf != '"') return;
-        
-        // Search backwards for pattern " <digits>.
-        u8 *p = line.end - 1;
-        if (p < line.buf || *p != '.') return;
-        u8 *line_end = p + 1;  // Save end position (inclusive of '.')
-        p--;
-        
-        u8 *digit_end = p + 1;
-        while (p >= line.buf && *p >= '0' && *p <= '9') p--;
-        if (p < line.buf || p + 1 == digit_end) return;
-        
-        if (*p != ' ') return;
-        p--;
-        
-        if (p < line.buf || *p != '"') return;
-        
-        span event_str = {line.buf + 1, p};
-        
-        // Check if starts with "We want "
-        span want_prefix = S("We want ");
-        if (event_str.end - event_str.buf >= want_prefix.end - want_prefix.buf &&
-            memcmp(event_str.buf, want_prefix.buf, want_prefix.end - want_prefix.buf) == 0) {
-            
-            // Allocate space if needed
-            if (want_count >= want_capacity) {
-                want_capacity = want_capacity == 0 ? 16 : want_capacity * 2;
-                wants = realloc(wants, want_capacity * sizeof(WantInfo));
-            }
-            
-            // Store full SN line
-            int len = line_end - line_start;
-            wants[want_count].want_sn_line = malloc(len + 1);
-            memcpy(wants[want_count].want_sn_line, line_start, len);
-            wants[want_count].want_sn_line[len] = '\0';
-            
-            // Initialize other fields
-            wants[want_count].block_id = NULL;
-            wants[want_count].agent_id = NULL;
-            wants[want_count].state = "tracked";
-            wants[want_count].has_check = 0;
-            wants[want_count].has_fix = 0;
-            wants[want_count].event_space = NULL;
-            wants[want_count].last_check_time = NULL;
-            wants[want_count].last_check_status = NULL;
-            wants[want_count].unreferenced_count = -1;
-            
-            want_count++;
-        }
-    }
     
     // Scan loaded blocks for wants
     for (int i = 0; i < state->blocks.n; i++) {
@@ -11038,7 +11083,7 @@ void handle_agents_wants() {
                 while (line_end < rest.end && *line_end != '\n') line_end++;
                 
                 span line = {rest.buf, line_end};
-                collect_want(line, NULL);
+                collect_want(line, &wants, &want_count, &want_capacity);
                 
                 rest.buf = line_end;
                 if (rest.buf < rest.end && *rest.buf == '\n') rest.buf++;
@@ -14045,6 +14090,62 @@ int parse_compiler_error_line(span line, span* path, int* line_number) {
 }
 
 
+/* #handle_compiler_error */
+void handle_compiler_error() {
+    size_t capacity = 1 << 20;
+    size_t size = 0;
+    u8 *buffer = malloc(capacity);
+    if (!buffer) { prt("Error: malloc failed\n"); flush_exit(1); }
+    while (1) {
+        if (size == capacity) {
+            capacity *= 2;
+            if (capacity > (1ULL << 24)) { prt("Error: input too large\n"); free(buffer); flush_exit(1); }
+            buffer = realloc(buffer, capacity);
+            if (!buffer) { prt("Error: realloc failed\n"); flush_exit(1); }
+        }
+        size_t n = fread(buffer + size, 1, capacity - size, stdin);
+        if (n == 0) break;
+        size += n;
+    }
+    span input = {buffer, buffer + size};
+
+    while (!empty(input)) {
+        span line = next_line(&input);
+        span path;
+        int line_number;
+
+        if (parse_compiler_error_line(line, &path, &line_number)) {
+            int file_idx = -1;
+            for (int f = 0; f < state->files.n; f++) {
+                if (paths_match_for_block_map(state->files.a[f].path, path)) {
+                    file_idx = f;
+                    break;
+                }
+            }
+            if (file_idx >= 0) {
+                int first = first_block_in_file(file_idx);
+                int last = last_block_in_file(file_idx);
+                int best = -1;
+                for (int i = first; i >= 0 && i <= last; i++) {
+                    if (file_for_block(state->blocks.a[i]) != file_idx) continue;
+                    int bl = line_for_block(state->blocks.a[i], file_idx);
+                    if (bl <= line_number) best = i;
+                    else break;
+                }
+                if (best >= 0) {
+                    span id = id_for_block(state->blocks.a[best]);
+                    if (!empty(id)) {
+                        prt("%.*s  [%.*s]\n", (int)len(line), line.buf, (int)len(id), id.buf);
+                        continue;
+                    }
+                }
+            }
+        }
+        prt("%.*s\n", (int)len(line), line.buf);
+    }
+    free(buffer);
+    flush();
+}
 /* #replace_block_code_part */
 void replace_block_code_part(span new_code) {
    new_code = strip_markdown_codeblock(new_code);
