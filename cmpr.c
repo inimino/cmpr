@@ -2126,9 +2126,10 @@ void read_(int argc, char** argv) {
             prt("Failed to open %.*s\n", len(state->open_block_id), state->open_block_id.buf);
             flush_exit(1);
         }
-        state->curr_block_idx = idx;
+        set_current_block(idx);
     }
 }
+
 /* #call_llm */
 void call_llm(span model, json messages, llm_message_handler cb) {
     network_ret ret;
@@ -5387,6 +5388,7 @@ void build_blkmap(void) {
         span lang = S(style_str);
         spans blocks = find_blocks_language(content, lang);
 
+        int wrote_any = 0;
         for (int b = 0; b < blocks.n; b++) {
             if (len(blocks.a[b]) == 0) continue;
             long by0 = blocks.a[b].buf - content.buf;
@@ -5398,6 +5400,7 @@ void build_blkmap(void) {
             snprintf(bcks_hex, sizeof(bcks_hex), "%016llX", (unsigned long long)bcks.__u);
 
             /* write revcks-blkmap row */
+            wrote_any = 1;
             fprintf(out_blkmap, "%s\t%d\t%ld\t%ld\t%s\n",
                     revcks, b + 1, by0, by1, bcks_hex);
 
@@ -5415,6 +5418,10 @@ void build_blkmap(void) {
                 spans_arena_pop();
                 cks_set_add(&idone_set, bcks_hex);
             }
+        }
+        if (!wrote_any) {
+            /* sentinel for empty/blockless rev so done_set picks it up next run */
+            fprintf(out_blkmap, "%s\t0\t0\t0\t0000000000000000\n", revcks);
         }
         spans_arena_pop();
         free(buf);
@@ -5441,6 +5448,8 @@ cleanup:
     cks_set_free(&done_set);
     cks_set_free(&idone_set);
 }
+
+
 /* #build_cks_rev */
 void build_cks_rev(void) {
     span revdir = get_revdir();
@@ -5510,7 +5519,8 @@ void build_cks_rev(void) {
         rename(tmp_path, idx_path);
     }
 
-    fprintf(stderr, "cks-rev: %d rows\n", n);
+    /* cks-rev is derived; only report when content changes would be nice,
+       but for now it silently rewrites */
 
     for (int i = 0; i < n; i++) free(lines[i]);
     free(lines);
@@ -5521,13 +5531,12 @@ void build_cks_style(void);
 void build_blkmap(void);
 
 void build_all_indices(void) {
-    fprintf(stderr, "Building revision indices...\n");
     build_rev_cks();
     build_cks_style();
     build_blkmap();
     build_cks_rev();
-    fprintf(stderr, "Done.\n");
 }
+
 /* #sbv_populate */
 void sbv_populate(sbv_state* sbvs) {
     if (sbvs->current_index <= sbvs->max_index) return;
@@ -12268,11 +12277,8 @@ void handle_history(span blockid, double log_gap_factor, int limit) {
     char idx_path[2048];
     snprintf(idx_path, sizeof(idx_path), "%.*s/../cache/indices/blkcks-id",
              (int)len(revdir), revdir.buf);
+    build_all_indices();
     FILE *f = fopen(idx_path, "r");
-    if (!f) {
-        build_all_indices();
-        f = fopen(idx_path, "r");
-    }
     if (f) {
         fclose(f);
         clear_display();
@@ -12289,6 +12295,7 @@ void handle_history(span blockid, double log_gap_factor, int limit) {
     else
         handle_history_recent(log_gap_factor, limit);
 }
+
 /* #handle_history_blockid */
 void handle_history_blockid(span blockid, double log_gap_factor, int limit) {
     typedef struct {
@@ -12870,6 +12877,8 @@ display:
     free(states); free(events);
     flush();
 }
+
+
 /* #grep_blocks */
 void grep_blocks(span pattern) {
     regex_t regex;
