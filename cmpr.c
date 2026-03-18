@@ -17,6 +17,10 @@
 #include <limits.h>
 #include <termios.h>
 #include <errno.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <signal.h>
 #include <time.h>
 #include <math.h>
 #include <stddef.h>
@@ -31,6 +35,7 @@ extern char **environ;
 typedef unsigned char u8;
 typedef uint64_t u64;
 #define flush_exit(n) flush(); exit(n) // used only by handle_args; let's do this differently
+
 
 
 /* #dbgx */
@@ -59,6 +64,7 @@ u8 *output_space;
 u8 *cmp_space;
 span out, inp, cmp;
 span* outp;
+int flush_fd;
 
 int empty(span);
 int len(span);
@@ -110,6 +116,7 @@ int copy_file(const char *src, const char *dest); // TODO: maybe take spans inst
 span inp_compl();
 span cmp_compl();
 span out_compl();
+
 /* #read_stdin_into_cmp */
 span read_stdin_into_cmp() {
   span ret = {cmp.end,cmp.end};
@@ -151,6 +158,7 @@ void init_spans_ioc(size_t i, size_t o, size_t c) {
   cmp.buf = cmp_space;
   cmp.end = cmp_space;
   outp = &out;
+  flush_fd = STDOUT_FILENO;
 }
 
 void bksp() { (*outp).end--; }
@@ -226,6 +234,7 @@ const int ALWAYS_FLUSH = 0;
 
     We add mkdir_p and pathpart just to simplify out2atp.
  */
+
 
 /* #copy_file */
 int copy_file(const char *src, const char *dest) {
@@ -423,10 +432,15 @@ void wrs_esc(span s) {
 void flush() {
   int *WRITTEN = (output_space < outp->end && outp->end < output_space + BUF_SZ) ? &out_WRITTEN : &cmp_WRITTEN;
   if (*WRITTEN < len(*outp)) {
-    //fprintf(flush_target,"%.*s", len(*outp) - *WRITTEN, outp->buf + *WRITTEN);
-    fwrite(outp->buf + *WRITTEN, 1, len(*outp) - *WRITTEN, stdout);
+    int n = len(*outp) - *WRITTEN;
+    u8 *p = outp->buf + *WRITTEN;
+    while (n > 0) {
+      int w = write(flush_fd, p, n);
+      if (w <= 0) break;
+      p += w; n -= w;
+    }
     *WRITTEN = len(*outp);
-    fflush(stdout);
+    if (flush_fd == STDOUT_FILENO) fflush(stdout);
   }
 }
 
@@ -443,6 +457,8 @@ void flush_err() {
     fflush(stderr);
   }
 }
+
+
 
 /* #write_to_file */
 void write_to_file_2(span, const char*, int);
@@ -2501,6 +2517,7 @@ int ind_conf = 0;
 	int ind_lpp = 0;
 	int ind_es_create = 0;
 	int ind_history = 0;
+	int ind_serve = 0;
 	int ind_log_gap = 0;
 	int ind_limit = 0;
 	char *arg_work = NULL;
@@ -2542,8 +2559,10 @@ int ind_conf = 0;
 	char *arg_history = NULL;
 	char *arg_log_gap = NULL;
 	char *arg_limit = NULL;
+	char *arg_serve_port = NULL;
 
 	int action_arg = 0;
+
 
 
 
@@ -2727,6 +2746,11 @@ for (int i = 1; i < argc; i++) {
 		} else if (strcmp(arg, "--limit") == 0) {
 			if (i+1 >= argc) { prt("Missing <N> argument for --limit\n"); flush(); exit(1); }
 			ind_limit = 1; arg_limit = argv[++i];
+	} else if (strcmp(arg, "--serve") == 0) {
+		ind_serve = 1; action_arg = 1;
+		if (i+1 < argc && argv[i+1][0] != '-') {
+			arg_serve_port = argv[++i];
+		}
 		} else if (arg[0] == '-' && arg[1] == '-') {
 			prt("Unknown flag: %s\n", arg); flush(); exit(1);
 		} else if (arg[0] == '#') {
@@ -2745,6 +2769,7 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
 
 
 
@@ -2920,7 +2945,8 @@ if (ind_file_argument) {
 	             ind_induced_single +
 	             ind_lpp +
 	             ind_es_create +
-	             ind_history;
+	             ind_history +
+	             ind_serve;
 
 	if (action_arg > 1) {
 		prt("Error: Only one action argument may be used at a time.\n");
@@ -2931,7 +2957,7 @@ if (ind_file_argument) {
 	check_dirs();
 
 	// Get code database if needed (for most commands)
-	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_build && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es && !ind_P && !ind_E && !ind_induced && !ind_induced_single && !ind_lpp && !ind_es_create) {
+	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_build && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es && !ind_P && !ind_E && !ind_induced && !ind_induced_single && !ind_lpp && !ind_es_create && !ind_serve) {
 		get_code();
 	}
 
@@ -3294,8 +3320,15 @@ if (ind_file_argument) {
 		flush_exit(0);
 	}
 
+	if (ind_serve) {
+		int port = arg_serve_port ? atoi(arg_serve_port) : 2677;
+		handle_serve(port);
+		// handle_serve does not return
+	}
+
 	// No action arg - return to enter interactive mode
 }
+
 
 
 
@@ -8871,7 +8904,9 @@ void print_code(int index) {
     span block = state->blocks.a[index];
     span comment_part = block_comment_part(block);
     if (comment_part.end == NULL) {
+        flush();
         prt("Warning: block %d has no comment terminator (malformed block)\n", index + 1);
+        flush_err();
         return;
     }
     span code_part = block;
@@ -8890,8 +8925,6 @@ void print_block(int index) {
 int count_blocks() {
     return state->blocks.n;
 }
-
-
 /* #print_block_ofra */
 void print_block_ofra(int index) {
     if (index < 0 || index >= state->blocks.n) return;
@@ -9409,23 +9442,57 @@ void handle_install_script(char *script_name) {
 span help_text_summary(span s) {
   if (empty(s) || span_eq(s, S("help_text_summary")))
     return S(
-"cmpr code swiss army knife\n"
+"cmpr \xe2\x80\x94 code swiss army knife\n"
 "\n"
-"Usage: cmpr [--conf <filepath>] [--print-conf|--help|--init|--version|--status] [(--print-block [--ofra]|--print-code|--print-comment|--expand-block) <id>] [--rewritepl <id>] [--prompt <id>] [--llm] [--content-index <search>] [--grep <pattern>] [--count-blocks|--files-blocks|--print-all|--inbox] [--after <id>] [--before <ts>] [(--replace|--replace-comment|--replace-code|--replace-current) <id>] [--run <block_id>] [--build] [--agents] [--install-agent <name>] [--install-script <name>] [--checksum] [--find-deleted] [--T0] [--event <string> --strength <value>] [--event-stdin --strength <value>] [--event-file <path> --strength <value>] [--query <string>] [--memorize] [--recall] [--recall-first] [--T] [--trace] [--work [event]] [--event-spaces|--es] [--P|--pattern] [--E] [--induced <es>] [--induced-single <event>] [--lpp <es1> <es2>] [--wants [--blocks]] [--wants-status] [--agents-wants] [--wants-dashboard] [--event-report] [--export-docs] [--history [#blockid] [--log-gap [factor]] [--limit N]] [FILE|-]\n"
+"Setup:\n"
+"  --init  --version  --status  --print-conf  --conf <filepath>\n"
 "\n"
-"For help on available topics: cmpr --help topics\n"
-"Every CLI flag can also be used after --help to get a description of that flag or usage examples: cmpr --help --grep\n"
+"Reading blocks:\n"
+"  --print-block <id>  --print-comment <id>  --print-code <id>\n"
+"  --expand-block <id>  --count-blocks  --files-blocks  --print-all\n"
+"  --inbox\n"
+"\n"
+"Searching:\n"
+"  --grep <pattern>\n"
+"\n"
+"Editing:\n"
+"  --after <id>  --replace <id>\n"
+"  --replace-comment <id>  --replace-code <id>\n"
+"  --replace-current\n"
+"\n"
+"Building:\n"
+"  --build\n"
+"\n"
+"History:\n"
+"  --history [#blockid] [--log-gap [factor]] [--limit N]\n"
+"  --find-deleted\n"
+"\n"
+"Code generation:\n"
+"  --rewritepl <id>  --prompt <id>\n"
+"\n"
+"Scripts:\n"
+"  --run <block_id>\n"
+"\n"
+"Events:\n"
+"  --T0  --T  --query <string>  --memorize  --recall  --recall-first\n"
+"  --event <string>\n"
+"    --strength <value>\n"
+"\n"
+"Agents & wants:\n"
+"  --agents  --wants  --wants-status  --work [event]\n"
+"\n"
+"Server:\n"
+"  --serve [port]\n"
+"\n"
+"Utilities:\n"
+"  --llm  --checksum  --content-index <search>\n"
+"\n"
+"Topic guides: cmpr --help topics\n"
+"Per-flag help: cmpr --help --<flag>\n"
 );
   else
     return nullspan();
 }
-
-
-
-
-
-
-
 /* #help_text_topics_impl */
 span help_text_topics(span s) {
   if (empty(s) || span_eq(S("help_text_topics"), s))
@@ -11419,57 +11486,115 @@ void handle_work(char *event_arg) {
     system((char*)cmd.buf);
 }
 /* #handle_trace */
+static int read_entire_file(const char *path, char **out_buf, size_t *out_size) {
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        return 0;
+    }
+
+    size_t cap = 4096;
+    char *buf = malloc(cap);
+    if (!buf) {
+        fclose(f);
+        return 0;
+    }
+
+    size_t total = 0;
+    while (1) {
+        if (total + 1 >= cap) {
+            size_t next_cap = cap * 2;
+            if (next_cap <= cap) {
+                next_cap = cap + 1;
+            }
+            char *tmp = realloc(buf, next_cap);
+            if (!tmp) {
+                free(buf);
+                fclose(f);
+                return 0;
+            }
+            buf = tmp;
+            cap = next_cap;
+        }
+
+        size_t want = cap - total - 1;
+        size_t got = fread(buf + total, 1, want, f);
+        total += got;
+        if (got == 0) {
+            break;
+        }
+    }
+
+    buf[total] = '\0';
+    fclose(f);
+    *out_buf = buf;
+    *out_size = total;
+    return 1;
+}
+
 void handle_trace() {
     char *t_path = ".cmpr/T";
-    char prev_content[65536] = {0};
-    
-    // Load initial T content
-    FILE *f = fopen(t_path, "r");
-    if (f) {
-        size_t n = fread(prev_content, 1, sizeof(prev_content)-1, f);
-        prev_content[n] = '\0';
-        fclose(f);
-        prt("=== Initial T ===\n%s", prev_content);
-    }
-    
-    // Watch for changes using poll on file mtime
-    struct stat st, prev_st;
+    char *prev_content = NULL;
+    size_t prev_size = 0;
+    struct stat prev_st;
+
     if (stat(t_path, &prev_st) < 0) {
         prt("Error: Cannot stat %s\n", t_path);
         return;
     }
-    
+
+    if (read_entire_file(t_path, &prev_content, &prev_size) && prev_size > 0) {
+        prt("=== Initial T ===\n%s", prev_content);
+    } else if (prev_size == 0 && prev_content) {
+        prt("=== Initial T ===\n--- T empty ---\n");
+    }
+
     prt("=== Watching T for changes (Ctrl+C to stop) ===\n");
     flush();
-    
+
     while (1) {
-        usleep(100000); // 100ms poll interval
-        
-        if (stat(t_path, &st) < 0) continue;
-        
-        if (st.st_mtime != prev_st.st_mtime || st.st_size != prev_st.st_size) {
-            prev_st = st;
-            
-            char new_content[65536] = {0};
-            f = fopen(t_path, "r");
-            if (f) {
-                size_t n = fread(new_content, 1, sizeof(new_content)-1, f);
-                new_content[n] = '\0';
-                fclose(f);
-                
-                // Print new content if different
-                if (strcmp(new_content, prev_content) != 0) {
-                    // Find what's new (simple: if content differs, show current state)
-                    if (strlen(new_content) == 0) {
-                        prt("--- T cleared ---\n");
-                    } else {
-                        prt("--- T changed ---\n%s", new_content);
-                    }
-                    flush();
-                    strcpy(prev_content, new_content);
-                }
+        usleep(100000);
+
+        struct stat st;
+        if (stat(t_path, &st) < 0) {
+            continue;
+        }
+
+        if (st.st_mtime == prev_st.st_mtime && st.st_size == prev_st.st_size) {
+            continue;
+        }
+
+        prev_st = st;
+
+        char *new_content = NULL;
+        size_t new_size = 0;
+        if (!read_entire_file(t_path, &new_content, &new_size)) {
+            continue;
+        }
+
+        int same = 0;
+        if (prev_size == new_size) {
+            if (prev_size == 0) {
+                same = 1;
+            } else if (prev_content) {
+                same = memcmp(prev_content, new_content, prev_size) == 0;
             }
         }
+
+        if (same) {
+            free(new_content);
+            continue;
+        }
+
+        if (new_size == 0) {
+            prt("--- T cleared ---\n");
+        } else {
+            prt("--- T changed ---\n%s", new_content);
+        }
+        flush();
+
+        free(prev_content);
+        prev_content = new_content;
+        prev_size = new_size;
     }
 }
 /* #handle_status */
@@ -12609,6 +12734,7 @@ void handle_history_recent(double log_gap_factor, int limit) {
         checksum cks[8];
         int n_cks;
         time_t ts;
+        time_t oldest_ts;
     } state_ent;
     typedef struct {
         time_t ts;
@@ -12770,6 +12896,7 @@ void handle_history_recent(double log_gap_factor, int limit) {
                         if (se->cks[j].__u == ck.__u) { cks_match = 1; break; }
                     if (cks_match) {
                         se->ts = rev_ts;
+                        if (rev_ts < se->oldest_ts) se->oldest_ts = rev_ts;
                     } else if (se->ts == rev_ts) {
                         if (se->n_cks < 8) se->cks[se->n_cks++] = ck;
                     } else {
@@ -12781,6 +12908,7 @@ void handle_history_recent(double log_gap_factor, int limit) {
                         events_n++;
                         if (se->n_cks < 8) se->cks[se->n_cks++] = ck;
                         se->ts = rev_ts;
+                        if (rev_ts < se->oldest_ts) se->oldest_ts = rev_ts;
                     }
                 } else if (n_states < 1024) {
                     u8 *copy = malloc(bidlen);
@@ -12789,10 +12917,14 @@ void handle_history_recent(double log_gap_factor, int limit) {
                     states[n_states].n_cks = 1;
                     states[n_states].cks[0] = ck;
                     states[n_states].ts = rev_ts;
+                    states[n_states].oldest_ts = rev_ts;
                     n_states++;
                 }
             }
         }
+
+        // Update oldest_ts for all states seen in this rev
+        // (already handled: ts is updated on cks_match, oldest_ts should track minimum)
 
         free(bi);
         free(bm);
@@ -12827,7 +12959,7 @@ fallback:
                 int cks_match = 0;
                 for (int j = 0; j < se->n_cks; j++)
                     if (memcmp(&se->cks[j], &ck, sizeof(checksum)) == 0) { cks_match = 1; break; }
-                if (cks_match) { se->ts = ts; }
+                if (cks_match) { se->ts = ts; if (ts < se->oldest_ts) se->oldest_ts = ts; }
                 else if (se->ts == ts) { if (se->n_cks < 8) se->cks[se->n_cks++] = ck; }
                 else {
                     if (events_n >= events_cap) { events_cap *= 2; events = realloc(events, events_cap * sizeof(event_ent)); }
@@ -12836,13 +12968,13 @@ fallback:
                     events[events_n].id = (span){copy, copy + len(bid)};
                     events_n++;
                     if (se->n_cks < 8) se->cks[se->n_cks++] = ck;
-                    se->ts = ts;
+                    se->ts = ts; if (ts < se->oldest_ts) se->oldest_ts = ts;
                 }
             } else if (n_states < 1024) {
                 u8 *copy = malloc(len(bid)); memcpy(copy, bid.buf, len(bid));
                 states[n_states].id = (span){copy, copy + len(bid)};
                 states[n_states].n_cks = 1; states[n_states].cks[0] = ck;
-                states[n_states].ts = ts; n_states++;
+                states[n_states].ts = ts; states[n_states].oldest_ts = ts; n_states++;
             }
             spans_arena_pop();
         }
@@ -12851,6 +12983,42 @@ fallback:
     }
 
 display:
+    // Detect appeared/disappeared blocks
+    // Find oldest rev timestamp across all states
+    time_t oldest_rev = 0;
+    for (int s = 0; s < n_states; s++) {
+        if (oldest_rev == 0 || states[s].oldest_ts < oldest_rev)
+            oldest_rev = states[s].oldest_ts;
+    }
+
+    for (int s = 0; s < n_states; s++) {
+        int idlen = len(states[s].id);
+        int in_current = 0;
+        for (int b = 0; b < state->blocks.n; b++) {
+            span bid = id_for_block(state->blocks.a[b]);
+            if (len(bid) == idlen && memcmp(bid.buf, states[s].id.buf, idlen) == 0) {
+                in_current = 1; break;
+            }
+        }
+        // Disappeared: in history but not in current blocks
+        if (!in_current) {
+            if (events_n >= events_cap) { events_cap *= 2; events = realloc(events, events_cap * sizeof(event_ent)); }
+            u8 *copy = malloc(idlen); memcpy(copy, states[s].id.buf, idlen);
+            events[events_n].ts = states[s].ts;
+            events[events_n].id = (span){copy, copy + idlen};
+            events_n++;
+        }
+        // Appeared: oldest_ts is strictly newer than the oldest rev we processed,
+        // meaning it didn't exist in older revs
+        if (in_current && states[s].oldest_ts > oldest_rev) {
+            if (events_n >= events_cap) { events_cap *= 2; events = realloc(events, events_cap * sizeof(event_ent)); }
+            u8 *copy = malloc(idlen); memcpy(copy, states[s].id.buf, idlen);
+            events[events_n].ts = states[s].oldest_ts;
+            events[events_n].id = (span){copy, copy + idlen};
+            events_n++;
+        }
+    }
+
     for (int i = 0; i < events_n - 1; i++)
         for (int j = 0; j < events_n - i - 1; j++)
             if (events[j].ts < events[j + 1].ts) {
@@ -12877,6 +13045,9 @@ display:
     free(states); free(events);
     flush();
 }
+
+
+
 
 
 /* #grep_blocks */
@@ -14811,4 +14982,779 @@ void compile() {
         sleep(1);
     }
 }
+
+/* #handle_serve */
+void handle_serve(int port) {
+	signal(SIGPIPE, SIG_IGN);
+
+	int server_fd = socket(AF_INET6, SOCK_STREAM, 0);
+	if (server_fd < 0) {
+		prt("Error: socket() failed: %s\n", strerror(errno));
+		flush_exit(1);
+	}
+
+	int opt = 1;
+	setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	int off = 0;
+	setsockopt(server_fd, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off));
+
+	struct sockaddr_in6 addr = {0};
+	addr.sin6_family = AF_INET6;
+	addr.sin6_port = htons(port);
+	addr.sin6_addr = in6addr_any;
+
+	if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+		prt("Error: bind() failed on port %d: %s\n", port, strerror(errno));
+		flush_exit(1);
+	}
+
+	if (listen(server_fd, 16) < 0) {
+		prt("Error: listen() failed: %s\n", strerror(errno));
+		flush_exit(1);
+	}
+
+	// Write pidfile
+	{
+		char pidbuf[64];
+		int n = snprintf(pidbuf, sizeof(pidbuf), "%d\n", (int)getpid());
+		span pidpath = prs("%.*s/serve.pid", len(state->cmprdir), state->cmprdir.buf);
+		write_to_file_span((span){(u8*)pidbuf, (u8*)pidbuf + n}, pidpath, 1);
+	}
+
+	// Load code once
+	get_code();
+
+	prt("cmpr serve: listening on port %d (pid %d)\n", port, (int)getpid());
+	flush();
+
+	for (;;) {
+		struct sockaddr_in6 client_addr;
+		socklen_t client_len = sizeof(client_addr);
+		int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
+		if (client_fd < 0) continue;
+
+		// Read first line
+		char linebuf[8192];
+		int linelen = 0;
+		while (linelen < (int)sizeof(linebuf) - 1) {
+			int r = read(client_fd, linebuf + linelen, 1);
+			if (r <= 0) break;
+			if (linebuf[linelen] == '\n') break;
+			linelen++;
+		}
+		if (linelen > 0 && linebuf[linelen - 1] == '\r') linelen--;
+		linebuf[linelen] = '\0';
+
+		// HTTP GET → HTML page
+		if (linelen >= 4 && memcmp(linebuf, "GET ", 4) == 0) {
+			int prev_nl = 1;
+			for (;;) {
+				char c;
+				int r = read(client_fd, &c, 1);
+				if (r <= 0) break;
+				if (c == '\n') {
+					if (prev_nl) break;
+					prev_nl = 1;
+				} else if (c != '\r') {
+					prev_nl = 0;
+				}
+			}
+			char *hdr = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n";
+			write(client_fd, hdr, strlen(hdr));
+			flush_fd = client_fd;
+			serve_html_page(client_fd);
+			flush();
+			out.end = output_space; out_WRITTEN = 0;
+			flush_fd = STDOUT_FILENO;
+			close(client_fd);
+			continue;
+		}
+
+		// Extract JSON: from POST body or raw line
+		char jsonbuf[8192];
+		int jsonlen = 0;
+		int is_http = 0;
+
+		if (linelen >= 5 && memcmp(linebuf, "POST ", 5) == 0) {
+			is_http = 1;
+			int content_length = 0;
+			char hdrbuf[4096];
+			int hi = 0;
+			for (;;) {
+				char c;
+				int r = read(client_fd, &c, 1);
+				if (r <= 0) break;
+				if (c == '\n') {
+					hdrbuf[hi] = '\0';
+					if (hi > 0 && hdrbuf[hi-1] == '\r') hdrbuf[hi-1] = '\0';
+					if (hi == 0 || hdrbuf[0] == '\0') break;
+					if (strncasecmp(hdrbuf, "Content-Length:", 15) == 0)
+						content_length = atoi(hdrbuf + 15);
+					hi = 0;
+					continue;
+				}
+				if (hi < (int)sizeof(hdrbuf) - 1) hdrbuf[hi++] = c;
+			}
+			if (content_length > 0 && content_length < (int)sizeof(jsonbuf)) {
+				int total = 0;
+				while (total < content_length) {
+					int r = read(client_fd, jsonbuf + total, content_length - total);
+					if (r <= 0) break;
+					total += r;
+				}
+				jsonlen = total;
+			}
+		} else {
+			memcpy(jsonbuf, linebuf, linelen);
+			jsonlen = linelen;
+		}
+		jsonbuf[jsonlen] = '\0';
+
+		// Parse JSON
+		span jline = {(u8*)jsonbuf, (u8*)jsonbuf + jsonlen};
+		json req = json_parse(jline);
+
+		// Send HTTP headers if needed
+		if (is_http) {
+			char *hdr = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n";
+			write(client_fd, hdr, strlen(hdr));
+		}
+
+		// Direct output to client
+		flush_fd = client_fd;
+
+		if (!json_ap(req)) {
+			prt("{\"err\":\"request must be a JSON array\"}\n");
+		} else {
+			serve_dispatch(req);
+		}
+
+		flush();
+		out.end = output_space;
+		out_WRITTEN = 0;
+		flush_fd = STDOUT_FILENO;
+		close(client_fd);
+	}
+}
+/* #serve_html_page */
+void serve_html_page(int client_fd) {
+	prt("<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">\n");
+	prt("<title>cmpr server</title>\n");
+	prt("<style>\n");
+	prt("body { font-family: monospace; max-width: 72ch; margin: 2em auto; padding: 0 1em; }\n");
+	prt("h1 { font-size: 1.4em; }\n");
+	prt("h2 { font-size: 1.1em; margin-top: 2em; }\n");
+	prt("dt { font-weight: bold; margin-top: 1em; }\n");
+	prt("dd { margin-left: 2em; }\n");
+	prt("pre { background: #f4f4f4; padding: 1em; overflow-x: auto; }\n");
+	prt("code { background: #f4f4f4; padding: 0.1em 0.3em; }\n");
+	prt(".muted { color: #666; }\n");
+	prt("</style>\n</head><body>\n");
+
+	prt("<h1>cmpr serve</h1>\n");
+	prt("<p>Version: $VERSION$</p>\n");
+	prt("<p>%d blocks in this project.</p>\n", state->blocks.n);
+
+	prt("<h2>Wire protocol</h2>\n");
+	prt("<p>Send a JSON array over TCP:</p>\n");
+	prt("<pre>[\"verb\", \"arg1\", \"arg2\"]</pre>\n");
+	prt("<p>Response is the command output. Verbs match CLI flags without the <code>--</code> prefix.</p>\n");
+
+	prt("<h2>HTTP</h2>\n");
+	prt("<p><code>GET /</code> &mdash; this page.<br>\n");
+	prt("<code>POST /</code> &mdash; JSON array body, same as wire protocol.</p>\n");
+
+	prt("<h2>Examples</h2>\n");
+	prt("<pre>");
+	prt("echo '[\"version\"]' | nc localhost 2677\n");
+	prt("echo '[\"print-block\", \"#root\"]' | nc localhost 2677\n");
+	prt("curl -s -X POST -d '[\"grep\", \"pattern\"]' localhost:2677\n");
+	prt("</pre>\n");
+
+	prt("<h2>Methods</h2>\n<dl>\n");
+
+	int col4_idx = block_from_arg("#argtable_col4");
+	if (col4_idx >= 0 && col4_idx < state->blocks.n) {
+		span col4 = block_comment_part(state->blocks.a[col4_idx]);
+		next_line(&col4);
+		next_line(&col4);
+		next_line(&col4);
+		while (!empty(col4)) {
+			span line = next_line(&col4);
+			int colon = find_char(line, ':');
+			if (colon < 0) continue;
+			span flag_part = first_n(line, colon);
+			span desc_part = {line.buf + colon + 1, line.end};
+			if (empty(flag_part)) continue;
+			while (!empty(desc_part) && *desc_part.buf == ' ') desc_part.buf++;
+			while (!empty(desc_part) && (desc_part.end[-1] == '\n' || desc_part.end[-1] == ' '))
+				desc_part.end--;
+			prt("<dt>");
+			wrs(flag_part);
+			prt("</dt>\n<dd>");
+			wrs(desc_part);
+			prt("</dd>\n");
+		}
+	}
+
+	prt("</dl>\n");
+	prt("<p class=\"muted\">Generated by cmpr --serve</p>\n");
+	prt("</body></html>\n");
+}
+/* #serve_help_json */
+void serve_help_json(void) {
+	json root = json_o();
+	json_o_extend(&root, S("version"), json_s(S("$VERSION$")));
+	json_o_extend(&root, S("blocks"), json_n(state->blocks.n));
+	json_o_extend(&root, S("protocol"), json_s(S("line-delimited JSON arrays over TCP")));
+
+	json methods = json_a();
+
+	int col4_idx = block_from_arg("#argtable_col4");
+	if (col4_idx >= 0 && col4_idx < state->blocks.n) {
+		span col4 = block_comment_part(state->blocks.a[col4_idx]);
+		next_line(&col4); // block header
+		next_line(&col4); // "4. Help strings:"
+		next_line(&col4); // blank
+		while (!empty(col4)) {
+			span line = next_line(&col4);
+			int colon = find_char(line, ':');
+			if (colon < 0) continue;
+			span flag_part = first_n(line, colon);
+			span desc_part = {line.buf + colon + 1, line.end};
+			if (empty(flag_part)) continue;
+			while (!empty(desc_part) && *desc_part.buf == ' ') desc_part.buf++;
+			while (!empty(desc_part) && (desc_part.end[-1] == '\n' || desc_part.end[-1] == ' '))
+				desc_part.end--;
+			json method = json_o();
+			json_o_extend(&method, S("name"), json_s(flag_part));
+			json_o_extend(&method, S("description"), json_s(desc_part));
+			json_a_extend(&methods, method);
+		}
+	}
+
+	json_o_extend(&root, S("methods"), methods);
+	// JSON was constructed in cmp. Write it to out.
+	wrs(root.s);
+	prt("\n");
+}
+
+/* #serve_dispatch */
+void serve_dispatch(json req) {
+	// Extract verb and up to 4 string args from JSON before handlers run
+	char verb_buf[256] = {0};
+	char arg_bufs[4][256] = {{0}};
+	int nargs = 0;
+
+	json first = json_index(0, req);
+	if (json_is_null(first) || !json_sp(first)) {
+		prt("{\"err\":\"first element must be a string verb\"}\n");
+		return;
+	}
+
+	{
+		span v = json_s2s(first, &cmp, cmp_space + BUF_SZ);
+		int vlen = len(v) < (int)sizeof(verb_buf) - 1 ? len(v) : (int)sizeof(verb_buf) - 1;
+		memcpy(verb_buf, v.buf, vlen);
+		verb_buf[vlen] = '\0';
+		cmp.end = v.buf;
+	}
+
+	for (int i = 0; i < 4; i++) {
+		json arg = json_index(i + 1, req);
+		if (json_is_null(arg)) break;
+		if (json_sp(arg)) {
+			span s = json_s2s(arg, &cmp, cmp_space + BUF_SZ);
+			int slen = len(s) < (int)sizeof(arg_bufs[0]) - 1 ? len(s) : (int)sizeof(arg_bufs[0]) - 1;
+			memcpy(arg_bufs[i], s.buf, slen);
+			arg_bufs[i][slen] = '\0';
+			cmp.end = s.buf;
+		}
+		nargs = i + 1;
+	}
+
+	span verb = S(verb_buf);
+
+	// --- Blob store (needs full content, not truncated to 256) ---
+
+	if (span_eq(verb, S("store"))) {
+		json store_arg = json_index(1, req);
+		if (json_is_null(store_arg) || !json_sp(store_arg)) {
+			prt("{\"err\":\"store requires content\"}\n");
+			return;
+		}
+		span store_content = json_s2s(store_arg, &cmp, cmp_space + BUF_SZ);
+		serve_store(store_content);
+		cmp.end = store_content.buf;
+		return;
+	}
+
+	// --- Read-only verbs ---
+
+	if (span_eq(verb, S("help"))) {
+		serve_help_json();
+		return;
+	}
+
+	if (span_eq(verb, S("version"))) {
+		prt("Version: $VERSION$\n");
+		return;
+	}
+
+	if (span_eq(verb, S("count-blocks"))) {
+		prt("%d\n", state->blocks.n);
+		return;
+	}
+
+	if (span_eq(verb, S("files-blocks"))) {
+		print_files_blocks();
+		return;
+	}
+
+	if (span_eq(verb, S("print-all"))) {
+		for (int i = 0; i < state->blocks.n; i++)
+			wrs(state->blocks.a[i]);
+		return;
+	}
+
+	if (span_eq(verb, S("print-block"))) {
+		int ofra = 0;
+		char *id = arg_bufs[0];
+		if (nargs >= 2 && strcmp(arg_bufs[0], "--ofra") == 0) {
+			ofra = 1;
+			id = arg_bufs[1];
+		}
+		if (!id[0]) { prt("{\"err\":\"print-block requires a block id\"}\n"); return; }
+		int idx = block_from_arg(id);
+		if (idx < 0 || idx >= state->blocks.n) { prt("{\"err\":\"block not found\"}\n"); return; }
+		if (ofra) print_block_ofra(idx);
+		else print_block(idx);
+		return;
+	}
+
+	if (span_eq(verb, S("print-comment"))) {
+		if (!arg_bufs[0][0]) { prt("{\"err\":\"print-comment requires a block id\"}\n"); return; }
+		int idx = block_from_arg(arg_bufs[0]);
+		if (idx < 0 || idx >= state->blocks.n) { prt("{\"err\":\"block not found\"}\n"); return; }
+		print_comment(idx);
+		return;
+	}
+
+	if (span_eq(verb, S("print-code"))) {
+		if (!arg_bufs[0][0]) { prt("{\"err\":\"print-code requires a block id\"}\n"); return; }
+		int idx = block_from_arg(arg_bufs[0]);
+		if (idx < 0 || idx >= state->blocks.n) { prt("{\"err\":\"block not found\"}\n"); return; }
+		span comment = block_comment_part(state->blocks.a[idx]);
+		if (comment.end != NULL) {
+			span code = state->blocks.a[idx];
+			code.buf = comment.end;
+			wrs(code);
+		}
+		return;
+	}
+
+	if (span_eq(verb, S("expand-block"))) {
+		if (!arg_bufs[0][0]) { prt("{\"err\":\"expand-block requires a block id\"}\n"); return; }
+		int idx = block_from_arg(arg_bufs[0]);
+		if (idx < 0 || idx >= state->blocks.n) { prt("{\"err\":\"block not found\"}\n"); return; }
+		expand_block(idx);
+		return;
+	}
+
+	if (span_eq(verb, S("grep"))) {
+		if (!arg_bufs[0][0]) { prt("{\"err\":\"grep requires a pattern\"}\n"); return; }
+		grep_blocks(S(arg_bufs[0]));
+		return;
+	}
+
+	if (span_eq(verb, S("content-index"))) {
+		if (!arg_bufs[0][0]) { prt("{\"err\":\"content-index requires a search string\"}\n"); return; }
+		content_index(S(arg_bufs[0]));
+		return;
+	}
+
+	if (span_eq(verb, S("status"))) {
+		handle_status();
+		return;
+	}
+
+	// --- Write verbs ---
+	// For writes: save out.end, do mutation (which may prt), restore out.end,
+	// then prt the response. This keeps new_rev output out of the response.
+
+	if (span_eq(verb, S("after"))) {
+		if (!arg_bufs[0][0] || !arg_bufs[1][0]) {
+			prt("{\"err\":\"after requires <block_id> <blob_id>\"}\n"); return;
+		}
+		int block_idx = block_from_arg(arg_bufs[0]);
+		if (block_idx < 0 || block_idx >= state->blocks.n) {
+			prt("{\"err\":\"block not found\"}\n"); return;
+		}
+		span blob = serve_blob_resolve(arg_bufs[1]);
+		if (empty(blob)) {
+			prt("{\"err\":\"blob not found: %s\"}\n", arg_bufs[1]); return;
+		}
+		u8 *content = malloc(len(blob));
+		memcpy(content, blob.buf, len(blob));
+		int content_len = len(blob);
+		cmp.end = blob.buf;
+
+		span block = state->blocks.a[block_idx];
+		int file_idx = file_for_block(block);
+		if (file_is_readonly(file_idx)) {
+			free(content);
+			prt("{\"err\":\"read-only file\"}\n"); return;
+		}
+		if (len(inp) + content_len >= BUF_SZ) {
+			free(content);
+			prt("{\"err\":\"buffer overflow\"}\n"); return;
+		}
+
+		// Save out position, do mutation, restore
+		int saved_fd = flush_fd;
+		flush_fd = open("/dev/null", O_WRONLY);
+
+		u8 *after_block = block.end;
+		size_t tail_len = inp.end - after_block;
+		memmove(after_block + content_len, after_block, tail_len);
+		inp.end += content_len;
+		memcpy(after_block, content, content_len);
+		free(content);
+
+		state->files.a[file_idx].contents.end += content_len;
+		for (int i = file_idx + 1; i < state->files.n; ++i) {
+			state->files.a[i].contents.buf += content_len;
+			state->files.a[i].contents.end += content_len;
+		}
+		new_rev(S(""), file_idx);
+		inp.buf = input_space; inp.end = input_space; get_code();
+
+		close(flush_fd);
+		flush_fd = saved_fd;
+		out.end = output_space; out_WRITTEN = 0;
+		prt("{\"ok\":true}\n");
+		return;
+	}
+
+	if (span_eq(verb, S("replace"))) {
+		if (!arg_bufs[0][0] || !arg_bufs[1][0]) {
+			prt("{\"err\":\"replace requires <block_id> <blob_id>\"}\n"); return;
+		}
+		int block_idx = block_from_arg(arg_bufs[0]);
+		if (block_idx < 0 || block_idx >= state->blocks.n) {
+			prt("{\"err\":\"block not found\"}\n"); return;
+		}
+		span blob = serve_blob_resolve(arg_bufs[1]);
+		if (empty(blob)) {
+			prt("{\"err\":\"blob not found: %s\"}\n", arg_bufs[1]); return;
+		}
+		u8 *content = malloc(len(blob) + 1);
+		int content_len = len(blob);
+		memcpy(content, blob.buf, content_len);
+		if (content_len == 0 || content[content_len - 1] != '\n')
+			content[content_len++] = '\n';
+		cmp.end = blob.buf;
+
+		span block = state->blocks.a[block_idx];
+		int file_idx = file_for_block(block);
+		if (file_is_readonly(file_idx)) {
+			free(content);
+			prt("{\"err\":\"read-only file\"}\n"); return;
+		}
+		ssize_t diff = (ssize_t)content_len - (ssize_t)len(block);
+		if (len(inp) + (diff > 0 ? diff : 0) >= BUF_SZ) {
+			free(content);
+			prt("{\"err\":\"buffer overflow\"}\n"); return;
+		}
+
+		int saved_fd = flush_fd;
+		flush_fd = open("/dev/null", O_WRONLY);
+
+		u8 *block_end = block.end;
+		size_t tail_len = inp.end - block_end;
+		memmove(block_end + diff, block_end, tail_len);
+		inp.end += diff;
+		memcpy(block.buf, content, content_len);
+		free(content);
+
+		state->files.a[file_idx].contents.end += diff;
+		for (int i = file_idx + 1; i < state->files.n; ++i) {
+			state->files.a[i].contents.buf += diff;
+			state->files.a[i].contents.end += diff;
+		}
+		new_rev(S(""), file_idx);
+		inp.buf = input_space; inp.end = input_space; get_code();
+
+		close(flush_fd);
+		flush_fd = saved_fd;
+		out.end = output_space; out_WRITTEN = 0;
+		prt("{\"ok\":true}\n");
+		return;
+	}
+
+	if (span_eq(verb, S("replace-comment"))) {
+		if (!arg_bufs[0][0] || !arg_bufs[1][0]) {
+			prt("{\"err\":\"replace-comment requires <block_id> <blob_id>\"}\n"); return;
+		}
+		int block_idx = block_from_arg(arg_bufs[0]);
+		if (block_idx < 0 || block_idx >= state->blocks.n) {
+			prt("{\"err\":\"block not found\"}\n"); return;
+		}
+		span blob = serve_blob_resolve(arg_bufs[1]);
+		if (empty(blob)) {
+			prt("{\"err\":\"blob not found: %s\"}\n", arg_bufs[1]); return;
+		}
+
+		span block = state->blocks.a[block_idx];
+		int file_idx = file_for_block(block);
+		if (file_is_readonly(file_idx)) {
+			cmp.end = blob.buf;
+			prt("{\"err\":\"read-only file\"}\n"); return;
+		}
+
+		span code_part = block_code_part(block);
+		int new_comment_len = len(blob);
+		u8 *content = malloc(new_comment_len + 1 + len(code_part));
+		memcpy(content, blob.buf, new_comment_len);
+		if (new_comment_len == 0 || content[new_comment_len - 1] != '\n')
+			content[new_comment_len++] = '\n';
+		memcpy(content + new_comment_len, code_part.buf, len(code_part));
+		int content_len = new_comment_len + len(code_part);
+		cmp.end = blob.buf;
+
+		ssize_t diff = (ssize_t)content_len - (ssize_t)len(block);
+		if (len(inp) + (diff > 0 ? diff : 0) >= BUF_SZ) {
+			free(content);
+			prt("{\"err\":\"buffer overflow\"}\n"); return;
+		}
+
+		int saved_fd = flush_fd;
+		flush_fd = open("/dev/null", O_WRONLY);
+
+		u8 *block_end = block.end;
+		size_t tail_len = inp.end - block_end;
+		memmove(block_end + diff, block_end, tail_len);
+		inp.end += diff;
+		memcpy(block.buf, content, content_len);
+		free(content);
+
+		state->files.a[file_idx].contents.end += diff;
+		for (int i = file_idx + 1; i < state->files.n; ++i) {
+			state->files.a[i].contents.buf += diff;
+			state->files.a[i].contents.end += diff;
+		}
+		new_rev(S(""), file_idx);
+		inp.buf = input_space; inp.end = input_space; get_code();
+
+		close(flush_fd);
+		flush_fd = saved_fd;
+		out.end = output_space; out_WRITTEN = 0;
+		prt("{\"ok\":true}\n");
+		return;
+	}
+
+	if (span_eq(verb, S("replace-code"))) {
+		if (!arg_bufs[0][0] || !arg_bufs[1][0]) {
+			prt("{\"err\":\"replace-code requires <block_id> <blob_id>\"}\n"); return;
+		}
+		int block_idx = block_from_arg(arg_bufs[0]);
+		if (block_idx < 0 || block_idx >= state->blocks.n) {
+			prt("{\"err\":\"block not found\"}\n"); return;
+		}
+		span blob = serve_blob_resolve(arg_bufs[1]);
+		if (empty(blob)) {
+			prt("{\"err\":\"blob not found: %s\"}\n", arg_bufs[1]); return;
+		}
+
+		span block = state->blocks.a[block_idx];
+		int file_idx = file_for_block(block);
+		if (file_is_readonly(file_idx)) {
+			cmp.end = blob.buf;
+			prt("{\"err\":\"read-only file\"}\n"); return;
+		}
+
+		span comment_part = block_comment_part(block);
+		int new_code_len = len(blob);
+		u8 *content = malloc(len(comment_part) + new_code_len + 1);
+		memcpy(content, comment_part.buf, len(comment_part));
+		int off = len(comment_part);
+		memcpy(content + off, blob.buf, new_code_len);
+		off += new_code_len;
+		if (new_code_len == 0 || blob.end[-1] != '\n')
+			content[off++] = '\n';
+		int content_len = off;
+		cmp.end = blob.buf;
+
+		ssize_t diff = (ssize_t)content_len - (ssize_t)len(block);
+		if (len(inp) + (diff > 0 ? diff : 0) >= BUF_SZ) {
+			free(content);
+			prt("{\"err\":\"buffer overflow\"}\n"); return;
+		}
+
+		int saved_fd = flush_fd;
+		flush_fd = open("/dev/null", O_WRONLY);
+
+		u8 *block_end = block.end;
+		size_t tail_len = inp.end - block_end;
+		memmove(block_end + diff, block_end, tail_len);
+		inp.end += diff;
+		memcpy(block.buf, content, content_len);
+		free(content);
+
+		state->files.a[file_idx].contents.end += diff;
+		for (int i = file_idx + 1; i < state->files.n; ++i) {
+			state->files.a[i].contents.buf += diff;
+			state->files.a[i].contents.end += diff;
+		}
+		new_rev(S(""), file_idx);
+		inp.buf = input_space; inp.end = input_space; get_code();
+
+		close(flush_fd);
+		flush_fd = saved_fd;
+		out.end = output_space; out_WRITTEN = 0;
+		prt("{\"ok\":true}\n");
+		return;
+	}
+
+	if (span_eq(verb, S("history"))) {
+		// Parse optional args: [blockid] [--log-gap [factor]] [--limit N]
+		span blockid = nullspan();
+		double log_gap_factor = 0.0;
+		int limit = 0;
+		for (int i = 0; i < nargs; i++) {
+			if (arg_bufs[i][0] == '#') {
+				blockid = S(arg_bufs[i]);
+			} else if (strcmp(arg_bufs[i], "--log-gap") == 0) {
+				log_gap_factor = (i + 1 < nargs && arg_bufs[i+1][0] != '-') ? atof(arg_bufs[++i]) : 2.0;
+			} else if (strcmp(arg_bufs[i], "--limit") == 0) {
+				if (i + 1 < nargs) limit = atoi(arg_bufs[++i]);
+			}
+		}
+		build_all_indices();
+		if (!empty(blockid))
+			handle_history_blockid(blockid, log_gap_factor, limit);
+		else
+			handle_history_recent(log_gap_factor, limit);
+		return;
+	}
+
+	if (span_eq(verb, S("find-deleted"))) {
+		get_revs();
+		find_all_deleted_blocks();
+		return;
+	}
+
+	// --- Event system verbs ---
+
+	if (span_eq(verb, S("T0"))) {
+		event_load_T();
+		event_T0();
+		return;
+	}
+
+	if (span_eq(verb, S("event"))) {
+		if (!arg_bufs[0][0] || !arg_bufs[1][0]) {
+			prt("{\"err\":\"event requires <string> <strength>\"}\n"); return;
+		}
+		event_load_T();
+		event_add(S(arg_bufs[0]), (unsigned char)atoi(arg_bufs[1]));
+		return;
+	}
+
+	if (span_eq(verb, S("query"))) {
+		if (!arg_bufs[0][0]) {
+			prt("{\"err\":\"query requires <string>\"}\n"); return;
+		}
+		event_load_T();
+		event_query(S(arg_bufs[0]));
+		return;
+	}
+
+	if (span_eq(verb, S("memorize"))) {
+		event_load_T();
+		event_memorize();
+		return;
+	}
+
+	if (span_eq(verb, S("recall"))) {
+		event_load_T();
+		event_recall(arg_bufs[0][0] ? S(arg_bufs[0]) : nullspan(), arg_bufs[1][0] ? S(arg_bufs[1]) : nullspan(), 0);
+		return;
+	}
+
+	if (span_eq(verb, S("recall-first"))) {
+		event_load_T();
+		event_recall(arg_bufs[0][0] ? S(arg_bufs[0]) : nullspan(), arg_bufs[1][0] ? S(arg_bufs[1]) : nullspan(), 1);
+		return;
+	}
+
+	if (span_eq(verb, S("T"))) {
+		event_load_T();
+		event_print_T();
+		return;
+	}
+
+	// Unknown verb
+	prt("{\"err\":\"unknown verb: %s\"}\n", verb_buf);
+}
+
+
+
+
+/* #serve_blob_store */
+void serve_store(span content) {
+	// Ensure blob dir exists
+	char blobdir[2048];
+	snprintf(blobdir, sizeof(blobdir), "%.*s/blob", len(state->cmprdir), state->cmprdir.buf);
+	mkdir(blobdir, 0755); // ok if exists
+
+	// Compute checksum
+	checksum cs = selected_checksum(content);
+	char hex[17];
+	snprintf(hex, sizeof(hex), "%016llX", (unsigned long long)cs.__u);
+
+	// Write blob file
+	char blobpath[2048];
+	snprintf(blobpath, sizeof(blobpath), "%s/%s", blobdir, hex);
+
+	// Only write if not already present (content-addressed, idempotent)
+	if (!readable_file(S(blobpath))) {
+		write_to_file(content, blobpath);
+	}
+
+	// GC old blobs opportunistically
+	serve_blob_gc();
+
+	// Return checksum ID
+	prt("{\"ok\":\"%s\"}\n", hex);
+}
+
+span serve_blob_resolve(char *id) {
+	char blobpath[2048];
+	snprintf(blobpath, sizeof(blobpath), "%.*s/blob/%s", len(state->cmprdir), state->cmprdir.buf, id);
+	if (!readable_file(S(blobpath))) return nullspan();
+	return read_file_into_cmp(S(blobpath));
+}
+
+void serve_blob_gc(void) {
+	char blobdir[2048];
+	snprintf(blobdir, sizeof(blobdir), "%.*s/blob", len(state->cmprdir), state->cmprdir.buf);
+
+	DIR *d = opendir(blobdir);
+	if (!d) return;
+
+	time_t now = time(NULL);
+	struct dirent *ent;
+	while ((ent = readdir(d)) != NULL) {
+		if (ent->d_name[0] == '.') continue;
+		char path[2048];
+		snprintf(path, sizeof(path), "%s/%s", blobdir, ent->d_name);
+		struct stat st;
+		if (stat(path, &st) == 0 && (now - st.st_mtime) > 3600) {
+			unlink(path);
+		}
+	}
+	closedir(d);
+}
+
 
