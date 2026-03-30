@@ -36,6 +36,9 @@ typedef unsigned char u8;
 typedef uint64_t u64;
 #define flush_exit(n) flush(); exit(n) // used only by handle_args; let's do this differently
 
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+
+
 
 
 /* #dbgx */
@@ -909,15 +912,19 @@ json json_s(span s) {
     switch (*p) {
       case '\b':
         prt("\\b");
+        break;
       case '\f':
         prt("\\f");
+        break;
       case '\n':
         prt("\\n");
         break;
       case '\r':
         prt("\\r");
+        break;
       case '\t':
         prt("\\t");
+        break;
       case '"':
         prt("\\\"");
         break;
@@ -1082,6 +1089,7 @@ json make_json(span s) { return (json){s}; }
 span json_un_s(json s) {
   return json_s2s(s, &cmp, cmp_space + BUF_SZ);
 }
+
 /* #json_parse */
 json json_parse(span s) {
   skip_whitespace(&s);
@@ -1496,6 +1504,7 @@ typedef struct ui_state {
     event_entries events;
     span manual_filename;
     span open_block_id;
+    int ind_needs;
     int count_prefix;
     int inbox_mode;
     int inbox_start_idx;
@@ -1506,6 +1515,7 @@ typedef struct ui_state {
 } ui_state;
 
 ui_state* state;
+
 /* #parse_int */
 int parse_int(span s) {
     if (empty(s) || !isdigit(*s.buf)) {
@@ -2135,6 +2145,8 @@ void read_(int argc, char** argv) {
     event_load_T();
     get_code();
 
+    if (state->ind_needs) handle_needs();
+
     // Handle open at block (cmpr #blockid)
     if (!empty(state->open_block_id)) {
         int idx = block_from_arg((char*)state->open_block_id.buf);
@@ -2145,6 +2157,7 @@ void read_(int argc, char** argv) {
         set_current_block(idx);
     }
 }
+
 
 /* #call_llm */
 void call_llm(span model, json messages, llm_message_handler cb) {
@@ -2518,6 +2531,8 @@ int ind_conf = 0;
 	int ind_es_create = 0;
 	int ind_history = 0;
 	int ind_serve = 0;
+	int ind_export_p = 0;
+	int ind_import_p = 0;
 	int ind_log_gap = 0;
 	int ind_limit = 0;
 	char *arg_work = NULL;
@@ -2560,8 +2575,12 @@ int ind_conf = 0;
 	char *arg_log_gap = NULL;
 	char *arg_limit = NULL;
 	char *arg_serve_port = NULL;
+	char *arg_export_p = NULL;
 
 	int action_arg = 0;
+
+
+
 
 
 
@@ -2746,6 +2765,15 @@ for (int i = 1; i < argc; i++) {
 		} else if (strcmp(arg, "--limit") == 0) {
 			if (i+1 >= argc) { prt("Missing <N> argument for --limit\n"); flush(); exit(1); }
 			ind_limit = 1; arg_limit = argv[++i];
+	} else if (strcmp(arg, "--needs") == 0) {
+		state->ind_needs = 1;
+	} else if (strcmp(arg, "--export-p") == 0) {
+		ind_export_p = 1; action_arg = 1;
+		if (i+1 < argc && argv[i+1][0] != '-') {
+			arg_export_p = argv[++i];
+		}
+	} else if (strcmp(arg, "--import-p") == 0) {
+		ind_import_p = 1; action_arg = 1;
 	} else if (strcmp(arg, "--serve") == 0) {
 		ind_serve = 1; action_arg = 1;
 		if (i+1 < argc && argv[i+1][0] != '-') {
@@ -2769,6 +2797,9 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
+
+
 
 
 
@@ -2946,6 +2977,8 @@ if (ind_file_argument) {
 	             ind_lpp +
 	             ind_es_create +
 	             ind_history +
+	             ind_export_p +
+	             ind_import_p +
 	             ind_serve;
 
 	if (action_arg > 1) {
@@ -2957,7 +2990,7 @@ if (ind_file_argument) {
 	check_dirs();
 
 	// Get code database if needed (for most commands)
-	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_build && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es && !ind_P && !ind_E && !ind_induced && !ind_induced_single && !ind_lpp && !ind_es_create && !ind_serve) {
+	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_build && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es && !ind_P && !ind_E && !ind_induced && !ind_induced_single && !ind_lpp && !ind_es_create && !ind_serve ) {
 		get_code();
 	}
 
@@ -3320,14 +3353,39 @@ if (ind_file_argument) {
 		flush_exit(0);
 	}
 
+	if (ind_export_p) {
+		handle_export_p(arg_export_p);
+		flush_exit(0);
+	}
+
+	if (ind_import_p) {
+		handle_import_p();
+		flush_exit(0);
+	}
+
 	if (ind_serve) {
 		int port = arg_serve_port ? atoi(arg_serve_port) : 2677;
 		handle_serve(port);
 		// handle_serve does not return
 	}
 
+	// --needs: scan for blocks needing feedback
+
 	// No action arg - return to enter interactive mode
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3814,9 +3872,10 @@ spans ids_for_block(span block) {
         }
     }
 
-    assert(ids.n >= 0);
+    assert(ids.n != (size_t)-1);
     return ids;
 }
+
 
 
 /* #block_idx */
@@ -4437,7 +4496,7 @@ void get_revs_cache_put(checksums* working_set, span bname, span content) {
         revblocks[i].sorted_line_cksums.a = NULL;
         revblocks[i].sorted_line_cksums.cap = 0;
         revblocks[i].ids = ids_for_block(blocks.a[i]);
-        assert(revblocks[i].ids.n >= 0);
+        assert(revblocks[i].ids.n != (size_t)-1);
         revblocks[i].timestamp = timestamp;
     }
 
@@ -4453,6 +4512,7 @@ void get_revs_cache_put(checksums* working_set, span bname, span content) {
     out.end = end;
     cmp.end = ce;
 }
+
 
 /* #pr_revinfo */
 void pr_checksum(checksum cksum) {
@@ -5017,16 +5077,7 @@ void build_rev_cks(void) {
             if (!isdigit(de->d_name[i])) { valid = 0; break; }
         if (!valid) continue;
 
-        /* extract ts = first 15 chars (or up to dot for fractional) */
-        char ts[32];
-        int tsi = 0;
-        while (tsi < namelen && tsi < 31) {
-            ts[tsi] = de->d_name[tsi];
-            tsi++;
-        }
-        ts[tsi] = 0;
-        /* ts is the full filename for uniqueness */
-        /* but the "ts" column is just the stem (before any dot) */
+        /* extract timestamp stem (before any dot, for grouping) */
         char ts_stem[32];
         strncpy(ts_stem, de->d_name, 31);
         ts_stem[31] = 0;
@@ -5116,6 +5167,8 @@ void build_rev_cks(void) {
     for (int i = 0; i < keys_n; i++) free(keys[i]);
     free(existing_lines); free(existing_lens); free(keys);
 }
+
+
 /* #build_cks_style */
 void build_cks_style(void) {
     span revdir = get_revdir();
@@ -13891,6 +13944,38 @@ span language_comment_ender(span language) {
 }
 
 
+/* #expand_refs_2_rec_body_pre */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+
+static span expand_stack[1024];
+static int expand_stack_n = 0;
+
+static void expand_stack_push(span id) {
+    if (expand_stack_n < 1024) expand_stack[expand_stack_n++] = id;
+}
+
+static void expand_stack_pop(void) {
+    if (expand_stack_n > 0) expand_stack_n--;
+}
+
+static int expand_stack_contains(span id) {
+    for (int i = 0; i < expand_stack_n; i++) {
+        if (span_eq(expand_stack[i], id)) return i;
+    }
+    return -1;
+}
+
+static void expand_stack_print_cycle(int cycle_start, span id) {
+    prt("Reference cycle: ");
+    for (int i = cycle_start; i < expand_stack_n; i++) {
+        prt("%.*s -> ", len(expand_stack[i]), expand_stack[i].buf);
+    }
+    wrs(id);
+    terpri();
+    flush_exit(1);
+}
+
 /* #expand_refs_2 */
 span expand_refs_2(span block, span mode) {
     span ret = {cmp.end, cmp.end};
@@ -13913,21 +13998,22 @@ span expand_refs_2(span block, span mode) {
 }
 
 
+
+
 /* #expand_refs_2_rec */
 void expand_refs_2_rec_both(span block, span transform, spans* already, int comment_context, int depth) {
-    if (depth > 512) {
-        prt("block expansion depth limit (512) exceeded, possible reference cycle?");
-        flush_exit(1);
+    span bid = id_for_block(block);
+    if (!empty(bid)) {
+        int pos = expand_stack_contains(bid);
+        if (pos >= 0) {
+            expand_stack_print_cycle(pos, bid);
+        }
+        expand_stack_push(bid);
     }
     expand_refs_2_rec_context(block, transform, already, comment_context, depth);
     expand_refs_2_rec_body(block, transform, already, comment_context, depth);
+    if (!empty(bid)) expand_stack_pop();
 }
-
-
-/* #expand_refs_2_rec_body_pre */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-variable"
-
 /* #expand_refs_2_rec_body */
 void expand_refs_2_rec_body(span block, span transform, spans* already, int comment_context, int depth) {
     if (depth > 512) {
@@ -13999,6 +14085,11 @@ void expand_refs_2_rec_body(span block, span transform, spans* already, int comm
                     continue;
                 }
                 span ref_block = state->blocks.a[block_idx];
+                span ref_id3 = id_for_block(ref_block);
+                if (!empty(ref_id3)) {
+                    int pos = expand_stack_contains(ref_id3);
+                    if (pos >= 0) expand_stack_print_cycle(pos, ref_id3);
+                }
                 expand_refs_2_rec_body(ref_block, fname, already, 1, depth + 1);
             } else if (empty(comment_part)) {
                 if (comment_context) {
@@ -14025,6 +14116,10 @@ void expand_refs_2_rec_body(span block, span transform, spans* already, int comm
     }
 }
 
+
+
+
+
 /* #expand_refs_2_rec_context */
 void expand_refs_2_rec_context(span block, span transform, spans* already, int comment_context, int depth) {
     if (span_eq(transform, S("code"))) return;
@@ -14046,6 +14141,11 @@ void expand_refs_2_rec_context(span block, span transform, spans* already, int c
                     continue;
                 }
                 span ref_block = state->blocks.a[block_idx];
+                span ref_id = id_for_block(ref_block);
+                if (!empty(ref_id)) {
+                    int pos = expand_stack_contains(ref_id);
+                    if (pos >= 0) expand_stack_print_cycle(pos, ref_id);
+                }
                 expand_refs_2_rec_both(ref_block, fname, already, comment_context, depth + 1);
             }
         }
@@ -14067,11 +14167,17 @@ void expand_refs_2_rec_context(span block, span transform, spans* already, int c
                     continue;
                 }
                 span ref_block = state->blocks.a[block_idx];
+                span ref_id2 = id_for_block(ref_block);
+                if (!empty(ref_id2)) {
+                    int pos = expand_stack_contains(ref_id2);
+                    if (pos >= 0) expand_stack_print_cycle(pos, ref_id2);
+                }
                 expand_refs_2_rec_context(ref_block, fname, already, comment_context, depth + 1);
             }
         }
     }
 }
+
 
 
 
@@ -14091,12 +14197,14 @@ span strip_markdown_codeblock(span input) {
     int count = 0;
     span ret = nullspan();
     span copy = input;
+    span first_line_end = nullspan();
 
     while (!empty(copy)) {
         span line = next_line(&copy);
-        if (starts_with(line, S("```"))) {
+        if (starts_with(line, S("\`\`\`"))) {
             if (count == 0) {
                 ret.buf = line.end + 1;
+                first_line_end = line;
             } else if (count == 1) {
                 ret.end = line.buf;
             }
@@ -14104,13 +14212,19 @@ span strip_markdown_codeblock(span input) {
         }
     }
 
-    if (count != 2) {
-        return input;
+    if (count == 2) {
+        return ret;
     }
 
-    return ret;
-}
+    // If only an opening fence (no closing), strip just the first line
+    if (count == 1 && !empty(first_line_end)) {
+        ret.buf = first_line_end.end + 1;
+        ret.end = input.end;
+        return ret;
+    }
 
+    return input;
+}
 
 /* #send_to_clipboard */
 void send_to_clipboard(span content) {
@@ -14330,6 +14444,9 @@ void handle_compiler_error() {
 void replace_block_code_part(span new_code) {
    new_code = strip_markdown_codeblock(new_code);
 
+   // Strip trailing blank lines from LLM output
+   while (len(new_code) >= 2 && new_code.end[-1] == 0x0a && new_code.end[-2] == 0x0a) new_code.end--;
+
    span original_block = state->blocks.a[state->curr_block_idx];
    int file_idx = file_for_block(original_block);
 
@@ -14373,6 +14490,7 @@ void replace_block_code_part(span new_code) {
    ingest();
    new_rev(nullspan(), file_idx);
 }
+
 
 /* #output_design */
 /* #output_save */
@@ -15062,7 +15180,7 @@ void handle_serve(int port) {
 			char *hdr = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n";
 			write(client_fd, hdr, strlen(hdr));
 			flush_fd = client_fd;
-			serve_html_page(client_fd);
+			serve_html_page();
 			flush();
 			out.end = output_space; out_WRITTEN = 0;
 			flush_fd = STDOUT_FILENO;
@@ -15136,8 +15254,9 @@ void handle_serve(int port) {
 		close(client_fd);
 	}
 }
+
 /* #serve_html_page */
-void serve_html_page(int client_fd) {
+void serve_html_page() {
 	prt("<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">\n");
 	prt("<title>cmpr server</title>\n");
 	prt("<style>\n");
@@ -15201,6 +15320,7 @@ void serve_html_page(int client_fd) {
 	prt("<p class=\"muted\">Generated by cmpr --serve</p>\n");
 	prt("</body></html>\n");
 }
+
 /* #serve_help_json */
 void serve_help_json(void) {
 	json root = json_o();
@@ -15756,5 +15876,535 @@ void serve_blob_gc(void) {
 	}
 	closedir(d);
 }
+
+
+/* #handle_needs */
+void handle_needs(void) {
+    struct {
+        int idx[16];
+        span id[16];
+        int is_anon[16];
+        int n;
+    } matches = {0};
+
+    for (int i = 0; i < state->blocks.n && matches.n < 16; i++) {
+        span block = state->blocks.a[i];
+        span blk = block;
+        while (blk.buf < blk.end) {
+            span line = head_line(&blk);
+
+            u8 *p = line.buf;
+            while (p < line.end && (*p == ' ' || *p == '\t')) p++;
+            if (p == line.end || *p != '"') continue;
+
+            // Search for end pattern: quote, space, digits, period, at end
+            u8 *e = line.end;
+            if (e - p < 6) continue;  // Too short to match
+            u8 *q = e - 1;
+            if (*q != '.') continue;
+            u8 *strength_end = q;
+            q--;
+            while (q > p && *(q) >= '0' && *(q) <= '9') q--;
+            if (q <= p) continue;
+            if (*q != ' ') continue;
+            q--;
+            if (*q != '"') continue;
+
+            // Event string is between (p+1) to (q)
+            span ev_str = {p+1, q};
+            // Strength is the digits between (q+2) and strength_end
+            int str_len = (int)(strength_end - (q+2));
+            int strength = 0;
+            for (u8 *s = q+2; s < strength_end; s++)
+                strength = strength*10 + (*s - '0');
+
+            const char match_str[] = "We need feedback from the programmer here.";
+            int ev_len = (int)(ev_str.end - ev_str.buf);
+            if (ev_len == (int)sizeof(match_str)-1 &&
+                !memcmp(ev_str.buf, match_str, sizeof(match_str)-1) &&
+                strength == 255) {
+                // Matched
+                matches.idx[matches.n] = i;
+                span id = id_for_block(state->blocks.a[i]);
+                matches.id[matches.n] = id;
+                matches.is_anon[matches.n] = (id.buf == id.end);
+                matches.n++;
+                break; // Only want first SN line in block
+            }
+        }
+    }
+
+    if (matches.n == 0) {
+        prt("No blocks need feedback.\n");
+        flush_exit(0);
+    } else if (matches.n == 1) {
+        set_current_block(matches.idx[0]);
+        return;
+    } else {
+        prt("%d blocks need feedback:\n", matches.n);
+        for (int i = 0; i < matches.n; i++) {
+            if (!matches.is_anon[i]) {
+                span id = matches.id[i];
+                prt("  %.*s\n", (int)(id.end - id.buf), id.buf);
+            } else {
+                prt("  (anonymous block %d)\n", matches.idx[i]+1);
+            }
+        }
+        flush_exit(0);
+    }
+}
+
+
+
+
+
+
+/* #handle_export_p */
+void handle_export_p(char *filter) {
+    // Collect components
+    DIR *d;
+    struct dirent *ent;
+    char path[2048];
+
+    // Count backticks needed for a body
+    // (if body contains ```, use ```` etc.)
+    int fence_len_for(span body) {
+        int max_run = 0, cur = 0;
+        for (int i = 0; i < len(body); i++) {
+            if (body.buf[i] == '`') { cur++; if (cur > max_run) max_run = cur; }
+            else cur = 0;
+        }
+        return max_run >= 3 ? max_run + 1 : 3;
+    }
+
+    void emit_fence(int n) { for (int i = 0; i < n; i++) prt("`"); }
+
+    void emit_ofra_block(const char *id, const char *type, const char *event, span body) {
+        int fl = fence_len_for(body);
+        emit_fence(fl); terpri();
+        prt("ID: %s\n", id);
+        prt("Type: %s\n", type);
+        if (event) prt("Event: %s\n", event);
+        terpri();
+        wrs(body);
+        if (len(body) > 0 && body.end[-1] != '\n') terpri();
+        emit_fence(fl); terpri();
+        terpri();
+    }
+
+    // --- Overview ---
+    prt("# P-program export\n\n");
+
+    // ES list
+    prt("## Event Spaces\n\n");
+    snprintf(path, sizeof(path), "%.*s/es", len(state->cmprdir), state->cmprdir.buf);
+    d = opendir(path);
+    if (d) {
+        while ((ent = readdir(d)) != NULL) {
+            if (ent->d_name[0] == '.') continue;
+            prt("- %s", ent->d_name);
+            // Check if induced exists
+            char ipath[2048];
+            snprintf(ipath, sizeof(ipath), "%.*s/induced/%s", len(state->cmprdir), state->cmprdir.buf, ent->d_name);
+            if (readable_file(S(ipath))) prt(" (induced)");
+            terpri();
+        }
+        closedir(d);
+    }
+    terpri();
+
+    // LPP list
+    prt("## LPPs\n\n");
+    snprintf(path, sizeof(path), "%.*s/patterns", len(state->cmprdir), state->cmprdir.buf);
+    d = opendir(path);
+    if (d) {
+        while ((ent = readdir(d)) != NULL) {
+            if (ent->d_name[0] == '.') continue;
+            char lpath[2048];
+            snprintf(lpath, sizeof(lpath), "%s/%s", path, ent->d_name);
+            // Count rules
+            span content = read_file_into_cmp(S(lpath));
+            int rules = 0;
+            span copy = content;
+            while (!empty(copy)) {
+                span line = next_line(&copy);
+                if (!empty(line) && line.buf[0] == '"') rules++;
+            }
+            cmp.end = content.buf;
+            prt("- %s (%d rules)\n", ent->d_name, rules);
+        }
+        closedir(d);
+    }
+    terpri();
+
+    // --- TOC ---
+    prt("## Contents\n\n");
+
+    // Collect all IDs for TOC, then emit OFRA blocks
+    // We'll do two passes or just emit TOC as we go
+
+    // ES TOC
+    snprintf(path, sizeof(path), "%.*s/es", len(state->cmprdir), state->cmprdir.buf);
+    d = opendir(path);
+    if (d) {
+        while ((ent = readdir(d)) != NULL) {
+            if (ent->d_name[0] == '.') continue;
+            prt("- `es/%s` (ES)\n", ent->d_name);
+        }
+        closedir(d);
+    }
+
+    // Induced TOC
+    snprintf(path, sizeof(path), "%.*s/induced", len(state->cmprdir), state->cmprdir.buf);
+    d = opendir(path);
+    if (d) {
+        while ((ent = readdir(d)) != NULL) {
+            if (ent->d_name[0] == '.') continue;
+            prt("- `induced/%s` (induced)\n", ent->d_name);
+        }
+        closedir(d);
+    }
+
+    // Induced-single TOC
+    snprintf(path, sizeof(path), "%.*s/induced-single", len(state->cmprdir), state->cmprdir.buf);
+    d = opendir(path);
+    if (d) {
+        while ((ent = readdir(d)) != NULL) {
+            if (ent->d_name[0] == '.') continue;
+            char npath[2048];
+            snprintf(npath, sizeof(npath), "%s/%s/name", path, ent->d_name);
+            if (readable_file(S(npath))) {
+                span name = read_file_into_cmp(S(npath));
+                prt("- `induced-single/%s` (induced-single): %.*s\n", ent->d_name, len(name), name.buf);
+                cmp.end = name.buf;
+            }
+        }
+        closedir(d);
+    }
+
+    // LPP TOC
+    snprintf(path, sizeof(path), "%.*s/patterns", len(state->cmprdir), state->cmprdir.buf);
+    d = opendir(path);
+    if (d) {
+        while ((ent = readdir(d)) != NULL) {
+            if (ent->d_name[0] == '.') continue;
+            prt("- `patterns/%s` (LPP)\n", ent->d_name);
+        }
+        closedir(d);
+    }
+
+    // Scripts TOC
+    snprintf(path, sizeof(path), "%.*s/scripts", len(state->cmprdir), state->cmprdir.buf);
+    d = opendir(path);
+    if (d) {
+        while ((ent = readdir(d)) != NULL) {
+            if (ent->d_name[0] == '.') continue;
+            prt("- `scripts/%s` (script)\n", ent->d_name);
+        }
+        closedir(d);
+    }
+
+    prt("- `T` (SN)\n");
+    terpri();
+
+    // --- OFRA blocks ---
+
+    // ESs
+    snprintf(path, sizeof(path), "%.*s/es", len(state->cmprdir), state->cmprdir.buf);
+    d = opendir(path);
+    if (d) {
+        while ((ent = readdir(d)) != NULL) {
+            if (ent->d_name[0] == '.') continue;
+            if (filter) {
+                // partial: check if this ES is in the filter list
+                int found = 0;
+                char *f = filter;
+                while (*f) {
+                    char *comma = strchr(f, ',');
+                    int flen = comma ? (int)(comma - f) : (int)strlen(f);
+                    if (flen == (int)strlen(ent->d_name) && memcmp(f, ent->d_name, flen) == 0) { found = 1; break; }
+                    f = comma ? comma + 1 : f + strlen(f);
+                }
+                if (!found) continue;
+            }
+            char fpath[2048];
+            snprintf(fpath, sizeof(fpath), "%s/%s", path, ent->d_name);
+            span body = read_file_into_cmp(S(fpath));
+            char id[256];
+            snprintf(id, sizeof(id), "es/%s", ent->d_name);
+            emit_ofra_block(id, "ES", NULL, body);
+            cmp.end = body.buf;
+        }
+        closedir(d);
+    }
+
+    // Induced
+    snprintf(path, sizeof(path), "%.*s/induced", len(state->cmprdir), state->cmprdir.buf);
+    d = opendir(path);
+    if (d) {
+        while ((ent = readdir(d)) != NULL) {
+            if (ent->d_name[0] == '.') continue;
+            if (filter) {
+                int found = 0;
+                char *f = filter;
+                while (*f) {
+                    char *comma = strchr(f, ',');
+                    int flen = comma ? (int)(comma - f) : (int)strlen(f);
+                    if (flen == (int)strlen(ent->d_name) && memcmp(f, ent->d_name, flen) == 0) { found = 1; break; }
+                    f = comma ? comma + 1 : f + strlen(f);
+                }
+                if (!found) continue;
+            }
+            char fpath[2048];
+            snprintf(fpath, sizeof(fpath), "%s/%s", path, ent->d_name);
+            span body = read_file_into_cmp(S(fpath));
+            char id[256];
+            snprintf(id, sizeof(id), "induced/%s", ent->d_name);
+            emit_ofra_block(id, "induced", NULL, body);
+            cmp.end = body.buf;
+        }
+        closedir(d);
+    }
+
+    // Induced-single
+    if (!filter) {
+        snprintf(path, sizeof(path), "%.*s/induced-single", len(state->cmprdir), state->cmprdir.buf);
+        d = opendir(path);
+        if (d) {
+            while ((ent = readdir(d)) != NULL) {
+                if (ent->d_name[0] == '.') continue;
+                char spath[2048], npath[2048];
+                snprintf(spath, sizeof(spath), "%s/%s/script", path, ent->d_name);
+                snprintf(npath, sizeof(npath), "%s/%s/name", path, ent->d_name);
+                if (!readable_file(S(spath))) continue;
+                span body = read_file_into_cmp(S(spath));
+                char *event_name = NULL;
+                span name = nullspan();
+                if (readable_file(S(npath))) {
+                    name = read_file_into_cmp(S(npath));
+                    // Trim trailing newline
+                    if (len(name) > 0 && name.end[-1] == '\n') name.end--;
+                    event_name = s(name);
+                }
+                char id[256];
+                snprintf(id, sizeof(id), "induced-single/%s", ent->d_name);
+                emit_ofra_block(id, "induced-single", event_name, body);
+                cmp.end = body.buf;
+            }
+            closedir(d);
+        }
+    }
+
+    // LPPs
+    if (!filter) {
+        snprintf(path, sizeof(path), "%.*s/patterns", len(state->cmprdir), state->cmprdir.buf);
+        d = opendir(path);
+        if (d) {
+            while ((ent = readdir(d)) != NULL) {
+                if (ent->d_name[0] == '.') continue;
+                char fpath[2048];
+                snprintf(fpath, sizeof(fpath), "%s/%s", path, ent->d_name);
+                span body = read_file_into_cmp(S(fpath));
+                char id[256];
+                snprintf(id, sizeof(id), "patterns/%s", ent->d_name);
+                emit_ofra_block(id, "LPP", NULL, body);
+                cmp.end = body.buf;
+            }
+            closedir(d);
+        }
+    }
+
+    // Scripts
+    if (!filter) {
+        snprintf(path, sizeof(path), "%.*s/scripts", len(state->cmprdir), state->cmprdir.buf);
+        d = opendir(path);
+        if (d) {
+            while ((ent = readdir(d)) != NULL) {
+                if (ent->d_name[0] == '.') continue;
+                char fpath[2048];
+                snprintf(fpath, sizeof(fpath), "%s/%s", path, ent->d_name);
+                span body = read_file_into_cmp(S(fpath));
+                char id[256];
+                snprintf(id, sizeof(id), "scripts/%s", ent->d_name);
+                emit_ofra_block(id, "script", NULL, body);
+                cmp.end = body.buf;
+            }
+            closedir(d);
+        }
+    }
+
+    // T
+    event_load_T();
+    prt("```\nID: T\nType: SN\n\n");
+    event_print_T();
+    prt("```\n");
+
+    flush();
+}
+/* #handle_import_p */
+void handle_import_p(void) {
+    span input = read_stdin_into_cmp();
+    if (empty(input)) { prt("No input.\n"); flush_exit(1); }
+
+    int total = 0, created = 0, unchanged = 0;
+
+    // Parse code fences
+    span rest = input;
+    while (!empty(rest)) {
+        span line = next_line(&rest);
+
+        // Look for opening fence (3+ backticks at start of line)
+        if (len(line) < 3) continue;
+        int bticks = 0;
+        while (bticks < len(line) && line.buf[bticks] == '`') bticks++;
+        if (bticks < 3) continue;
+
+        // Found opening fence. Read until matching close fence.
+        u8 *block_start = rest.buf;
+        u8 *block_end = NULL;
+        while (!empty(rest)) {
+            span fline = next_line(&rest);
+            int fb = 0;
+            while (fb < len(fline) && fline.buf[fb] == '`') fb++;
+            if (fb >= bticks) {
+                // Check it's only backticks and whitespace
+                int only_bt = 1;
+                for (int i = fb; i < len(fline); i++) {
+                    if (fline.buf[i] != ' ' && fline.buf[i] != '\t') { only_bt = 0; break; }
+                }
+                if (only_bt) { block_end = fline.buf; break; }
+            }
+        }
+        if (!block_end) continue;
+
+        span interior = {block_start, block_end};
+
+        // Parse headers
+        char id[512] = {0};
+        char type[64] = {0};
+        char event[512] = {0};
+        span body = nullspan();
+
+        span hdr = interior;
+        while (!empty(hdr)) {
+            span hline = next_line(&hdr);
+            if (empty(hline)) { body = hdr; break; } // blank line = end of headers
+
+            int colon = find_char(hline, ':');
+            if (colon < 0) continue;
+            span name = first_n(hline, colon);
+            span val = {hline.buf + colon + 1, hline.end};
+            while (!empty(val) && *val.buf == ' ') val.buf++;
+
+            if (span_eq(name, S("ID"))) {
+                int vl = len(val) < 511 ? len(val) : 511;
+                memcpy(id, val.buf, vl); id[vl] = 0;
+            } else if (span_eq(name, S("Type"))) {
+                int vl = len(val) < 63 ? len(val) : 63;
+                memcpy(type, val.buf, vl); type[vl] = 0;
+            } else if (span_eq(name, S("Event"))) {
+                int vl = len(val) < 511 ? len(val) : 511;
+                memcpy(event, val.buf, vl); event[vl] = 0;
+            }
+        }
+
+        if (!id[0]) continue; // Not an OFRA block
+        total++;
+
+        // Get ID suffix (after first /)
+        char *suffix = strchr(id, '/');
+        if (suffix) suffix++; else suffix = id;
+
+        // Build target path
+        char target[2048];
+        int make_exec = 0;
+
+        if (strcmp(type, "ES") == 0) {
+            snprintf(target, sizeof(target), "%.*s/es/%s", len(state->cmprdir), state->cmprdir.buf, suffix);
+            make_exec = 1;
+        } else if (strcmp(type, "induced") == 0) {
+            snprintf(target, sizeof(target), "%.*s/induced/%s", len(state->cmprdir), state->cmprdir.buf, suffix);
+            make_exec = 1;
+        } else if (strcmp(type, "induced-single") == 0) {
+            // Create directory and write name + script
+            char dir[2048];
+            snprintf(dir, sizeof(dir), "%.*s/induced-single/%s", len(state->cmprdir), state->cmprdir.buf, suffix);
+            // Create directory path
+            for (char *p = dir + 1; *p; p++) {
+                if (*p == '/') { *p = 0; mkdir(dir, 0755); *p = '/'; }
+            }
+            mkdir(dir, 0755);
+
+            // Write name file
+            if (event[0]) {
+                char npath[2048];
+                snprintf(npath, sizeof(npath), "%s/name", dir);
+                span ebody = {(u8*)event, (u8*)event + strlen(event)};
+                if (readable_file(S(npath))) {
+                    span existing = read_file_into_cmp(S(npath));
+                    // Trim newlines for comparison
+                    while (len(existing) > 0 && existing.end[-1] == '\n') existing.end--;
+                    if (span_eq(existing, ebody)) {
+                        cmp.end = existing.buf;
+                    } else {
+                        prt("Conflict: %s (name differs)\n", id);
+                        flush_exit(1);
+                    }
+                } else {
+                    write_to_file_2(ebody, npath, 1);
+                }
+            }
+
+            snprintf(target, sizeof(target), "%s/script", dir);
+            make_exec = 1;
+        } else if (strcmp(type, "LPP") == 0) {
+            snprintf(target, sizeof(target), "%.*s/patterns/%s", len(state->cmprdir), state->cmprdir.buf, suffix);
+        } else if (strcmp(type, "script") == 0) {
+            snprintf(target, sizeof(target), "%.*s/scripts/%s", len(state->cmprdir), state->cmprdir.buf, suffix);
+            make_exec = 1;
+        } else if (strcmp(type, "SN") == 0) {
+            snprintf(target, sizeof(target), "%.*s/T", len(state->cmprdir), state->cmprdir.buf);
+        } else {
+            continue; // Unknown type, skip
+        }
+
+        // Check if file exists and compare
+        if (readable_file(S(target))) {
+            span existing = read_file_into_cmp(S(target));
+            if (len(existing) == len(body) && (len(body) == 0 || memcmp(existing.buf, body.buf, len(body)) == 0)) {
+                unchanged++;
+                cmp.end = existing.buf;
+                continue;
+            } else {
+                prt("Conflict: %s (content differs in %s)\n", id, target);
+                flush_exit(1);
+            }
+        }
+
+        // Create parent directories if needed
+        {
+            char parent[2048];
+            strncpy(parent, target, sizeof(parent));
+            // Create each directory component
+            for (char *p = parent + 1; *p; p++) {
+                if (*p == '/') {
+                    *p = 0;
+                    mkdir(parent, 0755); // ok if exists
+                    *p = '/';
+                }
+            }
+        }
+
+        // Create the file
+        write_to_file_2(body, target, 1);
+        if (make_exec) chmod(target, 0755);
+        created++;
+    }
+
+    prt("Imported %d blocks (%d new, %d unchanged).\n", total, created, unchanged);
+    flush();
+}
+
+
 
 
