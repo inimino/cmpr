@@ -21,6 +21,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <signal.h>
+#include <poll.h>
 #include <time.h>
 #include <math.h>
 #include <stddef.h>
@@ -37,6 +38,7 @@ typedef uint64_t u64;
 #define flush_exit(n) flush(); exit(n) // used only by handle_args; let's do this differently
 
 #pragma GCC diagnostic ignored "-Wformat-truncation"
+
 
 
 
@@ -1505,6 +1507,7 @@ typedef struct ui_state {
     span manual_filename;
     span open_block_id;
     int ind_needs;
+    char *arg_needs;
     int count_prefix;
     int inbox_mode;
     int inbox_start_idx;
@@ -1515,6 +1518,7 @@ typedef struct ui_state {
 } ui_state;
 
 ui_state* state;
+
 
 /* #parse_int */
 int parse_int(span s) {
@@ -1662,44 +1666,6 @@ int event_get_id(span event_str) {
 }
 
 
-/* #event_add */
-void event_add(span event_str, unsigned char strength) {
-    event_add_internal(event_str, strength);
-    T_debug_print_events("event_add");
-    event_save_T();
-
-    char *depth_str = getenv("CMPR_PATTERN_DEPTH");
-    int depth = depth_str ? atoi(depth_str) : 0;
-    if (depth >= 4) return;
-
-    char event_buf[4096];
-    int event_len = len(event_str);
-    if (event_len >= (int)sizeof(event_buf)) event_len = sizeof(event_buf) - 1;
-    memcpy(event_buf, event_str.buf, event_len);
-    event_buf[event_len] = '\0';
-    setenv("CMPR_EVENT", event_buf, 1);
-
-    char strength_buf[16];
-    snprintf(strength_buf, sizeof(strength_buf), "%d", strength);
-    setenv("CMPR_STRENGTH", strength_buf, 1);
-
-    int event_id = event_get_id(event_str);
-    char event_id_buf[16];
-    snprintf(event_id_buf, sizeof(event_id_buf), "%d", event_id);
-    setenv("CMPR_EVENT_ID", event_id_buf, 1);
-
-    char new_depth[16];
-    snprintf(new_depth, sizeof(new_depth), "%d", depth + 1);
-    setenv("CMPR_PATTERN_DEPTH", new_depth, 1);
-
-    system(".cmpr/scripts/patterns");
-
-    if (depth_str) {
-        setenv("CMPR_PATTERN_DEPTH", depth_str, 1);
-    } else {
-        unsetenv("CMPR_PATTERN_DEPTH");
-    }
-}
 /* #event_memorize */
 void event_memorize() {
     span saved_cmp = cmp;
@@ -2004,6 +1970,35 @@ void apply_partial(Partial p, span arg) {
 
 typedef Partial llm_message_handler;
 
+/* #event_work_stack */
+struct event_work { char event[4096]; int strength; int event_id; };
+struct event_work event_work_stack[64];
+int event_work_stack_n = 0;
+
+void event_work_push(const char *event, int strength, int event_id) {
+    if (event_work_stack_n >= 64) return;
+    snprintf(event_work_stack[event_work_stack_n].event, 4096, "%s", event);
+    event_work_stack[event_work_stack_n].event[4095] = '\0';
+    event_work_stack[event_work_stack_n].strength = strength;
+    event_work_stack[event_work_stack_n].event_id = event_id;
+    event_work_stack_n++;
+}
+
+void event_add_fast(span event_str, unsigned char strength) {
+    event_add_internal(event_str, strength);
+    T_debug_print_events("event_add_fast");
+    event_save_T();
+
+    char event_buf[4096];
+    int event_len = len(event_str);
+    if (event_len >= (int)sizeof(event_buf)) event_len = sizeof(event_buf) - 1;
+    memcpy(event_buf, event_str.buf, event_len);
+    event_buf[event_len] = '\0';
+
+    int event_id = event_get_id(event_str);
+    event_work_push(event_buf, strength, event_id);
+}
+
 /* #all_functions */
 #include "fdecls.h"
 
@@ -2047,6 +2042,440 @@ void print_code(int);
 int count_blocks();
 void clear_display();
 */
+
+/* #event_add */
+void event_add(span event_str, unsigned char strength) {
+    /* Update local T for immediate visibility */
+    event_add_internal(event_str, strength);
+    T_debug_print_events("event_add");
+    event_save_T();
+
+    /* Route through server */
+    if (event_via_server(event_str, strength) == 0) return;
+
+    /* Server not reachable — start it */
+    int port = ensure_server();
+    if (port > 0) {
+        event_via_server(event_str, strength);
+    }
+}
+/* #native_patterns */
+static void run_script(const char *path) {
+    system(path);
+}
+
+
+void native_patterns(const char *event_buf, int strength, int event_id) {
+    char path[512];
+    char sn_line[4200];
+    snprintf(sn_line, sizeof(sn_line), "\"%s\" %d.", event_buf, strength);
+
+    /* 1. Induced-single */
+    {
+        DIR *dir = opendir(".cmpr/induced-single");
+        if (dir) {
+            struct dirent *ent;
+            while ((ent = readdir(dir))) {
+                if (ent->d_name[0] == '.') continue;
+                char name_path[512], script_path[512];
+                snprintf(name_path, sizeof(name_path), ".cmpr/induced-single/%s/name", ent->d_name);
+                snprintf(script_path, sizeof(script_path), ".cmpr/induced-single/%s/script", ent->d_name);
+                if (access(script_path, X_OK) != 0) continue;
+                FILE *nf = fopen(name_path, "r");
+                if (!nf) continue;
+                char want_name[4096];
+                want_name[0] = '\0';
+                if (fgets(want_name, sizeof(want_name), nf)) {
+                    int wlen = strlen(want_name);
+                    if (wlen > 0 && want_name[wlen-1] == '\n') want_name[wlen-1] = '\0';
+                }
+                fclose(nf);
+                if (strcmp(want_name, event_buf) == 0) {
+                    run_script(script_path);
+                }
+            }
+            closedir(dir);
+        }
+    }
+
+    /* 2. Atomic event induced (e_N) */
+    snprintf(path, sizeof(path), ".cmpr/induced/e_%d", event_id);
+    if (access(path, X_OK) == 0) run_script(path);
+
+    /* 3. ES matching */
+    char matched_es[32][256];
+    int n_matched = 0;
+    {
+        DIR *dir = opendir(".cmpr/es");
+        if (dir) {
+            struct dirent *ent;
+            while ((ent = readdir(dir)) && n_matched < 32) {
+                if (ent->d_name[0] == '.') continue;
+                snprintf(path, sizeof(path), ".cmpr/es/%s", ent->d_name);
+                if (access(path, X_OK) != 0) continue;
+                char cmd[600];
+                snprintf(cmd, sizeof(cmd), "echo '%s' | '%s'", sn_line, path);
+                FILE *p = popen(cmd, "r");
+                if (!p) continue;
+                char buf[16];
+                int got = fread(buf, 1, sizeof(buf), p);
+                pclose(p);
+                if (got > 0) {
+                    snprintf(matched_es[n_matched], 256, "%s", ent->d_name);
+                    matched_es[n_matched][255] = '\0';
+                    n_matched++;
+                }
+            }
+            closedir(dir);
+        }
+    }
+
+    if (n_matched == 0) return;
+
+    /* 4. Induced firing (only at strength 255) */
+    if (strength == 255) {
+        for (int i = 0; i < n_matched; i++) {
+            snprintf(path, sizeof(path), ".cmpr/induced/%s", matched_es[i]);
+            if (access(path, X_OK) == 0) run_script(path);
+        }
+    }
+
+    /* 5. Surprise-high (only at strength 255) */
+    if (strength == 255) {
+        for (int i = 0; i < n_matched; i++) {
+            snprintf(path, sizeof(path), ".cmpr/surprise-high/%s", matched_es[i]);
+            if (access(path, X_OK) != 0) continue;
+            /* Count 255-strength events in this ES excluding the current one */
+            char filter_path[512];
+            snprintf(filter_path, sizeof(filter_path), ".cmpr/es/%s", matched_es[i]);
+            int count = 0;
+            for (size_t j = 0; j < state->events.n; j++) {
+                if (state->events.a[j].strength != 255) continue;
+                char ev_sn[4200];
+                int elen = len(state->events.a[j].event_str);
+                if (elen >= 4096) continue;
+                char ev_tmp[4096];
+                memcpy(ev_tmp, state->events.a[j].event_str.buf, elen);
+                ev_tmp[elen] = '\0';
+                if (strcmp(ev_tmp, event_buf) == 0) continue;
+                snprintf(ev_sn, sizeof(ev_sn), "\"%s\" 255.", ev_tmp);
+                char cmd[600];
+                snprintf(cmd, sizeof(cmd), "echo '%s' | '%s'", ev_sn, filter_path);
+                FILE *p = popen(cmd, "r");
+                if (!p) continue;
+                char buf[16];
+                int got = fread(buf, 1, sizeof(buf), p);
+                pclose(p);
+                if (got > 0) count++;
+            }
+            if (count > 0) run_script(path);
+        }
+    }
+
+    /* 6. LPP evaluation */
+    {
+        DIR *dir = opendir(".cmpr/patterns");
+        if (!dir) return;
+        struct dirent *ent;
+        while ((ent = readdir(dir))) {
+            if (ent->d_name[0] == '.') continue;
+            /* Find separator (: or -) */
+            char *sep = strchr(ent->d_name, ':');
+            if (!sep) sep = strchr(ent->d_name, '-');
+            if (!sep) continue;
+
+            char es1[256], es2[256];
+            int sep_pos = sep - ent->d_name;
+            if (sep_pos >= 256) continue;
+            memcpy(es1, ent->d_name, sep_pos);
+            es1[sep_pos] = '\0';
+            strncpy(es2, sep + 1, 255);
+            es2[255] = '\0';
+
+            /* Which side is our matched ES on? */
+            int search_col = 0; /* 1 or 2 */
+            char other_es[256];
+            for (int i = 0; i < n_matched; i++) {
+                if (strcmp(matched_es[i], es1) == 0) {
+                    search_col = 1;
+                    strcpy(other_es, es2);
+                    break;
+                } else if (strcmp(matched_es[i], es2) == 0) {
+                    search_col = 2;
+                    strcpy(other_es, es1);
+                    break;
+                }
+            }
+            if (search_col == 0) continue;
+
+            char pattern_path[512];
+            snprintf(pattern_path, sizeof(pattern_path), ".cmpr/patterns/%s", ent->d_name);
+
+            /* LEARN: strength 255 only */
+            if (strength == 255) {
+                char other_filter[512];
+                snprintf(other_filter, sizeof(other_filter), ".cmpr/es/%s", other_es);
+                if (access(other_filter, X_OK) == 0) {
+                    /* Find 255-events on other side */
+                    for (size_t j = 0; j < state->events.n; j++) {
+                        if (state->events.a[j].strength != 255) continue;
+                        int elen = len(state->events.a[j].event_str);
+                        if (elen >= 4096) continue;
+                        char ev_tmp[4096];
+                        memcpy(ev_tmp, state->events.a[j].event_str.buf, elen);
+                        ev_tmp[elen] = '\0';
+                        char ev_sn[4200];
+                        snprintf(ev_sn, sizeof(ev_sn), "\"%s\" 255.", ev_tmp);
+                        char cmd[600];
+                        snprintf(cmd, sizeof(cmd), "echo '%s' | '%s'", ev_sn, other_filter);
+                        FILE *p = popen(cmd, "r");
+                        if (!p) continue;
+                        char buf[16];
+                        int got = fread(buf, 1, sizeof(buf), p);
+                        pclose(p);
+                        if (got <= 0) continue;
+                        /* This other event matches — do LSI increment */
+                        char pair[8200];
+                        if (search_col == 1)
+                            snprintf(pair, sizeof(pair), "\"%s\" \"%s\"", event_buf, ev_tmp);
+                        else
+                            snprintf(pair, sizeof(pair), "\"%s\" \"%s\"", ev_tmp, event_buf);
+                        /* Read current count from pattern file */
+                        int current_count = 0;
+                        FILE *pf = fopen(pattern_path, "r");
+                        if (pf) {
+                            char line[8300];
+                            while (fgets(line, sizeof(line), pf)) {
+                                if (strstr(line, pair)) {
+                                    char *last_space = strrchr(line, ' ');
+                                    if (last_space) current_count = atoi(last_space + 1);
+                                    break;
+                                }
+                            }
+                            fclose(pf);
+                        }
+                        /* LSI: increment with probability 2^(-count) */
+                        int do_incr = 0;
+                        if (current_count == 0) {
+                            do_incr = 1;
+                        } else {
+                            unsigned int rbits;
+                            FILE *ur = fopen("/dev/urandom", "r");
+                            if (ur) { fread(&rbits, 4, 1, ur); fclose(ur); }
+                            unsigned int mask = (1u << current_count) - 1;
+                            if ((rbits & mask) == mask) do_incr = 1;
+                        }
+                        if (do_incr) {
+                            int new_count = current_count + 1;
+                            /* Rewrite pattern file: remove old line, append new */
+                            char tmp_path[520];
+                            snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", pattern_path);
+                            FILE *inf = fopen(pattern_path, "r");
+                            FILE *outf = fopen(tmp_path, "w");
+                            if (inf && outf) {
+                                char line[8300];
+                                while (fgets(line, sizeof(line), inf)) {
+                                    if (!strstr(line, pair)) fputs(line, outf);
+                                }
+                                fprintf(outf, "%s %d.\n", pair, new_count);
+                                fclose(inf);
+                                fclose(outf);
+                                rename(tmp_path, pattern_path);
+                            } else {
+                                if (inf) fclose(inf);
+                                if (outf) fclose(outf);
+                            }
+                        }
+                    }
+                }
+            }
+
+            /* INDUCED-JOINT: fire .cmpr/induced-joint/{filename} if exists */
+            if (strength == 255) {
+                char joint_path[512];
+                snprintf(joint_path, sizeof(joint_path), ".cmpr/induced-joint/%s", ent->d_name);
+                if (access(joint_path, X_OK) == 0) {
+                    /* Find the other-side event string at 255 */
+                    char other_filter[512];
+                    snprintf(other_filter, sizeof(other_filter), ".cmpr/es/%s", other_es);
+                    if (access(other_filter, X_OK) == 0) {
+                        for (size_t j = 0; j < state->events.n; j++) {
+                            if (state->events.a[j].strength != 255) continue;
+                            int elen = len(state->events.a[j].event_str);
+                            if (elen >= 4096) continue;
+                            char ev_tmp[4096];
+                            memcpy(ev_tmp, state->events.a[j].event_str.buf, elen);
+                            ev_tmp[elen] = '\0';
+                            char ev_sn[4200];
+                            snprintf(ev_sn, sizeof(ev_sn), "\"%s\" 255.", ev_tmp);
+                            char cmd[600];
+                            snprintf(cmd, sizeof(cmd), "echo '%s' | '%s'", ev_sn, other_filter);
+                            FILE *p = popen(cmd, "r");
+                            if (!p) continue;
+                            char buf[16];
+                            int got = fread(buf, 1, sizeof(buf), p);
+                            pclose(p);
+                            if (got > 0) {
+                                /* Found a matching event on the other side */
+                                if (search_col == 1) {
+                                    setenv("CMPR_EVENT_1", event_buf, 1);
+                                    setenv("CMPR_EVENT_2", ev_tmp, 1);
+                                } else {
+                                    setenv("CMPR_EVENT_1", ev_tmp, 1);
+                                    setenv("CMPR_EVENT_2", event_buf, 1);
+                                }
+                                run_script(joint_path);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            /* POPULATE: check pattern file for matching entries */
+            FILE *pf = fopen(pattern_path, "r");
+            if (!pf) continue;
+            char line[8300];
+            while (fgets(line, sizeof(line), pf)) {
+                if (line[0] == '\0' || line[0] == '\n') continue;
+                /* Parse: "event1" "event2" N. */
+                char *p1 = strchr(line, '"');
+                if (!p1) continue;
+                char *p2 = strchr(p1 + 1, '"');
+                if (!p2) continue;
+                char *p3 = strchr(p2 + 1, '"');
+                if (!p3) continue;
+                char *p4 = strchr(p3 + 1, '"');
+                if (!p4) continue;
+                char *sp = strchr(p4 + 1, ' ');
+                if (!sp) continue;
+                int emit_strength = atoi(sp + 1);
+
+                char ev1[4096], ev2[4096];
+                int l1 = p2 - p1 - 1, l2 = p4 - p3 - 1;
+                if (l1 >= 4096 || l2 >= 4096) continue;
+                memcpy(ev1, p1 + 1, l1); ev1[l1] = '\0';
+                memcpy(ev2, p3 + 1, l2); ev2[l2] = '\0';
+
+                char *match_ev = (search_col == 1) ? ev1 : ev2;
+                char *emit_ev = (search_col == 1) ? ev2 : ev1;
+
+                if (strcmp(match_ev, event_buf) != 0) continue;
+                if (emit_strength <= 0) continue;
+
+                /* Check current strength in T — only emit if stronger */
+                span emit_span = {(u8*)emit_ev, (u8*)emit_ev + strlen(emit_ev)};
+                int current_str = 0;
+                for (size_t k = 0; k < state->events.n; k++) {
+                    if (span_eq(state->events.a[k].event_str, emit_span)) {
+                        current_str = state->events.a[k].strength;
+                        break;
+                    }
+                }
+                if (emit_strength > current_str) {
+                    event_add(emit_span, (unsigned char)emit_strength);
+                }
+            }
+            fclose(pf);
+        }
+        closedir(dir);
+    }
+}
+
+
+
+
+
+
+
+
+/* #event_via_server */
+int event_via_server(span event_str, unsigned char strength) {
+    char pidpath[512];
+    snprintf(pidpath, sizeof(pidpath), "%.*s/serve.pid", len(state->cmprdir), state->cmprdir.buf);
+    FILE *pf = fopen(pidpath, "r");
+    if (!pf) return -1;
+    int pid = 0, port = 0;
+    fscanf(pf, "%d %d", &pid, &port);
+    fclose(pf);
+    if (pid <= 0 || port <= 0) return -1;
+    if (kill(pid, 0) != 0) return -1;
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return -1;
+    struct sockaddr_in addr = {0};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(sock);
+        return -1;
+    }
+
+    char buf[8300];
+    char ev[4096];
+    int elen = len(event_str);
+    if (elen >= (int)sizeof(ev)) elen = sizeof(ev) - 1;
+    memcpy(ev, event_str.buf, elen);
+    ev[elen] = '\0';
+    int n = snprintf(buf, sizeof(buf), "[\"event\", \"%s\", \"%d\"]\n", ev, strength);
+    write(sock, buf, n);
+
+    /* Read response */
+    char resp[1024];
+    int rn = read(sock, resp, sizeof(resp) - 1);
+    close(sock);
+    if (rn > 0) resp[rn] = '\0';
+    return 0;
+}
+/* #ensure_server */
+int ensure_server(void) {
+    char pidpath[512];
+    snprintf(pidpath, sizeof(pidpath), "%.*s/serve.pid", len(state->cmprdir), state->cmprdir.buf);
+
+    /* Check existing server */
+    FILE *pf = fopen(pidpath, "r");
+    if (pf) {
+        int pid = 0, port = 0;
+        fscanf(pf, "%d %d", &pid, &port);
+        fclose(pf);
+        if (pid > 0 && port > 0 && kill(pid, 0) == 0) return port;
+    }
+
+    /* Start server */
+    int default_port = 0;
+    pid_t child = fork();
+    if (child < 0) return -1;
+    if (child == 0) {
+        /* Child: exec cmpr --serve */
+        setsid();
+        int devnull = open("/dev/null", O_RDWR);
+        if (devnull >= 0) { dup2(devnull, 0); dup2(devnull, 1); dup2(devnull, 2); close(devnull); }
+        char portstr[16];
+        snprintf(portstr, sizeof(portstr), "%d", default_port);
+        {
+			char self[1024];
+			ssize_t len = readlink("/proc/self/exe", self, sizeof(self)-1);
+			if (len > 0) { self[len] = 0; execl(self, self, "--serve", portstr, (char *)NULL); }
+			execlp("cmpr", "cmpr", "--serve", portstr, (char *)NULL);
+		}
+        _exit(1);
+    }
+
+    /* Parent: wait for pidfile */
+    for (int i = 0; i < 50; i++) {
+        usleep(100000); /* 100ms */
+        pf = fopen(pidpath, "r");
+        if (pf) {
+            int pid = 0, port = 0;
+            fscanf(pf, "%d %d", &pid, &port);
+            fclose(pf);
+            if (pid > 0 && port > 0 && kill(pid, 0) == 0) return port;
+        }
+    }
+    return -1;
+}
+
 
 /* #ingest_functions */
 void get_code(); // read and index current code
@@ -2766,7 +3195,10 @@ for (int i = 1; i < argc; i++) {
 			if (i+1 >= argc) { prt("Missing <N> argument for --limit\n"); flush(); exit(1); }
 			ind_limit = 1; arg_limit = argv[++i];
 	} else if (strcmp(arg, "--needs") == 0) {
-		state->ind_needs = 1;
+		if (i+1 < argc && argv[i+1][0] >= '0' && argv[i+1][0] <= '9') {
+			state->arg_needs = argv[++i];
+		}
+			state->ind_needs = 1;
 	} else if (strcmp(arg, "--export-p") == 0) {
 		ind_export_p = 1; action_arg = 1;
 		if (i+1 < argc && argv[i+1][0] != '-') {
@@ -2797,6 +3229,7 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
 
 
 
@@ -8730,7 +9163,9 @@ span pt_agreement_to_nl_diff() { return S("TODO"); }
 span pt_agreement_to_pl_diff() { return S("TODO"); }
 span pt_pl2nl_rewrite() { return S("TODO"); }
 span pt_nl2algo() { return S("TODO"); }
+span pt_memorytrace() { return S("```{langtag}\n{context}\n```\n\n(above: references)\n---\n(below: NL description of the code to generate)\n\n```{langtag}\n{comment}\n```\n\nThe following lines MUST appear verbatim in your output, in this order:\n\n```\n{trace}\n```\n\nGenerate the complete code. Include every line shown above exactly as written. Fill in all code between and around them. Reply only with a code block beginning with \"```{langtag}\". Do not include comments unless shown above.\n"); }
 span pt_summarize_block() { return S("TODO"); }
+
 
 
 
@@ -8742,6 +9177,7 @@ span get_prompt_template(span name) {
     if (span_eq(name, S("nl2algo"))) return pt_nl2algo();
     if (span_eq(name, S("pl2nl_rewrite"))) return pt_pl2nl_rewrite();
     if (span_eq(name, S("nl2pl_rewrite"))) return pt_nl2pl_rewrite();
+    if (span_eq(name, S("memorytrace"))) return pt_memorytrace();
     if (span_eq(name, S("summarize_block"))) return pt_summarize_block();
 
     prt("Unknown prompt template: %.*s\nPress any key to continue...", len(name), name.buf);
@@ -8749,6 +9185,7 @@ span get_prompt_template(span name) {
     getch();
     return nullspan();
 }
+
 
 
 /* #agreement */
@@ -10751,11 +11188,81 @@ void handle_help_topic(char *topic) {
 /* #handle_prompt */
 void handle_prompt(int block_idx) {
     state->curr_block_idx = block_idx;
-    span op = S("nl2pl_rewrite");
-    span template = get_prompt_template(op);
-    spans vars = current_block_template_vars();
-    span expanded_prompt = expand_template(template, vars);
-    prt("%.*s", (int)(expanded_prompt.end - expanded_prompt.buf), expanded_prompt.buf);
+
+    span block = state->blocks.a[block_idx];
+    span header = block;
+    span first_line = next_line(&header);
+
+    /* Check for !trace_of(#blockid) pragma */
+    char *trace_target = NULL;
+    {
+        span line = first_line;
+        while (!empty(line)) {
+            while (!empty(line) && isspace(*line.buf)) advance1(&line);
+            if (empty(line)) break;
+            u8 *start = line.buf;
+            while (line.buf < line.end && !isspace(*line.buf)) advance1(&line);
+            span tok = {start, line.buf};
+            if (len(tok) > 10 && !memcmp(tok.buf, "!trace_of(", 10)) {
+                u8 *open = tok.buf + 10;
+                u8 *close = tok.end - 1;
+                if (*close == ')') {
+                    static char trace_id[256];
+                    int tlen = close - open;
+                    if (tlen > 0 && tlen < 256) {
+                        memcpy(trace_id, open, tlen);
+                        trace_id[tlen] = '\0';
+                        trace_target = trace_id;
+                    }
+                }
+            }
+        }
+    }
+
+    if (trace_target) {
+        int ref_idx = block_from_arg(trace_target);
+        if (ref_idx < 0 || ref_idx >= state->blocks.n) {
+            prt("!trace_of target not found: %s\n", trace_target);
+            flush_exit(1);
+        }
+        span ref_block = state->blocks.a[ref_idx];
+        span ref_comment = block_comment_part(ref_block);
+
+        span lang = current_block_language();
+        span langtag = nullspan();
+        if (span_eq(lang, S("C"))) langtag = S("c");
+        else if (span_eq(lang, S("Python"))) langtag = S("py");
+        else if (span_eq(lang, S("JavaScript"))) langtag = S("js");
+
+        span context = expand_refs_2(ref_comment, S("context"));
+        span description = expand_refs_2(ref_comment, S("body"));
+
+        span trace_comment = block_comment_part_excl(block);
+        span tc = trace_comment;
+        next_line(&tc);
+        if (!empty(tc) && *tc.buf == '\n') advance1(&tc);
+        span constraints = tc;
+
+        spans vars = spans_alloc(10);
+        spans_push(&vars, S("langtag"));
+        spans_push(&vars, langtag);
+        spans_push(&vars, S("context"));
+        spans_push(&vars, context);
+        spans_push(&vars, S("comment"));
+        spans_push(&vars, description);
+        spans_push(&vars, S("trace"));
+        spans_push(&vars, constraints);
+
+        span template = get_prompt_template(S("memorytrace"));
+        span expanded_prompt = expand_template(template, vars);
+        prt("%.*s", (int)(expanded_prompt.end - expanded_prompt.buf), expanded_prompt.buf);
+    } else {
+        span op = S("nl2pl_rewrite");
+        span template = get_prompt_template(op);
+        spans vars = current_block_template_vars();
+        span expanded_prompt = expand_template(template, vars);
+        prt("%.*s", (int)(expanded_prompt.end - expanded_prompt.buf), expanded_prompt.buf);
+    }
 }
 
 /* #handle_checksum */
@@ -14201,7 +14708,7 @@ span strip_markdown_codeblock(span input) {
 
     while (!empty(copy)) {
         span line = next_line(&copy);
-        if (starts_with(line, S("\`\`\`"))) {
+        if (starts_with(line, S("```"))) {
             if (count == 0) {
                 ret.buf = line.end + 1;
                 first_line_end = line;
@@ -14225,6 +14732,7 @@ span strip_markdown_codeblock(span input) {
 
     return input;
 }
+
 
 /* #send_to_clipboard */
 void send_to_clipboard(span content) {
@@ -14720,12 +15228,87 @@ void nl2pl_rewrite() {
         return;
     }
 
-    span op = S("nl2pl_rewrite");
-    span template = get_prompt_template(op);
-    spans vars = current_block_template_vars();
-    span expanded_prompt = expand_template(template, vars);
-    send_to_llm(expanded_prompt, simple_message_handler(replace_block_code_part));
+    span block = state->blocks.a[state->curr_block_idx];
+    span header = block;
+    span first_line = next_line(&header);
+
+    /* Check for !trace_of(#blockid) pragma */
+    char *trace_target = NULL;
+    {
+        span line = first_line;
+        while (!empty(line)) {
+            while (!empty(line) && isspace(*line.buf)) advance1(&line);
+            if (empty(line)) break;
+            u8 *start = line.buf;
+            while (line.buf < line.end && !isspace(*line.buf)) advance1(&line);
+            span tok = {start, line.buf};
+            if (len(tok) > 10 && !memcmp(tok.buf, "!trace_of(", 10)) {
+                /* Extract block ID between ( and ) */
+                u8 *open = tok.buf + 10;
+                u8 *close = tok.end - 1;
+                if (*close == ')') {
+                    static char trace_id[256];
+                    int tlen = close - open;
+                    if (tlen > 0 && tlen < 256) {
+                        memcpy(trace_id, open, tlen);
+                        trace_id[tlen] = '\0';
+                        trace_target = trace_id;
+                    }
+                }
+            }
+        }
+    }
+
+    if (trace_target) {
+        int ref_idx = block_from_arg(trace_target);
+        if (ref_idx < 0 || ref_idx >= state->blocks.n) {
+            prt("!trace_of target not found: %s\n", trace_target);
+            flush_exit(1);
+        }
+
+        span ref_block = state->blocks.a[ref_idx];
+        span ref_comment = block_comment_part(ref_block);
+
+        span lang = current_block_language();
+        span langtag = nullspan();
+        if (span_eq(lang, S("C"))) langtag = S("c");
+        else if (span_eq(lang, S("Python"))) langtag = S("py");
+        else if (span_eq(lang, S("JavaScript"))) langtag = S("js");
+
+        /* Get context and description from the referenced NL block */
+        span context = expand_refs_2(ref_comment, S("context"));
+        span description = expand_refs_2(ref_comment, S("body"));
+
+        /* Get constraint lines from trace block NL, skipping header */
+        span trace_comment = block_comment_part_excl(block);
+        span tc = trace_comment;
+        next_line(&tc); /* skip header line */
+        /* skip blank line after header if present */
+        if (!empty(tc) && *tc.buf == '\n') advance1(&tc);
+        span constraints = tc;
+
+        spans vars = spans_alloc(10);
+        spans_push(&vars, S("langtag"));
+        spans_push(&vars, langtag);
+        spans_push(&vars, S("context"));
+        spans_push(&vars, context);
+        spans_push(&vars, S("comment"));
+        spans_push(&vars, description);
+        spans_push(&vars, S("trace"));
+        spans_push(&vars, constraints);
+
+        span template = get_prompt_template(S("memorytrace"));
+        span expanded_prompt = expand_template(template, vars);
+        send_to_llm(expanded_prompt, simple_message_handler(replace_block_code_part));
+    } else {
+        span op = S("nl2pl_rewrite");
+        span template = get_prompt_template(op);
+        spans vars = current_block_template_vars();
+        span expanded_prompt = expand_template(template, vars);
+        send_to_llm(expanded_prompt, simple_message_handler(replace_block_code_part));
+    }
 }
+
 /* #pl2nl_rewrite */
 void pl2nl_rewrite() {
     if (file_is_readonly(state->curr_file_idx)) {
@@ -15126,6 +15709,14 @@ void handle_serve(int port) {
 		flush_exit(1);
 	}
 
+	/* Get actual port (may differ if port was 0) */
+	{
+		struct sockaddr_in6 bound_addr;
+		socklen_t blen = sizeof(bound_addr);
+		getsockname(server_fd, (struct sockaddr *)&bound_addr, &blen);
+		port = ntohs(bound_addr.sin6_port);
+	}
+
 	if (listen(server_fd, 16) < 0) {
 		prt("Error: listen() failed: %s\n", strerror(errno));
 		flush_exit(1);
@@ -15134,7 +15725,7 @@ void handle_serve(int port) {
 	// Write pidfile
 	{
 		char pidbuf[64];
-		int n = snprintf(pidbuf, sizeof(pidbuf), "%d\n", (int)getpid());
+		int n = snprintf(pidbuf, sizeof(pidbuf), "%d %d\n", (int)getpid(), port);
 		span pidpath = prs("%.*s/serve.pid", len(state->cmprdir), state->cmprdir.buf);
 		write_to_file_span((span){(u8*)pidbuf, (u8*)pidbuf + n}, pidpath, 1);
 	}
@@ -15146,6 +15737,31 @@ void handle_serve(int port) {
 	flush();
 
 	for (;;) {
+		// Process work stack (settling)
+		while (event_work_stack_n > 0) {
+			event_work_stack_n--;
+			struct event_work w = event_work_stack[event_work_stack_n];
+			{
+			pid_t cpid = fork();
+			if (cpid == 0) {
+				setenv("CMPR_EVENT", w.event, 1);
+				char sbuf[16]; snprintf(sbuf, sizeof(sbuf), "%d", w.strength);
+				setenv("CMPR_STRENGTH", sbuf, 1);
+				char idbuf[16]; snprintf(idbuf, sizeof(idbuf), "%d", w.event_id);
+				setenv("CMPR_EVENT_ID", idbuf, 1);
+				setenv("CMPR_PATTERN_DEPTH", "0", 1);
+				native_patterns(w.event, w.strength, w.event_id);
+				_exit(0);
+			}
+		}
+		}
+		// Reload T from disk (children may have modified it)
+		event_load_T();
+		// Reap children
+		while (waitpid(-1, NULL, WNOHANG) > 0) {}
+		// Accept with timeout
+		struct pollfd pfd = { .fd = server_fd, .events = POLLIN };
+		if (poll(&pfd, 1, 100) <= 0) continue;
 		struct sockaddr_in6 client_addr;
 		socklen_t client_len = sizeof(client_addr);
 		int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
@@ -15254,6 +15870,16 @@ void handle_serve(int port) {
 		close(client_fd);
 	}
 }
+
+
+
+
+
+
+
+
+
+
 
 /* #serve_html_page */
 void serve_html_page() {
@@ -15777,7 +16403,7 @@ void serve_dispatch(json req) {
 			prt("{\"err\":\"event requires <string> <strength>\"}\n"); return;
 		}
 		event_load_T();
-		event_add(S(arg_bufs[0]), (unsigned char)atoi(arg_bufs[1]));
+		event_add_fast(S(arg_bufs[0]), (unsigned char)atoi(arg_bufs[1]));
 		return;
 	}
 
@@ -15817,6 +16443,7 @@ void serve_dispatch(json req) {
 	// Unknown verb
 	prt("{\"err\":\"unknown verb: %s\"}\n", verb_buf);
 }
+
 
 
 
@@ -15897,9 +16524,8 @@ void handle_needs(void) {
             while (p < line.end && (*p == ' ' || *p == '\t')) p++;
             if (p == line.end || *p != '"') continue;
 
-            // Search for end pattern: quote, space, digits, period, at end
             u8 *e = line.end;
-            if (e - p < 6) continue;  // Too short to match
+            if (e - p < 6) continue;
             u8 *q = e - 1;
             if (*q != '.') continue;
             u8 *strength_end = q;
@@ -15910,10 +16536,7 @@ void handle_needs(void) {
             q--;
             if (*q != '"') continue;
 
-            // Event string is between (p+1) to (q)
             span ev_str = {p+1, q};
-            // Strength is the digits between (q+2) and strength_end
-            int str_len = (int)(strength_end - (q+2));
             int strength = 0;
             for (u8 *s = q+2; s < strength_end; s++)
                 strength = strength*10 + (*s - '0');
@@ -15923,15 +16546,24 @@ void handle_needs(void) {
             if (ev_len == (int)sizeof(match_str)-1 &&
                 !memcmp(ev_str.buf, match_str, sizeof(match_str)-1) &&
                 strength == 255) {
-                // Matched
                 matches.idx[matches.n] = i;
                 span id = id_for_block(state->blocks.a[i]);
                 matches.id[matches.n] = id;
-                matches.is_anon[matches.n] = (id.buf == id.end);
+                matches.is_anon[matches.n] = (len(id) <= 1);
                 matches.n++;
-                break; // Only want first SN line in block
+                break;
             }
         }
+    }
+
+    if (state->arg_needs) {
+        int sel = atoi(state->arg_needs);
+        if (sel < 1 || sel > matches.n) {
+            prt("Invalid selection %d (have %d matches)\n", sel, matches.n);
+            flush_exit(1);
+        }
+        set_current_block(matches.idx[sel-1]);
+        return;
     }
 
     if (matches.n == 0) {
@@ -15945,17 +16577,15 @@ void handle_needs(void) {
         for (int i = 0; i < matches.n; i++) {
             if (!matches.is_anon[i]) {
                 span id = matches.id[i];
-                prt("  %.*s\n", (int)(id.end - id.buf), id.buf);
+                prt("  %d. %.*s\n", i+1, (int)(id.end - id.buf), id.buf);
             } else {
-                prt("  (anonymous block %d)\n", matches.idx[i]+1);
+                prt("  %d. (block %d)\n", i+1, matches.idx[i]);
             }
         }
+        prt("Use --needs N to jump to one.\n");
         flush_exit(0);
     }
 }
-
-
-
 
 
 
@@ -16195,6 +16825,25 @@ void handle_export_p(char *filter) {
         }
     }
 
+    // Induced-joint OFRA blocks
+    if (!filter) {
+        snprintf(path, sizeof(path), "%.*s/induced-joint", len(state->cmprdir), state->cmprdir.buf);
+        d = opendir(path);
+        if (d) {
+            while ((ent = readdir(d)) != NULL) {
+                if (ent->d_name[0] == '.') continue;
+                char fpath[2048];
+                snprintf(fpath, sizeof(fpath), "%s/%s", path, ent->d_name);
+                span body = read_file_into_cmp(S(fpath));
+                char id[256];
+                snprintf(id, sizeof(id), "induced-joint/%s", ent->d_name);
+                emit_ofra_block(id, "induced-joint", NULL, body);
+                cmp.end = body.buf;
+            }
+            closedir(d);
+        }
+    }
+
     // LPPs
     if (!filter) {
         snprintf(path, sizeof(path), "%.*s/patterns", len(state->cmprdir), state->cmprdir.buf);
@@ -16241,6 +16890,8 @@ void handle_export_p(char *filter) {
 
     flush();
 }
+
+
 /* #handle_import_p */
 void handle_import_p(void) {
     span input = read_stdin_into_cmp();
@@ -16325,6 +16976,9 @@ void handle_import_p(void) {
         } else if (strcmp(type, "induced") == 0) {
             snprintf(target, sizeof(target), "%.*s/induced/%s", len(state->cmprdir), state->cmprdir.buf, suffix);
             make_exec = 1;
+        } else if (strcmp(type, "induced-joint") == 0) {
+            snprintf(target, sizeof(target), "%.*s/induced-joint/%s", len(state->cmprdir), state->cmprdir.buf, suffix);
+            make_exec = 1;
         } else if (strcmp(type, "induced-single") == 0) {
             // Create directory and write name + script
             char dir[2048];
@@ -16404,6 +17058,7 @@ void handle_import_p(void) {
     prt("Imported %d blocks (%d new, %d unchanged).\n", total, created, unchanged);
     flush();
 }
+
 
 
 
