@@ -220,6 +220,7 @@ span get_agent_script(span name);
 void handle_help_topic(char *topic);
 void handle_prompt(int block_idx);
 void handle_checksum(void);
+void handle_llm_usage(void);
 void handle_event_large_stdin(int strength);
 void handle_event_large_file(span path, int strength);
 void handle_wants(int show_blocks);

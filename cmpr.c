@@ -81,6 +81,7 @@ void init_spans_ioc(size_t,size_t,size_t);
 
 typedef struct {
   span* outp;
+  int saved_cmp_written;
 } out_sav;
 
 void prt(const char *, ...);
@@ -330,10 +331,18 @@ span pathpart(span dir) {
 }
 
 /* #spanio_basics2 */
-out_sav out2cmp() { out_sav ret = {0}; ret.outp = outp; outp = &cmp; return ret; }
+out_sav out2cmp() {
+  out_sav ret = {0};
+  ret.outp = outp;
+  ret.saved_cmp_written = cmp_WRITTEN;
+  outp = &cmp;
+  cmp_WRITTEN = len(cmp);
+  return ret;
+}
 
 void out_rst(out_sav sav) {
   outp = sav.outp;
+  cmp_WRITTEN = sav.saved_cmp_written;
 }
 
 void prt(const char * fmt, ...) {
@@ -647,7 +656,7 @@ span skip_n(span s, int n) {
 }
 
 void skip_whitespace(span *s) {
-  while (isspace(*s->buf)) s->buf++;
+  while (!empty(*s) && isspace(*s->buf)) s->buf++;
 }
 
 int find_char(span s, char c) {
@@ -680,6 +689,7 @@ span concat(span a, span b) {
   ret.end = cmp.end;
   return ret;
 }
+
 /* #next_line */
 span next_line(span *input) {
   if (empty(*input)) return nullspan();
@@ -1623,8 +1633,13 @@ void event_add_internal(span event_str, unsigned char strength) {
             return;
         }
     }
+    // Copy into stable storage: callers may pass a span into a transient
+    // buffer (e.g. serve_dispatch's arg_bufs on the stack).
+    int n = len(event_str);
+    u8 *buf = malloc(n);
+    memcpy(buf, event_str.buf, n);
     event_entry e;
-    e.event_str = event_str;
+    e.event_str = (span){buf, buf + n};
     e.strength = strength;
     event_entries_push(&state->events, e);
 }
@@ -2045,19 +2060,11 @@ void clear_display();
 
 /* #event_add */
 void event_add(span event_str, unsigned char strength) {
-    /* Update local T for immediate visibility */
-    event_add_internal(event_str, strength);
-    T_debug_print_events("event_add");
-    event_save_T();
-
-    /* Route through server */
     if (event_via_server(event_str, strength) == 0) return;
-
-    /* Server not reachable — start it */
-    int port = ensure_server();
-    if (port > 0) {
-        event_via_server(event_str, strength);
-    }
+    ensure_server();
+    if (event_via_server(event_str, strength) == 0) return;
+    prt("Error: cannot reach server\n");
+    flush_exit(1);
 }
 /* #native_patterns */
 static void run_script(const char *path) {
@@ -2920,6 +2927,7 @@ int ind_conf = 0;
 	int ind_build = 0;
 	int ind_agents = 0;
 	int ind_checksum = 0;
+	int ind_llm_usage = 0;
 	int ind_T0 = 0;
 	int ind_event = 0;
 	int ind_event_stdin = 0;
@@ -3025,6 +3033,7 @@ int ind_conf = 0;
 
 
 
+
 /* #handle_args_3 */
 for (int i = 1; i < argc; i++) {
 		char *arg = argv[i];
@@ -3107,6 +3116,8 @@ for (int i = 1; i < argc; i++) {
 			prt("Unknown flag: --agent-run\n"); flush(); exit(1);
 		} else if (strcmp(arg, "--checksum") == 0) {
 			ind_checksum = 1; action_arg = 1;
+		} else if (strcmp(arg, "--llm-usage") == 0) {
+			ind_llm_usage = 1; action_arg = 1;
 		} else if (strcmp(arg, "--T0") == 0) {
 			ind_T0 = 1; action_arg = 1;
 		} else if (strcmp(arg, "--event") == 0) {
@@ -3229,6 +3240,7 @@ for (int i = 1; i < argc; i++) {
 			file_argument = arg;
 		}
 	}
+
 
 
 
@@ -3386,7 +3398,7 @@ if (ind_file_argument) {
 	             ind_content_index + ind_grep + ind_count_blocks + ind_files_blocks + ind_print_all +
 	             ind_inbox +
 	             ind_rewritepl + ind_prompt + ind_llm + ind_after + ind_replace + ind_replace_comment + ind_replace_code + ind_replace_current +
-	             ind_run + ind_build + ind_agents + ind_checksum +
+	             ind_run + ind_build + ind_agents + ind_checksum + ind_llm_usage +
 	             ind_map_error + ind_test_block_map +
 	             ind_wants +
 	             ind_wants_status +
@@ -3423,7 +3435,7 @@ if (ind_file_argument) {
 	check_dirs();
 
 	// Get code database if needed (for most commands)
-	if (action_arg > 0 && !ind_checksum && !ind_wants && !ind_llm && !ind_build && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es && !ind_P && !ind_E && !ind_induced && !ind_induced_single && !ind_lpp && !ind_es_create && !ind_serve ) {
+	if (action_arg > 0 && !ind_checksum && !ind_llm_usage && !ind_wants && !ind_llm && !ind_build && !ind_snapshot_join && !ind_learn && !ind_log_stochastic_count_joint && !ind_es && !ind_P && !ind_E && !ind_induced && !ind_induced_single && !ind_lpp && !ind_es_create && !ind_serve ) {
 		get_code();
 	}
 
@@ -3596,6 +3608,11 @@ if (ind_file_argument) {
 
 	if (ind_checksum) {
 		handle_checksum();
+		flush_exit(0);
+	}
+
+	if (ind_llm_usage) {
+		handle_llm_usage();
 		flush_exit(0);
 	}
 
@@ -3806,6 +3823,7 @@ if (ind_file_argument) {
 
 	// No action arg - return to enter interactive mode
 }
+
 
 
 
@@ -9385,15 +9403,18 @@ void print_comment(int index) {
     if (index < 0 || index >= state->blocks.n) return;
     span block = state->blocks.a[index];
     span comment_part = block_comment_part(block);
-    wrs(comment_part);
-    terpri();
+    if (comment_part.buf == NULL) {
+        wrs(block);
+    } else {
+        wrs(comment_part);
+    }
 }
 
 void print_code(int index) {
     if (index < 0 || index >= state->blocks.n) return;
     span block = state->blocks.a[index];
     span comment_part = block_comment_part(block);
-    if (comment_part.end == NULL) {
+    if (comment_part.buf == NULL) {
         flush();
         prt("Warning: block %d has no comment terminator (malformed block)\n", index + 1);
         flush_err();
@@ -9402,14 +9423,12 @@ void print_code(int index) {
     span code_part = block;
     code_part.buf = comment_part.end;
     wrs(code_part);
-    terpri();
 }
 
 void print_block(int index) {
     if (index < 0 || index >= state->blocks.n) return;
     span block = state->blocks.a[index];
     wrs(block);
-    terpri();
 }
 
 int count_blocks() {
@@ -9975,7 +9994,7 @@ span help_text_summary(span s) {
 "  --serve [port]\n"
 "\n"
 "Utilities:\n"
-"  --llm  --checksum  --content-index <search>\n"
+"  --llm  --llm-usage  --checksum  --content-index <search>\n"
 "\n"
 "Topic guides: cmpr --help topics\n"
 "Per-flag help: cmpr --help --<flag>\n"
@@ -10078,6 +10097,12 @@ span help_text_basic(span s) {
       "  Compute checksum of input from stdin.\n"
       "  Useful for verifying content integrity.\n"
       "  Example: cat file.txt | cmpr --checksum\n"
+      "\n"
+      "--llm-usage\n"
+      "  Report LLM token usage from .cmpr/api_calls/*-resp files.\n"
+      "  Shows totals by model, by day, by hour, and rolling rates\n"
+      "  (last hour, 24h, 7d, lifetime).\n"
+      "  Example: cmpr --llm-usage\n"
       "\n"
       "--find-deleted\n"
       "  List all deleted blocks with their deletion timestamps.\n"
@@ -11309,6 +11334,241 @@ void handle_checksum(void) {
 
 
 
+/* #handle_llm_usage */
+typedef struct {
+    time_t ts;
+    span model;
+    int64_t pt;
+    int64_t ct;
+    int64_t tt;
+} llm_call_rec;
+
+static int llm_call_rec_cmp(const void *a, const void *b) {
+    time_t ta = ((const llm_call_rec*)a)->ts;
+    time_t tb = ((const llm_call_rec*)b)->ts;
+    if (ta < tb) return -1;
+    if (ta > tb) return 1;
+    return 0;
+}
+
+static int json_int_field(span json, const char *key, int64_t *out) {
+    char pat[128];
+    int n = snprintf(pat, sizeof(pat), "\"%s\":", key);
+    span ps = { (u8*)pat, (u8*)pat + n };
+    span found = spanspan(json, ps);
+    if (empty(found)) return 0;
+    found = (span){ found.end, json.end };
+    while (found.buf < found.end && (*found.buf == ' ' || *found.buf == '\t' || *found.buf == '\n' || *found.buf == '\r')) found.buf++;
+    if (found.buf >= found.end || !isdigit(*found.buf)) return 0;
+    int64_t v = 0;
+    while (found.buf < found.end && isdigit(*found.buf)) {
+        v = v * 10 + (*found.buf - '0');
+        found.buf++;
+    }
+    *out = v;
+    return 1;
+}
+
+static span json_string_field(span json, const char *key) {
+    char pat[128];
+    int n = snprintf(pat, sizeof(pat), "\"%s\":", key);
+    span ps = { (u8*)pat, (u8*)pat + n };
+    span found = spanspan(json, ps);
+    if (empty(found)) return nullspan();
+    found = (span){ found.end, json.end };
+    while (found.buf < found.end && (*found.buf == ' ' || *found.buf == '\t' || *found.buf == '\n' || *found.buf == '\r')) found.buf++;
+    if (found.buf >= found.end || *found.buf != '"') return nullspan();
+    found.buf++;
+    span val = { found.buf, found.buf };
+    while (val.end < found.end && *val.end != '"') val.end++;
+    return val;
+}
+
+void handle_llm_usage(void) {
+    span dirname = S(".cmpr/api_calls");
+    spans files = dir_listing(dirname);
+
+    llm_call_rec *calls = calloc(files.n + 1, sizeof(llm_call_rec));
+    int n_calls = 0;
+
+    for (int i = 0; i < files.n; i++) {
+        span fn = files.a[i];
+        if (!ends_with(fn, S("-resp"))) continue;
+        if (len(fn) < 15) continue;
+
+        time_t ts = parse_rev_fname(fn);
+        if (ts <= 0) continue;
+
+        span path = concat(concat(dirname, S("/")), fn);
+        span json = read_file_into_cmp(path);
+        if (empty(json)) continue;
+
+        int shape_openai_chat =
+            !empty(spanspan(json, S("\"object\": \"chat.completion\""))) ||
+            !empty(spanspan(json, S("\"object\":\"chat.completion\"")));
+
+        int shape_openai_error =
+            !shape_openai_chat &&
+            (!empty(spanspan(json, S("\"error\": {"))) ||
+             !empty(spanspan(json, S("\"error\":{"))));
+
+        int shape_ollama =
+            !shape_openai_chat && !shape_openai_error &&
+            !empty(spanspan(json, S("\"eval_count\"")));
+
+        int shape_anthropic =
+            !shape_openai_chat && !shape_openai_error && !shape_ollama &&
+            (!empty(spanspan(json, S("\"type\": \"message\""))) ||
+             !empty(spanspan(json, S("\"type\":\"message\""))));
+
+        if (shape_openai_error) {
+            continue;
+        }
+
+        if (shape_ollama) {
+            span model = json_string_field(json, "model");
+            int64_t pt = 0, ct = 0;
+            json_int_field(json, "prompt_eval_count", &pt);
+            json_int_field(json, "eval_count", &ct);
+            calls[n_calls].ts = ts;
+            calls[n_calls].model = model;
+            calls[n_calls].pt = pt;
+            calls[n_calls].ct = ct;
+            calls[n_calls].tt = pt + ct;
+            n_calls++;
+            continue;
+        }
+
+        if (shape_anthropic) {
+            span model = json_string_field(json, "model");
+            int64_t pt = 0, ct = 0;
+            json_int_field(json, "input_tokens", &pt);
+            json_int_field(json, "output_tokens", &ct);
+            calls[n_calls].ts = ts;
+            calls[n_calls].model = model;
+            calls[n_calls].pt = pt;
+            calls[n_calls].ct = ct;
+            calls[n_calls].tt = pt + ct;
+            n_calls++;
+            continue;
+        }
+
+        if (!shape_openai_chat) {
+            prt("Unknown LLM response shape in %.*s:\n", (int)len(fn), fn.buf);
+            wrs(json);
+            terpri();
+            prt("Add this shape to #llm_usage_shapes and update #handle_llm_usage.\n");
+            flush_err();
+            free(calls);
+            exit(1);
+        }
+
+        span model = json_string_field(json, "model");
+        int64_t pt = 0, ct = 0, tt = 0;
+        json_int_field(json, "prompt_tokens", &pt);
+        json_int_field(json, "completion_tokens", &ct);
+        json_int_field(json, "total_tokens", &tt);
+
+        calls[n_calls].ts = ts;
+        calls[n_calls].model = model;
+        calls[n_calls].pt = pt;
+        calls[n_calls].ct = ct;
+        calls[n_calls].tt = tt;
+        n_calls++;
+    }
+
+    qsort(calls, n_calls, sizeof(llm_call_rec), llm_call_rec_cmp);
+
+    prt("Totals by model\n");
+    prt("%-40s %8s %12s %12s %12s\n", "model", "calls", "prompt", "completion", "total");
+    {
+        span models[64];
+        int n_models = 0;
+        for (int i = 0; i < n_calls; i++) {
+            int seen = 0;
+            for (int k = 0; k < n_models; k++) {
+                if (span_eq(models[k], calls[i].model)) { seen = 1; break; }
+            }
+            if (!seen && n_models < 64) models[n_models++] = calls[i].model;
+        }
+        for (int k = 0; k < n_models; k++) {
+            int c = 0; int64_t pt = 0, ct = 0, tt = 0;
+            for (int i = 0; i < n_calls; i++) {
+                if (span_eq(calls[i].model, models[k])) {
+                    c++; pt += calls[i].pt; ct += calls[i].ct; tt += calls[i].tt;
+                }
+            }
+            prt("%-40.*s %8d %12lld %12lld %12lld\n",
+                (int)len(models[k]), models[k].buf, c,
+                (long long)pt, (long long)ct, (long long)tt);
+        }
+    }
+    terpri();
+
+    prt("By day\n");
+    prt("%-12s %8s %12s %12s\n", "date", "calls", "total", "avg/call");
+    for (int i = 0; i < n_calls; ) {
+        struct tm tm_i;
+        localtime_r(&calls[i].ts, &tm_i);
+        char daybuf[16];
+        snprintf(daybuf, sizeof(daybuf), "%04d-%02d-%02d",
+                 tm_i.tm_year + 1900, tm_i.tm_mon + 1, tm_i.tm_mday);
+        int j = i; int c = 0; int64_t tt = 0;
+        while (j < n_calls) {
+            struct tm tm_j;
+            localtime_r(&calls[j].ts, &tm_j);
+            if (tm_j.tm_year != tm_i.tm_year || tm_j.tm_yday != tm_i.tm_yday) break;
+            c++; tt += calls[j].tt; j++;
+        }
+        prt("%-12s %8d %12lld %12lld\n",
+            daybuf, c, (long long)tt, (long long)(c ? tt / c : 0));
+        i = j;
+    }
+    terpri();
+
+    prt("By hour\n");
+    prt("%-16s %8s %12s %10s\n", "hour", "calls", "total", "calls/min");
+    for (int i = 0; i < n_calls; ) {
+        struct tm tm_i;
+        localtime_r(&calls[i].ts, &tm_i);
+        char hbuf[24];
+        snprintf(hbuf, sizeof(hbuf), "%04d-%02d-%02d %02d",
+                 tm_i.tm_year + 1900, tm_i.tm_mon + 1, tm_i.tm_mday, tm_i.tm_hour);
+        int j = i; int c = 0; int64_t tt = 0;
+        while (j < n_calls) {
+            struct tm tm_j;
+            localtime_r(&calls[j].ts, &tm_j);
+            if (tm_j.tm_year != tm_i.tm_year || tm_j.tm_yday != tm_i.tm_yday ||
+                tm_j.tm_hour != tm_i.tm_hour) break;
+            c++; tt += calls[j].tt; j++;
+        }
+        double cpm = c / 60.0;
+        prt("%-16s %8d %12lld %10.3f\n", hbuf, c, (long long)tt, cpm);
+        i = j;
+    }
+    terpri();
+
+    time_t now = time(NULL);
+    struct { const char *label; time_t window; } windows[] = {
+        { "last hour", 3600 },
+        { "last 24h",  86400 },
+        { "last 7d",   7 * 86400 },
+        { "lifetime",  0 },
+    };
+    prt("Rolling rates\n");
+    prt("%-12s %8s %12s\n", "window", "calls", "total");
+    for (int w = 0; w < 4; w++) {
+        int c = 0; int64_t tt = 0;
+        for (int i = 0; i < n_calls; i++) {
+            if (windows[w].window == 0 || now - calls[i].ts <= windows[w].window) {
+                c++; tt += calls[i].tt;
+            }
+        }
+        prt("%-12s %8d %12lld\n", windows[w].label, c, (long long)tt);
+    }
+
+    free(calls);
+}
 /* #handle_event_large */
 void handle_event_large_stdin(int strength) {
     size_t capacity = 1 << 20;
@@ -13554,12 +13814,14 @@ display:
     for (int s = 0; s < n_states; s++) {
         int idlen = len(states[s].id);
         int in_current = 0;
+        spans_arena_push();
         for (int b = 0; b < state->blocks.n; b++) {
             span bid = id_for_block(state->blocks.a[b]);
             if (len(bid) == idlen && memcmp(bid.buf, states[s].id.buf, idlen) == 0) {
                 in_current = 1; break;
             }
         }
+        spans_arena_pop();
         // Disappeared: in history but not in current blocks
         if (!in_current) {
             if (events_n >= events_cap) { events_cap *= 2; events = realloc(events, events_cap * sizeof(event_ent)); }
@@ -15733,6 +15995,9 @@ void handle_serve(int port) {
 	// Load code once
 	get_code();
 
+	// Load T once; server is the sole writer from here on.
+	event_load_T();
+
 	prt("cmpr serve: listening on port %d (pid %d)\n", port, (int)getpid());
 	flush();
 
@@ -15755,8 +16020,6 @@ void handle_serve(int port) {
 			}
 		}
 		}
-		// Reload T from disk (children may have modified it)
-		event_load_T();
 		// Reap children
 		while (waitpid(-1, NULL, WNOHANG) > 0) {}
 		// Accept with timeout
@@ -16393,7 +16656,6 @@ void serve_dispatch(json req) {
 	// --- Event system verbs ---
 
 	if (span_eq(verb, S("T0"))) {
-		event_load_T();
 		event_T0();
 		return;
 	}
@@ -16402,7 +16664,6 @@ void serve_dispatch(json req) {
 		if (!arg_bufs[0][0] || !arg_bufs[1][0]) {
 			prt("{\"err\":\"event requires <string> <strength>\"}\n"); return;
 		}
-		event_load_T();
 		event_add_fast(S(arg_bufs[0]), (unsigned char)atoi(arg_bufs[1]));
 		return;
 	}
@@ -16411,31 +16672,26 @@ void serve_dispatch(json req) {
 		if (!arg_bufs[0][0]) {
 			prt("{\"err\":\"query requires <string>\"}\n"); return;
 		}
-		event_load_T();
 		event_query(S(arg_bufs[0]));
 		return;
 	}
 
 	if (span_eq(verb, S("memorize"))) {
-		event_load_T();
 		event_memorize();
 		return;
 	}
 
 	if (span_eq(verb, S("recall"))) {
-		event_load_T();
 		event_recall(arg_bufs[0][0] ? S(arg_bufs[0]) : nullspan(), arg_bufs[1][0] ? S(arg_bufs[1]) : nullspan(), 0);
 		return;
 	}
 
 	if (span_eq(verb, S("recall-first"))) {
-		event_load_T();
 		event_recall(arg_bufs[0][0] ? S(arg_bufs[0]) : nullspan(), arg_bufs[1][0] ? S(arg_bufs[1]) : nullspan(), 1);
 		return;
 	}
 
 	if (span_eq(verb, S("T"))) {
-		event_load_T();
 		event_print_T();
 		return;
 	}
@@ -17029,6 +17285,14 @@ void handle_import_p(void) {
                 unchanged++;
                 cmp.end = existing.buf;
                 continue;
+            } else if (strcmp(type, "induced") == 0) {
+                // Policy: replace induced scripts on content conflict.
+                // Other types still error. This is the minimal
+                // overwrite policy to support P-program iteration;
+                // revisit when we know what we want for scripts/ES/etc.
+                cmp.end = existing.buf;
+                prt("Replacing: %s (induced script differs)\n", id);
+                // fall through to write path below
             } else {
                 prt("Conflict: %s (content differs in %s)\n", id, target);
                 flush_exit(1);
@@ -17058,6 +17322,7 @@ void handle_import_p(void) {
     prt("Imported %d blocks (%d new, %d unchanged).\n", total, created, unchanged);
     flush();
 }
+
 
 
 
